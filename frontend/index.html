@@ -4,7 +4,101 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ML Dropshipping - Plataforma Profissional</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #0f172a; line-height: 1.5; }
+      .min-h-screen { min-height: 100vh; }
+      .flex { display: flex; }
+      .items-center { align-items: center; }
+      .justify-center { justify-content: center; }
+      .h-screen { height: 100vh; }
+      .bg-slate-900 { background: #0f172a; }
+      .text-white { color: #ffffff; }
+      .bg-slate-50 { background: #f8fafc; }
+      .text-slate-900 { color: #0f172a; }
+      .bg-slate-800 { background: #1e293b; }
+      .border { border: 1px solid #e2e8f0; }
+      .border-slate-700 { border-color: #334155; }
+      .rounded-xl { border-radius: 0.75rem; }
+      .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); }
+      .max-w-2xl { max-width: 42rem; }
+      .p-8 { padding: 2rem; }
+      .p-6 { padding: 1.5rem; }
+      .p-4 { padding: 1rem; }
+      .p-3 { padding: 0.75rem; }
+      .mb-6 { margin-bottom: 1.5rem; }
+      .mb-4 { margin-bottom: 1rem; }
+      .mb-3 { margin-bottom: 0.75rem; }
+      .mb-2 { margin-bottom: 0.5rem; }
+      .mt-4 { margin-top: 1rem; }
+      .mt-2 { margin-top: 0.5rem; }
+      .mt-1 { margin-top: 0.25rem; }
+      .space-y-3 > * + * { margin-top: 0.75rem; }
+      .space-y-2 > * + * { margin-top: 0.5rem; }
+      .space-y-6 > * + * { margin-top: 1.5rem; }
+      .gap-3 { gap: 0.75rem; }
+      .gap-4 { gap: 1rem; }
+      .text-2xl { font-size: 1.5rem; }
+      .text-xl { font-size: 1.25rem; }
+      .text-lg { font-size: 1.125rem; }
+      .text-sm { font-size: 0.875rem; }
+      .text-xs { font-size: 0.75rem; }
+      .font-bold { font-weight: 700; }
+      .font-semibold { font-weight: 600; }
+      .text-center { text-align: center; }
+      .text-left { text-align: left; }
+      .w-full { width: 100%; }
+      .w-10 { width: 2.5rem; }
+      .w-8 { width: 2rem; }
+      .h-10 { height: 2.5rem; }
+      .h-12 { height: 3rem; }
+      .h-8 { height: 2rem; }
+      .hidden { display: none; }
+      .overflow-hidden { overflow: hidden; }
+      .overflow-y-auto { overflow-y: auto; }
+      .flex-1 { flex: 1; }
+      .flex-col { flex-direction: column; }
+      .animate-spin { animation: spin 1s linear infinite; }
+      @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      button { cursor: pointer; }
+      .bg-green-500 { background: #22c55e; }
+      .bg-green-600 { background: #16a34a; }
+      .bg-yellow-500 { background: #eab308; }
+      .bg-yellow-600 { background: #ca8a04; }
+      .bg-red-500 { background: #ef4444; }
+      .bg-red-600 { background: #dc2626; }
+      .bg-red-50 { background: #fef2f2; }
+      .bg-white { background: #ffffff; }
+      .hover\:bg-green-600:hover { background: #16a34a; }
+      .hover\:bg-yellow-600:hover { background: #ca8a04; }
+      .hover\:bg-red-700:hover { background: #b91c1c; }
+      .border-b { border-bottom-width: 1px; }
+      .border-b-2 { border-bottom-width: 2px; }
+      .rounded-full { border-radius: 9999px; }
+      .border-t { border-top-width: 1px; }
+      .rounded-lg { border-radius: 0.5rem; }
+      .text-green-600 { color: #16a34a; }
+      .text-yellow-600 { color: #ca8a04; }
+      .text-red-700 { color: #b91c1c; }
+      .text-red-900 { color: #7f1d1d; }
+      .text-slate-600 { color: #475569; }
+      .text-slate-400 { color: #94a3b8; }
+      .text-slate-500 { color: #64748b; }
+      .border-green-50 { background: #f0fdf4; }
+      .border-green-200 { border-color: #bbf7d0; }
+      .border-blue-50 { background: #eff6ff; }
+      .border-blue-200 { border-color: #bfdbfe; }
+      .text-blue-800 { color: #1e40af; }
+      .text-blue-700 { color: #1d4ed8; }
+      .bg-blue-50 { background: #eff6ff; }
+      .text-green-700 { color: #15803d; }
+      .bg-green-50 { background: #f0fdf4; }
+      .border-red-700 { border-color: #b91c1c; }
+      .rounded { border-radius: 0.25rem; }
+      .list-disc { list-style-type: disc; }
+      .list-inside { list-style-position: inside; }
+      .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    </style>
   </head>
   <body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
