@@ -1,6 +1,8 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
 
+// v2 - logout button + cache fix + ml_connected callback
+
 const API = 'https://melimax-backend.vercel.app/api';
 
 function App() {
