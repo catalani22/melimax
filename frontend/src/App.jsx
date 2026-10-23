@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const API = import.meta.env.VITE_API_URL || '';
 
 function App() {
   const [view, setView] = useState('login');
@@ -10,23 +10,46 @@ function App() {
   const [fornecedores, setFornecedores] = useState([]);
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [apiError, setApiError] = useState(null);
 
   useEffect(() => {
-    fetch(`${API}/auth/me`).then(r => r.json()).then(d => {
-      if (d.user_id) setAccount(d);
-    });
-    fetch(`${API}/suppliers/nichos`).then(r => r.json()).then(setNichos);
-    fetch(`${API}/suppliers/fornecedores`).then(r => r.json()).then(setFornecedores);
-    fetch(`${API}/listings`).then(r => r.json()).then(setListings);
+    if (!API) {
+      setApiError('VITE_API_URL nao configurada no Vercel. Defina no painel do projeto frontend: https://SEU-BACKEND.vercel.app/api');
+      return;
+    }
+    const carregar = async () => {
+      try {
+        const r1 = await fetch(`${API}/auth/me`);
+        const d1 = await r1.json();
+        if (d1.user_id) setAccount(d1);
+      } catch (e) { setApiError('Erro ao conectar com o backend: ' + e.message); }
+      try {
+        const r2 = await fetch(`${API}/suppliers/nichos`);
+        const d2 = await r2.json();
+        setNichos(d2 || []);
+      } catch (e) { setApiError('Erro ao carregar nichos: ' + e.message); }
+      try {
+        const r3 = await fetch(`${API}/suppliers/fornecedores`);
+        const d3 = await r3.json();
+        setFornecedores(d3 || []);
+      } catch (e) { setApiError('Erro ao carregar fornecedores: ' + e.message); }
+      try {
+        const r4 = await fetch(`${API}/listings`);
+        const d4 = await r4.json();
+        setListings(d4 || []);
+      } catch (e) { setApiError('Erro ao carregar anuncios: ' + e.message); }
+    };
+    carregar();
   }, []);
 
-  const loginML = () => window.location.href = `${API}/auth/login`;
+  const loginML = () => { if (API) window.location.href = `${API}/auth/login`; };
   const logout = () => { setAccount(null); };
 
   const carregarProdutos = (nicho) => {
     setLoading(true);
     fetch(`${API}/suppliers/produtos-reais?nicho=${nicho}&limite=20&minPreco=80`)
-      .then(r => r.json()).then(d => { setProdutos(d.produtos || []); setLoading(false); });
+      .then(r => r.json()).then(d => { setProdutos(d.produtos || []); setLoading(false); })
+      .catch(e => { setLoading(false); setApiError(e.message); });
   };
 
   const criarAnuncio = (produto, fornecedor) => {
@@ -38,12 +61,23 @@ function App() {
     }).then(r => r.json()).then(d => {
       setListings(prev => [d, ...prev]);
       setLoading(false);
-    });
+    }).catch(e => { setLoading(false); setApiError(e.message); });
   };
 
   return (
     <div className="min-h-screen">
-      {view === 'login' && (
+      {apiError && (
+        <div className="fixed inset-0 z-50 bg-red-500/90 flex items-center justify-center p-6">
+          <div className="bg-white rounded-xl p-6 max-w-md shadow-2xl text-slate-900">
+            <h2 className="text-xl font-bold text-red-700 mb-3">Configuracao necessaria</h2>
+            <p className="text-sm text-slate-600 mb-4">{apiError}</p>
+            <p className="text-xs text-slate-500 mb-4">No painel do Vercel do projeto frontend, adicione a variavel de ambiente:<br/><code className="bg-slate-100 p-1 rounded">VITE_API_URL = https://SEU-BACKEND.vercel.app/api</code><br/>Entao clique em Redeploy.</p>
+            <button onClick={() => setApiError(null)} className="w-full py-2 bg-red-600 hover:bg-red-700 text-white rounded font-semibold">Fechar</button>
+          </div>
+        </div>
+      )}
+
+      {!apiError && view === 'login' && (
         <div className="flex items-center justify-center h-screen bg-slate-900 text-white">
           <div className="max-w-2xl p-8 rounded-xl bg-slate-800 shadow-2xl border border-slate-700">
             <div className="flex items-center gap-3 mb-6">

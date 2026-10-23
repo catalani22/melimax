@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "routes": [
+    {
+      "src": "^/(.*)$",
+      "dest": "api/index.js"
+    }
+  ],
+  "framework": {
+    "slug": "express",
+    "version": "4.22.3"
+  },
+  "crons": []
+}
