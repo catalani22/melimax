@@ -1,27 +1,55 @@
 import express from 'express';
+import cookieParser from 'cookie-parser';
 import querystring from 'node:querystring';
+import crypto from 'node:crypto';
 import fetch from 'node-fetch';
 import { query, memPush, memFind } from './db.js';
 
 const router = express.Router();
+router.use(cookieParser());
 
 const APP_ID = process.env.ML_APP_ID;
 const CLIENT_SECRET = process.env.ML_CLIENT_SECRET;
 const REDIRECT_URI = process.env.ML_REDIRECT_URI;
 
+function generateCodeVerifier() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function generateCodeChallenge(verifier) {
+  return crypto.createHash('sha256').update(verifier).digest('base64url');
+}
+
 router.get('/login', (req, res) => {
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = generateCodeChallenge(codeVerifier);
+
+  res.cookie('ml_code_verifier', codeVerifier, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000,
+    path: '/',
+  });
+
   const params = querystring.stringify({
     response_type: 'code',
     client_id: APP_ID,
     redirect_uri: REDIRECT_URI,
     scope: 'read write',
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
   });
+
   res.redirect(`https://auth.mercadolivre.com.br/authorization?${params}`);
 });
 
 router.get('/ml/callback', async (req, res) => {
   const { code } = req.query;
+  const codeVerifier = req.cookies?.ml_code_verifier;
+
   if (!code) return res.status(400).json({ error: 'code nao fornecido' });
+  if (!codeVerifier) return res.status(400).json({ error: 'code_verifier nao encontrado' });
 
   try {
     const tokenRes = await fetch('https://api.mercadolibre.com/oauth/token', {
@@ -33,6 +61,7 @@ router.get('/ml/callback', async (req, res) => {
         client_secret: CLIENT_SECRET,
         code,
         redirect_uri: REDIRECT_URI,
+        code_verifier: codeVerifier,
       }),
     });
     const data = await tokenRes.json();
@@ -57,6 +86,7 @@ router.get('/ml/callback', async (req, res) => {
       [data.user_id, data.nickname, data.access_token, data.refresh_token, data.expires_in]
     ).catch(() => {});
 
+    res.clearCookie('ml_code_verifier', { path: '/' });
     res.redirect(`${process.env.CORS_ORIGIN || 'http://localhost:5173'}/dashboard?ml_connected=1&user_id=${data.user_id}`);
   } catch (e) {
     res.status(500).json({ error: e.message });
