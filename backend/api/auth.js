@@ -19,7 +19,7 @@ router.get('/login', (req, res) => {
   res.redirect(`https://auth.mercadolivre.com.br/authorization?${params}`);
 });
 
-router.get('/callback', async (req, res) => {
+router.get('/ml/callback', async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).json({ error: 'code nao fornecido' });
 
