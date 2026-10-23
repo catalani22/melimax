@@ -99,4 +99,11 @@ router.get('/me', async (req, res) => {
   res.json(acc || { connected: false });
 });
 
+router.post('/logout', async (req, res) => {
+  try {
+    await query('DELETE FROM ml_accounts').catch(() => {});
+  } catch (e) {}
+  res.json({ ok: true });
+});
+
 export default router;
