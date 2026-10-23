@@ -6,15 +6,15 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-import authRoutes from './src/routes/auth.js';
-import productsRoutes from './src/routes/products.js';
-import suppliersRoutes from './src/routes/suppliers.js';
-import listingsRoutes from './src/routes/listings.js';
-import ordersRoutes from './src/routes/orders.js';
-import labelsRoutes from './src/routes/labels.js';
-import scrapingRoutes from './src/routes/scraping.js';
-import healthRoutes from './src/routes/health.js';
-import { errorHandler } from './src/middleware/error.js';
+import authRoutes from './auth.js';
+import productsRoutes from './products.js';
+import suppliersRoutes from './suppliers.js';
+import listingsRoutes from './listings.js';
+import ordersRoutes from './orders.js';
+import labelsRoutes from './labels.js';
+import scrapingRoutes from './scraping.js';
+import healthRoutes from './health.js';
+import { errorHandler } from './error.js';
 
 const app = express();
 
