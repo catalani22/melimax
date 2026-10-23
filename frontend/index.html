@@ -105,6 +105,13 @@
   </head>
   <body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <script>
+      (function() {
+        var script = document.createElement('script');
+        script.type = 'module';
+        script.src = '/src/main.jsx?t=' + Date.now();
+        document.head.appendChild(script);
+      })();
+    </script>
   </body>
 </html>
