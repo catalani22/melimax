@@ -16,6 +16,13 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const mlConnected = urlParams.get('ml_connected');
+
+      if (mlConnected === '1') {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
       try {
         const r1 = await fetch(`${API}/auth/me`);
         const d1 = await r1.json();
