@@ -49,7 +49,14 @@ function App() {
   }, []);
 
   const loginML = () => { window.location.href = `${API}/auth/login`; };
-  const logout = () => { setAccount(null); };
+  const logout = async () => {
+    try {
+      await fetch(`${API}/auth/logout`, { method: 'POST' });
+    } catch (e) {}
+    setAccount(null);
+    setView('login');
+    window.location.reload();
+  };
 
   const carregarProdutos = (nicho) => {
     setLoading(true);
@@ -140,6 +147,7 @@ function App() {
         <div className="flex items-center gap-2 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
           <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Conectado</span>
           <span className="text-xs text-slate-400 ml-2">{account.nickname}</span>
+          <button onClick={logout} className="ml-2 text-xs bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1 rounded font-semibold">Desconectar</button>
         </div>
       </header>
 
