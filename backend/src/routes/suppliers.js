@@ -2,6 +2,7 @@ import express from 'express';
 import { mlFetch } from '../lib/ml.js';
 import { query as dbQuery } from '../lib/db.js';
 import { findSupplierCost } from '../lib/supplier-costs.js';
+import { parse } from 'csv-parse/sync';
 
 const router = express.Router();
 
@@ -357,6 +358,186 @@ router.get('/custos/buscar', async (req, res, next) => {
   }
 });
 
+const FIELD_ALIASES = {
+  sku: ['sku', 'codigo', 'cod', 'codigo_produto', 'referencia', 'cod_ref', 'id'],
+  gtin: ['gtin', 'ean', 'codigo_barras', 'barcode', 'upc'],
+  titulo: ['titulo', 'nome', 'produto', 'descricao', 'nome_produto'],
+  custo: ['custo', 'preco_custo', 'valor', 'preco', 'preco_atacado', 'vlr', 'valor_unitario'],
+  estoque: ['estoque', 'qtd', 'quantidade', 'saldo', 'disponivel'],
+  catalogo_id: ['catalogo_id', 'catalog_product_id', 'mlb', 'id_ml'],
+  item_id: ['item_id', 'ml_item_id', 'id_item'],
+  peso_kg: ['peso', 'peso_kg', 'weight'],
+  altura_cm: ['altura', 'altura_cm', 'height'],
+  largura_cm: ['largura', 'largura_cm', 'width'],
+  comprimento_cm: ['comprimento', 'comprimento_cm', 'length'],
+  ativo: ['ativo', 'status'],
+};
+
+function normalizeHeader(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function parseBrNumber(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  let text = String(value).trim().replace(/R\$/gi, '').replace(/\s/g, '');
+  if (!text) return null;
+  if (text.includes(',') && text.includes('.')) {
+    if (text.lastIndexOf(',') > text.lastIndexOf('.')) {
+      text = text.replace(/\./g, '').replace(',', '.');
+    } else {
+      text = text.replace(/,/g, '');
+    }
+  } else if (text.includes(',')) {
+    text = text.replace(',', '.');
+  }
+  const number = Number(text);
+  return Number.isFinite(number) ? number : null;
+}
+
+function parseActive(value) {
+  if (value === false) return false;
+  if (value == null || value === '') return true;
+  const text = normalizeHeader(value);
+  return !['0', 'false', 'nao', 'inativo', 'esgotado', 'indisponivel', 'off'].includes(
+    text
+  );
+}
+
+function mapCsvRecord(record) {
+  const keys = new Map(
+    Object.keys(record).map((key) => [normalizeHeader(key), key])
+  );
+  const mapped = {};
+  for (const [field, aliases] of Object.entries(FIELD_ALIASES)) {
+    for (const alias of aliases) {
+      const originalKey = keys.get(alias);
+      if (originalKey && String(record[originalKey] ?? '').trim() !== '') {
+        mapped[field] = record[originalKey];
+        break;
+      }
+    }
+  }
+  return mapped;
+}
+
+function csvRecords(csv, delimiter) {
+  const text = String(csv || '').replace(/^\uFEFF/, '');
+  const firstLine = text.split(/\r?\n/).find((line) => line.trim()) || '';
+  const autoDelimiter =
+    delimiter ||
+    ((firstLine.match(/\t/g) || []).length > 0
+      ? '\t'
+      : (firstLine.match(/;/g) || []).length >=
+          (firstLine.match(/,/g) || []).length
+        ? ';'
+        : ',');
+  return parse(text, {
+    columns: true,
+    skip_empty_lines: true,
+    trim: true,
+    bom: true,
+    delimiter: autoDelimiter,
+    relax_column_count: true,
+  });
+}
+
+function normalizeSupplierItem(item, fornecedorId, fornecedorNome) {
+  const owner = String(item.fornecedor_id || fornecedorId || '').trim();
+  const custo = parseBrNumber(
+    item.custo ?? item.cost ?? item.preco_custo ?? item.preco
+  );
+  const sku = String(
+    item.sku || item.catalogo_id || item.gtin || item.item_id || ''
+  ).trim();
+
+  if (!owner || !Number.isFinite(custo) || custo <= 0 || !sku) return null;
+
+  return {
+    fornecedor_id: owner,
+    fornecedor_nome: item.fornecedor_nome || fornecedorNome || null,
+    catalogo_id: item.catalogo_id ? String(item.catalogo_id) : null,
+    item_id: item.item_id ? String(item.item_id) : null,
+    sku,
+    gtin: item.gtin ? String(item.gtin) : null,
+    titulo: item.titulo || item.title || null,
+    custo,
+    estoque: Math.max(
+      Math.trunc(parseBrNumber(item.estoque ?? item.stock ?? 0) || 0),
+      0
+    ),
+    peso_kg: parseBrNumber(item.peso_kg ?? item.weight_kg),
+    altura_cm: parseBrNumber(item.altura_cm ?? item.height_cm),
+    largura_cm: parseBrNumber(item.largura_cm ?? item.width_cm),
+    comprimento_cm: parseBrNumber(item.comprimento_cm ?? item.length_cm),
+    ativo: parseActive(item.ativo),
+  };
+}
+
+async function upsertSupplierProducts(produtos, fornecedorId, fornecedorNome) {
+  let importados = 0;
+  const erros = [];
+
+  for (const raw of produtos) {
+    const item = normalizeSupplierItem(raw, fornecedorId, fornecedorNome);
+    if (!item) {
+      if (erros.length < 10) {
+        erros.push({
+          sku: raw.sku || null,
+          erro: 'custo invalido ou sku/catalogo_id/gtin ausente',
+        });
+      }
+      continue;
+    }
+
+    await dbQuery(
+      `INSERT INTO supplier_products
+         (fornecedor_id, fornecedor_nome, catalogo_id, item_id, sku, gtin,
+          titulo, custo, estoque, peso_kg, altura_cm, largura_cm,
+          comprimento_cm, ativo, atualizado_em)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+       ON CONFLICT (fornecedor_id, sku) DO UPDATE SET
+         fornecedor_nome = EXCLUDED.fornecedor_nome,
+         catalogo_id = EXCLUDED.catalogo_id,
+         item_id = EXCLUDED.item_id,
+         gtin = EXCLUDED.gtin,
+         titulo = EXCLUDED.titulo,
+         custo = EXCLUDED.custo,
+         estoque = EXCLUDED.estoque,
+         peso_kg = EXCLUDED.peso_kg,
+         altura_cm = EXCLUDED.altura_cm,
+         largura_cm = EXCLUDED.largura_cm,
+         comprimento_cm = EXCLUDED.comprimento_cm,
+         ativo = EXCLUDED.ativo,
+         atualizado_em = NOW()`,
+      [
+        item.fornecedor_id,
+        item.fornecedor_nome,
+        item.catalogo_id,
+        item.item_id,
+        item.sku,
+        item.gtin,
+        item.titulo,
+        item.custo,
+        item.estoque,
+        item.peso_kg,
+        item.altura_cm,
+        item.largura_cm,
+        item.comprimento_cm,
+        item.ativo,
+      ]
+    );
+    importados += 1;
+  }
+
+  return { importados, erros };
+}
+
 router.post('/custos/importar', async (req, res, next) => {
   try {
     const fornecedorId = String(
@@ -380,70 +561,62 @@ router.post('/custos/importar', async (req, res, next) => {
       return res.status(422).json({ error: 'Limite de 2000 produtos por importacao.' });
     }
 
-    let importados = 0;
-    const erros = [];
-
-    for (const item of produtos) {
-      const custo = Number(item.custo ?? item.cost ?? item.preco_custo);
-      const sku = String(
-        item.sku || item.catalogo_id || item.gtin || item.item_id || ''
-      ).trim();
-
-      if (!Number.isFinite(custo) || custo <= 0 || !sku) {
-        if (erros.length < 10) {
-          erros.push({
-            sku: item.sku || null,
-            erro: 'custo invalido ou sku/catalogo_id/gtin ausente',
-          });
-        }
-        continue;
-      }
-
-      await dbQuery(
-        `INSERT INTO supplier_products
-           (fornecedor_id, fornecedor_nome, catalogo_id, item_id, sku, gtin,
-            titulo, custo, estoque, peso_kg, altura_cm, largura_cm,
-            comprimento_cm, ativo, atualizado_em)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
-         ON CONFLICT (fornecedor_id, sku) DO UPDATE SET
-           fornecedor_nome = EXCLUDED.fornecedor_nome,
-           catalogo_id = EXCLUDED.catalogo_id,
-           item_id = EXCLUDED.item_id,
-           gtin = EXCLUDED.gtin,
-           titulo = EXCLUDED.titulo,
-           custo = EXCLUDED.custo,
-           estoque = EXCLUDED.estoque,
-           peso_kg = EXCLUDED.peso_kg,
-           altura_cm = EXCLUDED.altura_cm,
-           largura_cm = EXCLUDED.largura_cm,
-           comprimento_cm = EXCLUDED.comprimento_cm,
-           ativo = EXCLUDED.ativo,
-           atualizado_em = NOW()`,
-        [
-          fornecedorId,
-          item.fornecedor_nome || fornecedorNome,
-          item.catalogo_id ? String(item.catalogo_id) : null,
-          item.item_id ? String(item.item_id) : null,
-          sku,
-          item.gtin ? String(item.gtin) : null,
-          item.titulo || item.title || null,
-          custo,
-          Math.max(Number(item.estoque ?? item.stock ?? 0) || 0, 0),
-          numberOrNull(item.peso_kg ?? item.weight_kg),
-          numberOrNull(item.altura_cm ?? item.height_cm),
-          numberOrNull(item.largura_cm ?? item.width_cm),
-          numberOrNull(item.comprimento_cm ?? item.length_cm),
-          item.ativo !== false,
-        ]
-      );
-      importados += 1;
-    }
+    const { importados, erros } = await upsertSupplierProducts(
+      produtos,
+      fornecedorId,
+      fornecedorNome
+    );
 
     res.status(201).json({
       fornecedor_id: fornecedorId,
       recebidos: produtos.length,
       importados,
       ignorados: produtos.length - importados,
+      erros,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/custos/importar-csv', async (req, res, next) => {
+  try {
+    const fornecedorId = String(
+      req.body.fornecedor_id || req.query.fornecedor_id || ''
+    ).trim();
+    const fornecedorNome =
+      req.body.fornecedor_nome || req.query.fornecedor_nome || null;
+    const csv = req.body.csv || req.body.conteudo || '';
+    const delimiter = req.body.delimiter || req.query.delimiter || null;
+
+    if (!fornecedorId) {
+      return res.status(400).json({ error: 'Informe fornecedor_id.' });
+    }
+    if (!String(csv).trim()) {
+      return res.status(400).json({ error: 'Envie o conteudo do CSV em csv.' });
+    }
+
+    const records = csvRecords(csv, delimiter);
+    if (!records.length) {
+      return res.status(422).json({ error: 'CSV sem linhas de produto.' });
+    }
+    if (records.length > 2000) {
+      return res.status(422).json({ error: 'Limite de 2000 produtos por importacao.' });
+    }
+
+    const produtos = records.map(mapCsvRecord);
+    const { importados, erros } = await upsertSupplierProducts(
+      produtos,
+      fornecedorId,
+      fornecedorNome
+    );
+
+    res.status(201).json({
+      fornecedor_id: fornecedorId,
+      recebidos: records.length,
+      importados,
+      ignorados: records.length - importados,
+      colunas: Object.keys(records[0] || {}),
       erros,
     });
   } catch (err) {
