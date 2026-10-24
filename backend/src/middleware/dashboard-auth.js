@@ -5,6 +5,7 @@ const PUBLIC_PATHS = new Set([
   '/auth/painel',
   '/auth/callback',
   '/auth/ml/callback',
+  '/trends/cron',
 ]);
 
 function dashboardPassword() {

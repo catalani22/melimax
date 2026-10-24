@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import express from 'express';
 import { mlFetch } from '../lib/ml.js';
 import { query } from '../lib/db.js';
@@ -251,25 +252,25 @@ async function collectRadar({ keywordLimit, productLimit }) {
   };
 }
 
-router.get('/palavras', async (req, res, next) => {
-  try {
-    const trends = await trendingKeywords();
-    res.json(trends.slice(0, 50));
-  } catch (err) {
-    next(err);
-  }
-});
+function cronAuthorized(req) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const candidate =
+    (req.get('authorization') || '').replace(/^Bearer\s+/i, '') ||
+    String(req.query.secret || '');
+  if (!candidate) return false;
+  const hashA = crypto.createHash('sha256').update(String(candidate)).digest();
+  const hashB = crypto.createHash('sha256').update(String(secret)).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
 
-router.post('/coletar', async (req, res, next) => {
+async function runCollection(req, res, next, keywordLimit, productLimit) {
   if (collecting) {
     return res.status(409).json({
       error: 'Já existe uma coleta do radar em andamento.',
       code: 'TREND_COLLECTING',
     });
   }
-
-  const keywordLimit = clamp(Number(req.body?.limite_keywords) || 10, 1, 30);
-  const productLimit = clamp(Number(req.body?.limite_produtos) || 5, 1, 10);
 
   try {
     collecting = collectRadar({ keywordLimit, productLimit });
@@ -280,6 +281,28 @@ router.post('/coletar', async (req, res, next) => {
   } finally {
     collecting = null;
   }
+}
+
+router.get('/cron', async (req, res, next) => {
+  if (!cronAuthorized(req)) {
+    return res.status(401).json({ error: 'Cron do radar nao autorizado.' });
+  }
+  return runCollection(req, res, next, 12, 6);
+});
+
+router.get('/palavras', async (req, res, next) => {
+  try {
+    const trends = await trendingKeywords();
+    res.json(trends.slice(0, 50));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/coletar', async (req, res, next) => {
+  const keywordLimit = clamp(Number(req.body?.limite_keywords) || 10, 1, 30);
+  const productLimit = clamp(Number(req.body?.limite_produtos) || 5, 1, 10);
+  return runCollection(req, res, next, keywordLimit, productLimit);
 });
 
 router.get('/radar', async (req, res, next) => {
