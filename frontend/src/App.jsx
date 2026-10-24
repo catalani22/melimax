@@ -387,7 +387,10 @@ function DashboardView({
   }).length;
   const dailyTarget = 3;
   const warmupListings = listings.filter(
-    (item) => Number(item.price) >= 80 && Number(item.price) <= 100
+    (item) =>
+      item.status === 'active' &&
+      Number(item.price) >= 80 &&
+      Number(item.price) <= 100
   ).length;
   const warmupProgress = Math.min((todaySales / dailyTarget) * 100, 100);
   const capitalNeeded = dailyTarget * 45 * 12;
