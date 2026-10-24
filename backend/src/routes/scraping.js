@@ -3,34 +3,67 @@ import fetch from 'node-fetch';
 
 const router = express.Router();
 
-router.post('/fornecedor', async (req, res) => {
-  const { url } = req.body;
+const PRIVATE_HOSTS = /^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.0\.0\.0|::1|\[::1\])/i;
+
+function validateUrl(value) {
+  let url;
   try {
-    const resp = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ml-dropshipping/1.0)' },
+    url = new URL(value);
+  } catch {
+    throw new Error('URL invalida.');
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('Apenas URLs http/https sao permitidas.');
+  }
+  if (PRIVATE_HOSTS.test(url.hostname) || url.hostname.endsWith('.local')) {
+    throw new Error('Host nao permitido.');
+  }
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(url.hostname)) {
+    throw new Error('Host nao permitido.');
+  }
+  return url;
+}
+
+router.post('/fornecedor', async (req, res, next) => {
+  try {
+    const url = validateUrl(req.body.url);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+
+    const response = await fetch(url.toString(), {
+      signal: controller.signal,
+      redirect: 'manual',
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; melimax/2.0)' },
+    }).finally(() => clearTimeout(timer));
+
+    if (response.status >= 300 && response.status < 400) {
+      return res.status(400).json({ erro: 'Redirecionamento nao permitido.' });
+    }
+    if (!response.ok) {
+      return res.status(response.status).json({ erro: `Fornecedor respondeu ${response.status}.` });
+    }
+
+    const html = await response.text();
+    const titulo = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const preco = html.match(/R\$\s*[\d.,]+/);
+    const imagens = Array.from(html.matchAll(/<img[^>]+src=["']([^"']+)["']/gi))
+      .map((match) => match[1])
+      .filter(Boolean)
+      .slice(0, 10);
+
+    res.json({
+      sucesso: true,
+      produto: {
+        titulo: titulo ? titulo[1].trim() : '',
+        preco: preco ? preco[0] : '',
+        descricao: '',
+        imagens,
+        url: url.toString(),
+        raspado_em: new Date().toISOString(),
+      },
     });
-    const html = await resp.text();
-
-    const tituloMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-    const precoMatch = html.match(/R\$\s*[\d.,]+/);
-    const imagemMatch = html.match(/<img[^>]+src=["']([^"']+)["']/gi);
-    const imagens = (imagemMatch || [])
-      .map(m => { const s = m.match(/src=["']([^"']+)["']/); return s ? s[1] : null; })
-      .filter(Boolean).slice(0, 10);
-
-    const produto = {
-      titulo: tituloMatch ? tituloMatch[1].trim() : '',
-      preco: precoMatch ? precoMatch[0] : '',
-      descricao: '',
-      imagens,
-      url,
-      raspado_em: new Date().toISOString(),
-      nota: 'Scraping real da pagina do fornecedor (sem cheerio, regex leve)',
-    };
-
-    res.json({ sucesso: true, produto });
-  } catch (e) {
-    res.status(500).json({ erro: e.message });
+  } catch (err) {
+    next(err);
   }
 });
 
