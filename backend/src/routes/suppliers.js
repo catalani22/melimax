@@ -347,7 +347,7 @@ router.get('/custos/resumo', async (req, res, next) => {
       }),
       { total: 0, ativos: 0, inativos: 0, desatualizados: 0 }
     );
-    res.json({ horas, ...resumo, fornecedores: rows });
+    res.json({ horas: hours, ...resumo, fornecedores: rows });
   } catch (err) {
     next(err);
   }
@@ -382,7 +382,7 @@ router.get('/custos/desatualizados', async (req, res, next) => {
       [hours]
     );
     res.json({
-      horas,
+      horas: hours,
       total: countRows[0]?.total || 0,
       produtos: rows,
     });
