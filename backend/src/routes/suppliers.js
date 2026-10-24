@@ -1,5 +1,7 @@
 import express from 'express';
 import { mlFetch } from '../lib/ml.js';
+import { query as dbQuery } from '../lib/db.js';
+import { findSupplierCost } from '../lib/supplier-costs.js';
 
 const router = express.Router();
 
@@ -91,6 +93,13 @@ function formatProduct(product, offer) {
       : null,
     warranty: offer?.warranty || null,
     attributes: product.attributes || [],
+    attributes_count: (product.attributes || []).length,
+    quality_type: product.quality_type || null,
+    listing_strategy: product.settings?.listing_strategy || null,
+    catalog_required:
+      product.settings?.listing_strategy === 'catalog_required' ||
+      product.settings?.listing_strategy === 'catalog_only',
+    buy_box_price: Number(product.buy_box_winner?.price) || null,
     source: 'catalog',
   };
 }
@@ -221,6 +230,222 @@ router.get('/fornecedores', async (req, res, next) => {
     );
 
     res.json(detalhados);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+function slugify(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+function numberOrNull(value) {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeNichos(value) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+router.get('/registro', async (req, res, next) => {
+  try {
+    const { rows } = await dbQuery(
+      'SELECT * FROM suppliers ORDER BY nome ASC'
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/registro', async (req, res, next) => {
+  try {
+    const nome = String(req.body.nome || '').trim();
+    if (!nome) return res.status(400).json({ error: 'Informe o nome.' });
+    const slug = slugify(req.body.slug || nome);
+    const nichos = normalizeNichos(req.body.nichos);
+    const { rows } = await dbQuery(
+      `INSERT INTO suppliers
+         (slug, nome, site, descricao, nichos, pedido_minimo, dropshipping, integracao, ativo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (slug) DO UPDATE SET
+         nome = EXCLUDED.nome,
+         site = EXCLUDED.site,
+         descricao = EXCLUDED.descricao,
+         nichos = EXCLUDED.nichos,
+         pedido_minimo = EXCLUDED.pedido_minimo,
+         dropshipping = EXCLUDED.dropshipping,
+         integracao = EXCLUDED.integracao,
+         ativo = EXCLUDED.ativo
+       RETURNING *`,
+      [
+        slug,
+        nome,
+        req.body.site ? String(req.body.site) : null,
+        req.body.descricao ? String(req.body.descricao) : null,
+        nichos,
+        numberOrNull(req.body.pedido_minimo),
+        Boolean(req.body.dropshipping),
+        req.body.integracao ? String(req.body.integracao) : 'manual',
+        req.body.ativo !== false,
+      ]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/custos', async (req, res, next) => {
+  try {
+    const filters = [];
+    const params = [];
+    for (const [field, column] of [
+      ['fornecedor_id', 'fornecedor_id'],
+      ['catalogo_id', 'catalogo_id'],
+      ['item_id', 'item_id'],
+      ['gtin', 'gtin'],
+    ]) {
+      if (req.query[field]) {
+        params.push(String(req.query[field]));
+        filters.push(`${column} = $${params.length}`);
+      }
+    }
+    if (req.query.ativo === 'true') filters.push('ativo = TRUE');
+    if (req.query.ativo === 'false') filters.push('ativo = FALSE');
+
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const limit = Math.min(Math.max(Number(req.query.limite) || 200, 1), 1000);
+    const { rows } = await dbQuery(
+      `SELECT * FROM supplier_products ${where}
+       ORDER BY custo ASC LIMIT ${limit}`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/custos/buscar', async (req, res, next) => {
+  try {
+    const produto = await findSupplierCost({
+      catalogoId: req.query.catalogo_id,
+      itemId: req.query.item_id,
+      gtin: req.query.gtin,
+      fornecedorId: req.query.fornecedor_id,
+    });
+    res.json({ encontrado: Boolean(produto), produto: produto || null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/custos/importar', async (req, res, next) => {
+  try {
+    const fornecedorId = String(
+      req.body.fornecedor_id || req.body.fornecedor?.id || ''
+    ).trim();
+    const fornecedorNome =
+      req.body.fornecedor_nome || req.body.fornecedor?.nome || null;
+    const produtos = Array.isArray(req.body.produtos)
+      ? req.body.produtos
+      : Array.isArray(req.body)
+        ? req.body
+        : [];
+
+    if (!fornecedorId) {
+      return res.status(400).json({ error: 'Informe fornecedor_id.' });
+    }
+    if (!produtos.length) {
+      return res.status(400).json({ error: 'Envie uma lista em produtos.' });
+    }
+    if (produtos.length > 2000) {
+      return res.status(422).json({ error: 'Limite de 2000 produtos por importacao.' });
+    }
+
+    let importados = 0;
+    const erros = [];
+
+    for (const item of produtos) {
+      const custo = Number(item.custo ?? item.cost ?? item.preco_custo);
+      const sku = String(
+        item.sku || item.catalogo_id || item.gtin || item.item_id || ''
+      ).trim();
+
+      if (!Number.isFinite(custo) || custo <= 0 || !sku) {
+        if (erros.length < 10) {
+          erros.push({
+            sku: item.sku || null,
+            erro: 'custo invalido ou sku/catalogo_id/gtin ausente',
+          });
+        }
+        continue;
+      }
+
+      await dbQuery(
+        `INSERT INTO supplier_products
+           (fornecedor_id, fornecedor_nome, catalogo_id, item_id, sku, gtin,
+            titulo, custo, estoque, peso_kg, altura_cm, largura_cm,
+            comprimento_cm, ativo, atualizado_em)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+         ON CONFLICT (fornecedor_id, sku) DO UPDATE SET
+           fornecedor_nome = EXCLUDED.fornecedor_nome,
+           catalogo_id = EXCLUDED.catalogo_id,
+           item_id = EXCLUDED.item_id,
+           gtin = EXCLUDED.gtin,
+           titulo = EXCLUDED.titulo,
+           custo = EXCLUDED.custo,
+           estoque = EXCLUDED.estoque,
+           peso_kg = EXCLUDED.peso_kg,
+           altura_cm = EXCLUDED.altura_cm,
+           largura_cm = EXCLUDED.largura_cm,
+           comprimento_cm = EXCLUDED.comprimento_cm,
+           ativo = EXCLUDED.ativo,
+           atualizado_em = NOW()`,
+        [
+          fornecedorId,
+          item.fornecedor_nome || fornecedorNome,
+          item.catalogo_id ? String(item.catalogo_id) : null,
+          item.item_id ? String(item.item_id) : null,
+          sku,
+          item.gtin ? String(item.gtin) : null,
+          item.titulo || item.title || null,
+          custo,
+          Math.max(Number(item.estoque ?? item.stock ?? 0) || 0, 0),
+          numberOrNull(item.peso_kg ?? item.weight_kg),
+          numberOrNull(item.altura_cm ?? item.height_cm),
+          numberOrNull(item.largura_cm ?? item.width_cm),
+          numberOrNull(item.comprimento_cm ?? item.length_cm),
+          item.ativo !== false,
+        ]
+      );
+      importados += 1;
+    }
+
+    res.status(201).json({
+      fornecedor_id: fornecedorId,
+      recebidos: produtos.length,
+      importados,
+      ignorados: produtos.length - importados,
+      erros,
+    });
   } catch (err) {
     next(err);
   }
