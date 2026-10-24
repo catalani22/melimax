@@ -822,6 +822,54 @@ router.post('/', async (req, res, next) => {
   }
 });
 
+async function updateAllListingStatus(fromStatus, toStatus) {
+  const { rows } = await query(
+    'SELECT id, ml_item_id FROM listings WHERE status = $1 ORDER BY created_at ASC LIMIT 200',
+    [fromStatus]
+  );
+  const falhas = [];
+  let atualizados = 0;
+
+  for (const listing of rows) {
+    try {
+      await mlFetch(`/items/${encodeURIComponent(listing.ml_item_id)}`, {
+        method: 'PUT',
+        body: { status: toStatus },
+      });
+      await query('UPDATE listings SET status = $1 WHERE id = $2', [
+        toStatus,
+        listing.id,
+      ]);
+      atualizados += 1;
+    } catch (err) {
+      falhas.push({
+        id: listing.ml_item_id,
+        error: formatMlError(err),
+      });
+    }
+  }
+
+  return { total: rows.length, atualizados, falhas };
+}
+
+router.post('/pausar-todos', async (req, res, next) => {
+  try {
+    const result = await updateAllListingStatus('active', 'paused');
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/reativar-todos', async (req, res, next) => {
+  try {
+    const result = await updateAllListingStatus('paused', 'active');
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.delete('/:id', async (req, res, next) => {
   try {
     const { rows } = await query(
