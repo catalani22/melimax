@@ -829,25 +829,33 @@ async function updateAllListingStatus(fromStatus, toStatus) {
   );
   const falhas = [];
   let atualizados = 0;
+  let nextIndex = 0;
 
-  for (const listing of rows) {
-    try {
-      await mlFetch(`/items/${encodeURIComponent(listing.ml_item_id)}`, {
-        method: 'PUT',
-        body: { status: toStatus },
-      });
-      await query('UPDATE listings SET status = $1 WHERE id = $2', [
-        toStatus,
-        listing.id,
-      ]);
-      atualizados += 1;
-    } catch (err) {
-      falhas.push({
-        id: listing.ml_item_id,
-        error: formatMlError(err),
-      });
+  async function worker() {
+    while (nextIndex < rows.length) {
+      const listing = rows[nextIndex];
+      nextIndex += 1;
+      try {
+        await mlFetch(`/items/${encodeURIComponent(listing.ml_item_id)}`, {
+          method: 'PUT',
+          body: { status: toStatus },
+        });
+        await query('UPDATE listings SET status = $1 WHERE id = $2', [
+          toStatus,
+          listing.id,
+        ]);
+        atualizados += 1;
+      } catch (err) {
+        falhas.push({
+          id: listing.ml_item_id,
+          error: formatMlError(err),
+        });
+      }
     }
   }
+
+  const workers = Math.min(5, rows.length);
+  await Promise.all(Array.from({ length: workers }, () => worker()));
 
   return { total: rows.length, atualizados, falhas };
 }
