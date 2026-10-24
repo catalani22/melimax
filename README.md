@@ -43,12 +43,15 @@ Defina `DASHBOARD_PASSWORD` no backend para exigir senha. Com a variável preenc
 - Criação de anúncios com qualificação acima de 85%
 - Margem configurável (15-20%)
 - Etiquetas de remessa enviadas aos fornecedores
+- Radar Viral: tendências do Mercado Livre com snapshots diários, concorrência, preço e margem bruta
+- Simulador de margem líquida antes de publicar, com taxa real do ML e frete por peso
+- Importação de custos de fornecedores por CSV (C7, Atacadum, FFOrder e genéricos)
 - Dados reais — sem mocks, sem placeholders
 
 ## Fluxo
 1. Conectar conta Mercado Livre
-2. Escolher nicho → carregar produtos reais
-3. Selecionar fornecedor → criar anúncio qualificado
+2. Abrir o Radar Viral → coletar tendências → simular margem
+3. Importar custos do fornecedor por CSV → criar anúncio qualificado
 4. Vender → fornecedor empacota e envia
 5. Etiqueta enviada automaticamente ao fornecedor
-6. Lucro real de 15-20% por venda
+6. Acompanhar margem líquida real por venda

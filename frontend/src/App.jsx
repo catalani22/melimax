@@ -60,6 +60,7 @@ function imageUrl(url) {
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Visão geral', icon: 'grid' },
+  { id: 'radar', label: 'Radar viral', icon: 'trending' },
   { id: 'catalogo', label: 'Catálogo', icon: 'layers' },
   { id: 'produtos', label: 'Produtos', icon: 'box' },
   { id: 'fornecedores', label: 'Fornecedores', icon: 'store' },
@@ -69,6 +70,7 @@ const NAV_ITEMS = [
 
 const VIEW_TITLES = {
   dashboard: { title: 'Visão geral', subtitle: 'Resumo da sua operação no Mercado Livre.' },
+  radar: { title: 'Radar viral', subtitle: 'Acompanhe tendências, ofertas e produtos com espaço para preço melhor.' },
   catalogo: { title: 'Catálogo de fornecedores', subtitle: 'Importe custos, estoque, peso e acompanhe a atualização.' },
   produtos: { title: 'Produtos', subtitle: 'Encontre produtos reais por nicho e crie anúncios.' },
   fornecedores: { title: 'Fornecedores', subtitle: 'Vendedores reais encontrados no Mercado Livre.' },
@@ -118,6 +120,12 @@ function Icon({ name, className = 'h-5 w-5' }) {
         <circle cx="9" cy="20" r="1.5" />
         <circle cx="18" cy="20" r="1.5" />
         <path d="M2 3h2l2.4 12.2a2 2 0 0 0 2 1.8h8.8a2 2 0 0 0 2-1.6L21 7H5" />
+      </>
+    ),
+    trending: (
+      <>
+        <path d="M3 17l6-6 4 4 8-8" />
+        <path d="M15 7h6v6" />
       </>
     ),
     refresh: (
@@ -831,6 +839,381 @@ function SuppliersView({ fornecedores, loading, selectedNicho }) {
   );
 }
 
+
+function RadarView({ version = 0, onFindSupplier, onAnalyze, onToast }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [collecting, setCollecting] = useState(false);
+  const [windowDays, setWindowDays] = useState(10);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await request(`/trends/radar?janela=${windowDays}&limite=80`);
+      setData(result || null);
+    } catch (requestError) {
+      setError(requestError?.message || 'Não foi possível carregar o radar.');
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [windowDays]);
+
+  useEffect(() => {
+    load();
+  }, [load, version]);
+
+  const collect = async () => {
+    setCollecting(true);
+    try {
+      const result = await request('/trends/coletar', {
+        method: 'POST',
+        body: { limite_keywords: 12, limite_produtos: 6 },
+      });
+      const failures = result.errors?.length
+        ? ` ${result.errors.length} palavra(s) falharam.`
+        : '';
+      onToast(
+        failures ? 'alert' : 'success',
+        `Radar atualizado: ${result.keywords} palavras e ${result.products} produtos.${failures}`
+      );
+      await load();
+    } catch (requestError) {
+      onToast('error', requestError?.message || 'Não foi possível atualizar o radar.');
+    } finally {
+      setCollecting(false);
+    }
+  };
+
+  const keywords = Array.isArray(data?.keywords) ? data.keywords : [];
+  const products = Array.isArray(data?.produtos) ? data.produtos : [];
+  const opportunities = products.filter((item) => item.score >= 70).length;
+  const withSupplier = products.filter((item) => item.fornecedor_id).length;
+  const climbing = keywords.filter((item) => (item.posicao_delta || 0) > 0).length;
+
+  return (
+    <div className="space-y-5">
+      <div className="card p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
+              <Icon name="trending" className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="label">Radar de demanda</p>
+              <h3 className="mt-1 font-bold">O que está subindo nas buscas do Mercado Livre</h3>
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">
+                O radar guarda um retrato diário das palavras em alta, posição dos produtos e
+                número de ofertas. O sinal é de demanda e concorrência, não uma promessa de vendas.
+                Para achar o lucro real, cruze com o custo e o frete do fornecedor.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {[7, 10, 30].map((days) => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => setWindowDays(days)}
+                className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                  windowDays === days
+                    ? 'border-brand-500 bg-brand-50 text-brand-700'
+                    : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                }`}
+              >
+                {days} dias
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={collect}
+              className="btn-primary"
+              disabled={collecting || loading}
+            >
+              {collecting ? <Spinner className="h-4 w-4" /> : <Icon name="refresh" className="h-4 w-4" />}
+              {collecting ? 'Coletando...' : 'Atualizar radar'}
+            </button>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3 text-[11px] text-slate-400">
+          <span>{data?.dias_historico || 0} dia(s) de histórico</span>
+          <span>·</span>
+          <span>Última coleta: {data?.ultima_coleta ? formatDate(data.ultima_coleta) : 'nunca'}</span>
+          <span>·</span>
+          <span>Preço menor que a referência ajuda, mas margem líquida manda.</span>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center gap-3 py-16 text-sm font-medium text-slate-500">
+          <Spinner />
+          Carregando radar...
+        </div>
+      ) : error ? (
+        <div className="card px-6 py-12 text-center">
+          <p className="text-sm font-semibold text-rose-600">{error}</p>
+          <button type="button" onClick={load} className="btn-primary mt-4">
+            <Icon name="refresh" className="h-4 w-4" />
+            Tentar novamente
+          </button>
+        </div>
+      ) : !products.length && !keywords.length ? (
+        <div className="card px-6 py-14 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-sky-50 text-sky-600">
+            <Icon name="trending" className="h-6 w-6" />
+          </div>
+          <h3 className="mt-4 font-bold">O radar ainda não tem dados</h3>
+          <p className="mx-auto mt-2 max-w-lg text-sm text-slate-500">
+            Faça a primeira coleta para capturar as palavras em alta e os produtos com ofertas.
+            Em 7 a 10 dias, o painel mostra quem subiu, quem perdeu posição e onde a concorrência
+            está aumentando.
+          </p>
+          <button type="button" onClick={collect} className="btn-primary mt-5" disabled={collecting}>
+            {collecting ? <Spinner className="h-4 w-4" /> : <Icon name="refresh" className="h-4 w-4" />}
+            {collecting ? 'Coletando...' : 'Fazer primeira coleta'}
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              label="Palavras monitoradas"
+              value={keywords.length}
+              hint={climbing ? `${climbing} subindo na janela` : 'Aguardando histórico'}
+              accent="sky"
+            />
+            <StatCard
+              label="Produtos no radar"
+              value={products.length}
+              hint="Com ao menos uma oferta ativa"
+              accent="brand"
+            />
+            <StatCard
+              label="Oportunidades"
+              value={opportunities}
+              hint="Score 70 ou mais"
+              accent="emerald"
+            />
+            <StatCard
+              label="Com custo de fornecedor"
+              value={withSupplier}
+              hint={withSupplier ? 'Prontos para simular margem' : 'Importe o CSV do fornecedor'}
+              accent="amber"
+            />
+          </div>
+
+          {keywords.length ? (
+            <div className="card p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="label">Palavras em alta</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Posição atual no ranking de buscas do Mercado Livre.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {keywords.slice(0, 20).map((item) => (
+                  <span
+                    key={item.keyword}
+                    className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700"
+                  >
+                    <span className="text-slate-400">#{item.posicao}</span>
+                    {item.keyword}
+                    {item.posicao_delta != null ? (
+                      <span
+                        className={
+                          item.posicao_delta > 0
+                            ? 'text-emerald-600'
+                            : item.posicao_delta < 0
+                              ? 'text-rose-600'
+                              : 'text-slate-400'
+                        }
+                      >
+                        {item.posicao_delta > 0
+                          ? `↑${item.posicao_delta}`
+                          : item.posicao_delta < 0
+                            ? `↓${Math.abs(item.posicao_delta)}`
+                            : '='}
+                      </span>
+                    ) : null}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="card overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div>
+                <p className="font-bold">Produtos com sinal de oportunidade</p>
+                <p className="text-xs text-slate-500">
+                  Quanto menor a concorrência e maior a subida, melhor o score.
+                </p>
+              </div>
+              <span className="badge bg-slate-100 text-slate-500">{products.length} produto(s)</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1080px] text-left">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Produto</th>
+                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Posição</th>
+                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Ofertas</th>
+                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Preço</th>
+                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Custo</th>
+                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Margem bruta</th>
+                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Score</th>
+                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {products.map((item) => (
+                    <tr key={`${item.keyword}-${item.product_id}`} className="hover:bg-slate-50/60">
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-slate-100">
+                            {item.thumbnail ? (
+                              <img src={imageUrl(item.thumbnail)} alt="" className="h-full w-full object-cover" />
+                            ) : null}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="line-clamp-2 max-w-xs text-sm font-semibold">{item.nome}</p>
+                            <p className="text-xs text-slate-500">
+                              {item.keyword}
+                              {item.fornecedor_nome ? ` · ${item.fornecedor_nome}` : ''}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3">
+                        <p className="text-sm font-bold">#{item.posicao}</p>
+                        <p
+                          className={`text-[11px] font-semibold ${
+                            item.posicao_delta == null
+                              ? 'text-slate-400'
+                              : item.posicao_delta > 0
+                                ? 'text-emerald-600'
+                                : item.posicao_delta < 0
+                                  ? 'text-rose-600'
+                                  : 'text-slate-400'
+                          }`}
+                        >
+                          {item.posicao_delta == null
+                            ? 'sem histórico'
+                            : item.posicao_delta > 0
+                              ? `+${item.posicao_delta} posições`
+                              : item.posicao_delta < 0
+                                ? `${item.posicao_delta} posições`
+                                : 'estável'}
+                        </p>
+                      </td>
+                      <td className="px-5 py-3">
+                        <p className="text-sm font-bold">{item.ofertas}</p>
+                        <p className="text-[11px] text-slate-500">{item.vendedores} vendedor(es)</p>
+                      </td>
+                      <td className="px-5 py-3">
+                        <p className="text-sm font-bold">{brl(item.preco)}</p>
+                        {item.preco_delta_pct != null ? (
+                          <p
+                            className={`text-[11px] ${
+                              item.preco_delta_pct < 0 ? 'text-emerald-600' : 'text-slate-500'
+                            }`}
+                          >
+                            {item.preco_delta_pct > 0 ? '+' : ''}
+                            {item.preco_delta_pct}% na janela
+                          </p>
+                        ) : null}
+                      </td>
+                      <td className="px-5 py-3">
+                        {item.custo ? (
+                          <>
+                            <p className="text-sm font-bold">{brl(item.custo)}</p>
+                            <p className="text-[11px] text-slate-500">{item.fornecedor_sku || 'custo do CSV'}</p>
+                          </>
+                        ) : (
+                          <span className="text-xs text-slate-400">sem custo</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3">
+                        {item.margem_bruta_pct != null ? (
+                          <span
+                            className={`badge ${
+                              item.margem_bruta_pct >= 40
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : 'bg-amber-50 text-amber-700'
+                            }`}
+                          >
+                            {Math.round(item.margem_bruta_pct)}%
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3">
+                        <span
+                          className={`badge ${
+                            item.score >= 80
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : item.score >= 65
+                                ? 'bg-sky-50 text-sky-700'
+                                : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {item.score}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => onAnalyze(item)}
+                            className="btn-ghost px-2 py-1 text-xs"
+                            title="Abrir o simulador de margem líquida"
+                          >
+                            <Icon name="trending" className="h-3.5 w-3.5" />
+                            Simular
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onFindSupplier(item.nome)}
+                            className="btn-ghost px-2 py-1 text-xs"
+                            title="Buscar este produto no catálogo de fornecedores"
+                          >
+                            <Icon name="store" className="h-3.5 w-3.5" />
+                            Fornecedor
+                          </button>
+                          {item.permalink ? (
+                            <a
+                              href={item.permalink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn-ghost px-2 py-1 text-xs"
+                            >
+                              <Icon name="external" className="h-3.5 w-3.5" />
+                              Ver
+                            </a>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="border-t border-slate-100 px-5 py-3 text-[11px] text-slate-400">
+              Margem bruta = preço menos custo, antes de taxa do Mercado Livre, frete, impostos e
+              devoluções. Clique em Simular para ver a margem líquida real.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ListingsView({
   listings,
   loading,
@@ -1057,7 +1440,7 @@ function OrdersView({ orders, loading, onRefresh, onLabel }) {
   );
 }
 
-function CatalogoView({ onToast }) {
+function CatalogoView({ onToast, externalSearch = '' }) {
   const [registry, setRegistry] = useState([]);
   const [summary, setSummary] = useState(null);
   const [stale, setStale] = useState({ total: 0, produtos: [] });
@@ -1115,6 +1498,10 @@ function CatalogoView({ onToast }) {
   useEffect(() => {
     loadBase();
   }, [loadBase]);
+
+  useEffect(() => {
+    if (externalSearch) setSearch(externalSearch);
+  }, [externalSearch]);
 
   useEffect(() => {
     const timer = setTimeout(loadProducts, 400);
@@ -1814,6 +2201,8 @@ export default function App() {
 
   const [toast, setToast] = useState(null);
   const [catalogVersion, setCatalogVersion] = useState(0);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [radarVersion, setRadarVersion] = useState(0);
   const [authError, setAuthError] = useState('');
   const [modalProduct, setModalProduct] = useState(null);
   const [margin, setMargin] = useState(18);
@@ -2098,6 +2487,20 @@ export default function App() {
     setView('dashboard');
   };
 
+  const findSupplierFor = (name) => {
+    const query = String(name || '')
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(' ')
+      .slice(0, 4)
+      .join(' ');
+    setCatalogSearch(query);
+    setCatalogVersion((current) => current + 1);
+    setView('catalogo');
+    setMobileNav(false);
+  };
+
   const login = async () => {
     try {
       const data = await request('/auth/ml/url');
@@ -2149,6 +2552,32 @@ export default function App() {
     setMargin(18);
     setFreeShipping(false);
     setSupplierCost(Number(produto.price) || 0);
+    setShippingCost('');
+    setPricing(null);
+    setValidation(null);
+    setAuthError('');
+  };
+
+  const openRadarProduct = (item) => {
+    if (!item?.product_id) return;
+    lastValidationRef.current = { key: null, data: null };
+    validationInFlightRef.current = null;
+    setModalProduct({
+      id: item.product_id,
+      catalogo_id: item.product_id,
+      item_id: item.item_id || null,
+      title: item.nome,
+      thumbnail: item.thumbnail,
+      price: item.preco,
+      listing_strategy: 'catalog_required',
+      catalog_required: true,
+      seller: item.fornecedor_id
+        ? { id: String(item.fornecedor_id), nickname: item.fornecedor_nome }
+        : null,
+    });
+    setMargin(18);
+    setFreeShipping(false);
+    setSupplierCost(Number(item.custo) || 0);
     setShippingCost('');
     setPricing(null);
     setValidation(null);
@@ -2263,6 +2692,10 @@ export default function App() {
   const refreshCurrent = () => {
     if (view === 'catalogo') {
       setCatalogVersion((current) => current + 1);
+      return undefined;
+    }
+    if (view === 'radar') {
+      setRadarVersion((current) => current + 1);
       return undefined;
     }
     if (view === 'anuncios') return loadListings();
@@ -2455,8 +2888,20 @@ export default function App() {
               onNavigate={setView}
             />
           ) : null}
+          {view === 'radar' ? (
+            <RadarView
+              version={radarVersion}
+              onFindSupplier={findSupplierFor}
+              onAnalyze={openRadarProduct}
+              onToast={showToast}
+            />
+          ) : null}
           {view === 'catalogo' ? (
-            <CatalogoView key={catalogVersion} onToast={showToast} />
+            <CatalogoView
+              key={catalogVersion}
+              onToast={showToast}
+              externalSearch={catalogSearch}
+            />
           ) : null}
           {view === 'produtos' ? (
             <ProductsView

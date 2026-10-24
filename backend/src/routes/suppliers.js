@@ -466,18 +466,18 @@ router.get('/custos/buscar', async (req, res, next) => {
 });
 
 const FIELD_ALIASES = {
-  sku: ['sku', 'codigo', 'cod', 'codigo_produto', 'referencia', 'cod_ref', 'id'],
+  sku: ['sku', 'codigo', 'cod', 'codigo_produto', 'referencia', 'cod_ref', 'id', 'product_id', 'product_sku', 'id_produto'],
   gtin: ['gtin', 'ean', 'codigo_barras', 'barcode', 'upc'],
-  titulo: ['titulo', 'nome', 'produto', 'descricao', 'nome_produto'],
-  custo: ['custo', 'preco_custo', 'valor', 'preco', 'preco_atacado', 'vlr', 'valor_unitario'],
-  estoque: ['estoque', 'qtd', 'quantidade', 'saldo', 'disponivel'],
-  catalogo_id: ['catalogo_id', 'catalog_product_id', 'mlb', 'id_ml'],
+  titulo: ['titulo', 'nome', 'produto', 'descricao', 'nome_produto', 'product_name', 'product_title', 'name'],
+  custo: ['custo', 'preco_custo', 'valor', 'preco', 'preco_atacado', 'vlr', 'valor_unitario', 'cost', 'product_price', 'sale_price', 'price'],
+  estoque: ['estoque', 'qtd', 'quantidade', 'saldo', 'disponivel', 'inventory', 'inventory_quantity', 'stock', 'quantity'],
+  catalogo_id: ['catalogo_id', 'catalog_product_id', 'catalog_id', 'mlb', 'id_ml'],
   item_id: ['item_id', 'ml_item_id', 'id_item'],
-  peso_kg: ['peso', 'peso_kg', 'weight', 'weight_kg'],
+  peso_kg: ['peso', 'peso_kg', 'weight', 'weight_kg', 'product_weight', 'package_weight'],
   peso_g: ['peso_g', 'peso_gramas', 'weight_g'],
-  altura_cm: ['altura', 'altura_cm', 'height'],
-  largura_cm: ['largura', 'largura_cm', 'width'],
-  comprimento_cm: ['comprimento', 'comprimento_cm', 'length'],
+  altura_cm: ['altura', 'altura_cm', 'height', 'package_height'],
+  largura_cm: ['largura', 'largura_cm', 'width', 'package_width'],
+  comprimento_cm: ['comprimento', 'comprimento_cm', 'length', 'package_length'],
   ativo: ['ativo', 'status'],
 };
 
