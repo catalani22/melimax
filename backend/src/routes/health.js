@@ -1,15 +1,27 @@
 import express from 'express';
-import { query } from '../lib/db.js';
+import { dbStatus } from '../lib/db.js';
+import { mlConfigured } from '../lib/ml.js';
+import { FRONTEND_URL, REDIRECT_URI } from '../lib/config.js';
 
 const router = express.Router();
 
-router.get('/health', async (_req, res) => {
+router.get('/health', async (req, res) => {
+  let db;
   try {
-    await query('SELECT 1');
-    res.json({ status: 'ok', db: 'postgres' });
-  } catch (e) {
-    res.json({ status: 'ok', db: 'memory', note: 'PostgreSQL nao disponível, usando memória' });
+    db = await dbStatus();
+  } catch (err) {
+    db = { driver: 'postgres', ok: false, error: err.message };
   }
+
+  res.status(db.ok ? 200 : 503).json({
+    status: db.ok ? 'ok' : 'degraded',
+    service: 'melimax-backend',
+    db,
+    ml_configured: mlConfigured(),
+    redirect_uri: REDIRECT_URI,
+    frontend_url: FRONTEND_URL,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 export default router;

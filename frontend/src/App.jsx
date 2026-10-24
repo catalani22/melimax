@@ -1,122 +1,1139 @@
-import React from 'react';
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-// v2 - logout button + cache fix + ml_connected callback
+const API = (import.meta.env.VITE_API_URL || 'https://melimax-backend.vercel.app/api').replace(/\/+$/, '');
 
-const API = 'https://melimax-backend.vercel.app/api';
+async function request(path, options = {}) {
+  const { body, headers, ...rest } = options;
+  const res = await fetch(`${API}${path}`, {
+    ...rest,
+    headers: {
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...(headers || {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 
-function App() {
-  const [view, setView] = useState('login');
-  const [account, setAccount] = useState(null);
-  const [nichos, setNichos] = useState([]);
-  const [produtos, setProdutos] = useState([]);
-  const [fornecedores, setFornecedores] = useState([]);
-  const [listings, setListings] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [apiError, setApiError] = useState(null);
+  const contentType = res.headers.get('content-type') || '';
+  const data = contentType.includes('application/json')
+    ? await res.json().catch(() => null)
+    : await res.text().catch(() => null);
 
+  if (!res.ok) {
+    const error = new Error(
+      (data && (data.error || data.message)) || `Erro ${res.status} ao chamar a API`
+    );
+    error.status = res.status;
+    error.data = data;
+    throw error;
+  }
+
+  return data;
+}
+
+const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const number = new Intl.NumberFormat('pt-BR');
+
+function brl(value) {
+  return money.format(Number(value) || 0);
+}
+
+function formatDate(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function imageUrl(url) {
+  if (!url) return '';
+  return String(url).replace(/^http:/, 'https:');
+}
+
+const NAV_ITEMS = [
+  { id: 'dashboard', label: 'Visão geral', icon: 'grid' },
+  { id: 'produtos', label: 'Produtos', icon: 'box' },
+  { id: 'fornecedores', label: 'Fornecedores', icon: 'store' },
+  { id: 'anuncios', label: 'Anúncios', icon: 'tag' },
+  { id: 'pedidos', label: 'Pedidos', icon: 'cart' },
+];
+
+const VIEW_TITLES = {
+  dashboard: { title: 'Visão geral', subtitle: 'Resumo da sua operação no Mercado Livre.' },
+  produtos: { title: 'Produtos', subtitle: 'Encontre produtos reais por nicho e crie anúncios.' },
+  fornecedores: { title: 'Fornecedores', subtitle: 'Vendedores reais encontrados no Mercado Livre.' },
+  anuncios: { title: 'Anúncios', subtitle: 'Seus anúncios publicados e qualificação.' },
+  pedidos: { title: 'Pedidos', subtitle: 'Vendas, envios e etiquetas do Mercado Envios.' },
+};
+
+function Icon({ name, className = 'h-5 w-5' }) {
+  const paths = {
+    grid: (
+      <>
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      </>
+    ),
+    box: (
+      <>
+        <path d="M21 8l-9-5-9 5 9 5 9-5z" />
+        <path d="M3 8v8l9 5 9-5V8" />
+        <path d="M12 13v8" />
+      </>
+    ),
+    store: (
+      <>
+        <path d="M3 9l1.5-5h15L21 9" />
+        <path d="M4 9v11h16V9" />
+        <path d="M9 20v-6h6v6" />
+      </>
+    ),
+    tag: (
+      <>
+        <path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z" />
+        <circle cx="7.5" cy="7.5" r="1.5" />
+      </>
+    ),
+    cart: (
+      <>
+        <circle cx="9" cy="20" r="1.5" />
+        <circle cx="18" cy="20" r="1.5" />
+        <path d="M2 3h2l2.4 12.2a2 2 0 0 0 2 1.8h8.8a2 2 0 0 0 2-1.6L21 7H5" />
+      </>
+    ),
+    refresh: (
+      <>
+        <path d="M21 12a9 9 0 1 1-2.6-6.4" />
+        <path d="M21 3v6h-6" />
+      </>
+    ),
+    external: (
+      <>
+        <path d="M14 3h7v7" />
+        <path d="M10 14L21 3" />
+        <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
+      </>
+    ),
+    logout: (
+      <>
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+        <path d="M16 17l5-5-5-5" />
+        <path d="M21 12H9" />
+      </>
+    ),
+    menu: (
+      <>
+        <path d="M4 6h16" />
+        <path d="M4 12h16" />
+        <path d="M4 18h16" />
+      </>
+    ),
+    close: (
+      <>
+        <path d="M6 6l12 12" />
+        <path d="M18 6L6 18" />
+      </>
+    ),
+    check: <path d="M20 6L9 17l-5-5" />,
+    alert: (
+      <>
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+        <path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+      </>
+    ),
+    search: (
+      <>
+        <circle cx="11" cy="11" r="7" />
+        <path d="M21 21l-4.3-4.3" />
+      </>
+    ),
+    download: (
+      <>
+        <path d="M12 3v12" />
+        <path d="M7 10l5 5 5-5" />
+        <path d="M5 21h14" />
+      </>
+    ),
+    shield: (
+      <>
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        <path d="M9 12l2 2 4-4" />
+      </>
+    ),
+  };
+
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      {paths[name] || null}
+    </svg>
+  );
+}
+
+function Spinner({ className = 'h-5 w-5' }) {
+  return (
+    <svg className={`animate-spin ${className}`} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+      <path className="opacity-90" fill="currentColor" d="M12 2a10 10 0 0 1 10 10h-3a7 7 0 0 0-7-7V2z" />
+    </svg>
+  );
+}
+
+function Toast({ toast, onClose }) {
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const mlConnected = urlParams.get('ml_connected');
+    if (!toast) return undefined;
+    const timer = setTimeout(onClose, 5500);
+    return () => clearTimeout(timer);
+  }, [toast, onClose]);
 
-      if (mlConnected === '1') {
-        window.history.replaceState({}, document.title, window.location.pathname);
-      }
+  if (!toast) return null;
 
-      try {
-        const r1 = await fetch(`${API}/auth/me`);
-        const d1 = await r1.json();
-        if (!cancelled && d1.user_id) setAccount(d1);
-      } catch (e) { if (!cancelled) setApiError('Erro ao conectar com o backend: ' + e.message); }
-      try {
-        const r2 = await fetch(`${API}/suppliers/nichos`);
-        const d2 = await r2.json();
-        if (!cancelled) setNichos(d2 || []);
-      } catch (e) { if (!cancelled) setApiError('Erro ao carregar nichos: ' + e.message); }
-      try {
-        const r3 = await fetch(`${API}/suppliers/fornecedores`);
-        const d3 = await r3.json();
-        if (!cancelled) setFornecedores(d3 || []);
-      } catch (e) { if (!cancelled) setApiError('Erro ao carregar fornecedores: ' + e.message); }
-      try {
-        const r4 = await fetch(`${API}/listings`);
-        const d4 = await r4.json();
-        if (!cancelled) setListings(d4 || []);
-      } catch (e) { if (!cancelled) setApiError('Erro ao carregar anuncios: ' + e.message); }
-      if (!cancelled) setLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  const loginML = () => { window.location.href = `${API}/auth/login`; };
-  const logout = async () => {
-    try {
-      await fetch(`${API}/auth/logout`, { method: 'POST' });
-    } catch (e) {}
-    setAccount(null);
-    setView('login');
-    window.location.reload();
+  const styles = {
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    error: 'border-red-200 bg-red-50 text-red-800',
+    warning: 'border-amber-200 bg-amber-50 text-amber-900',
+    info: 'border-slate-200 bg-white text-slate-800',
   };
 
-  const carregarProdutos = (nicho) => {
-    setLoading(true);
-    fetch(`${API}/suppliers/produtos-reais?nicho=${nicho}&limite=20&minPreco=80`)
-      .then(r => r.json()).then(d => { setProdutos(d.produtos || []); setLoading(false); })
-      .catch(e => { setLoading(false); setApiError(e.message); });
-  };
+  return (
+    <div className="fixed bottom-4 right-4 z-50 w-[calc(100%-2rem)] max-w-md">
+      <div className={`flex items-start gap-3 rounded-xl border p-4 shadow-card ${styles[toast.type] || styles.info}`}>
+        <Icon
+          name={toast.type === 'success' ? 'check' : toast.type === 'error' ? 'alert' : 'alert'}
+          className="mt-0.5 h-5 w-5 shrink-0"
+        />
+        <div className="min-w-0 flex-1 text-sm font-medium">{toast.message}</div>
+        <button type="button" onClick={onClose} className="rounded p-1 hover:bg-black/5" aria-label="Fechar">
+          <Icon name="close" className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
-  const criarAnuncio = (produto, fornecedor) => {
-    setLoading(true);
-    fetch(`${API}/listings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ produto, fornecedor, margem: 0.18 }),
-    }).then(r => r.json()).then(d => {
-      setListings(prev => [d, ...prev]);
-      setLoading(false);
-    }).catch(e => { setLoading(false); setApiError(e.message); });
-  };
+function LoginScreen({ onLogin, error }) {
+  const features = [
+    'Produtos reais por nicho direto da API oficial',
+    'Criação de anúncios com margem configurável',
+    'Pedidos e etiquetas do Mercado Envios',
+  ];
 
-  const cn = (...classes) => classes.filter(Boolean).join(' ');
+  return (
+    <div className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-brand-500/20 blur-3xl" />
+        <div className="absolute -right-24 bottom-0 h-96 w-96 rounded-full bg-emerald-500/10 blur-3xl" />
+      </div>
 
-  if (apiError) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-6 bg-red-50">
-        <div className="max-w-md p-6 bg-white rounded-lg border border-red-200 shadow-lg">
-          <h2 className="text-xl font-bold text-red-700 mb-3">Erro de configuraçăo</h2>
-          <p className="text-sm text-red-600 mb-4">{apiError}</p>
-          <button onClick={() => setApiError(null)} className="w-full py-2 bg-red-600 hover:bg-red-700 text-white rounded font-semibold">Fechar</button>
+      <div className="relative mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center gap-12 px-6 py-14 lg:flex-row lg:justify-between">
+        <div className="max-w-xl">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-400 text-lg font-black text-slate-950">
+              ML
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-300">Melimax</p>
+              <h1 className="text-2xl font-bold">Painel Mercado Livre</h1>
+            </div>
+          </div>
+
+          <h2 className="mt-8 text-3xl font-extrabold leading-tight sm:text-4xl">
+            Sua operação de anúncios e vendas em um só lugar.
+          </h2>
+          <p className="mt-4 text-base leading-relaxed text-slate-300">
+            Conecte sua conta do Mercado Livre para pesquisar produtos, publicar anúncios
+            com margem e acompanhar pedidos e etiquetas.
+          </p>
+
+          <ul className="mt-8 space-y-3">
+            {features.map((feature) => (
+              <li key={feature} className="flex items-start gap-3 text-sm text-slate-200">
+                <span className="mt-0.5 rounded-full bg-emerald-500/15 p-1 text-emerald-400">
+                  <Icon name="check" className="h-4 w-4" />
+                </span>
+                {feature}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur sm:p-8">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <Icon name="shield" className="h-4 w-4" />
+            Acesso pessoal e seguro
+          </div>
+          <h3 className="mt-4 text-xl font-bold">Conectar conta</h3>
+          <p className="mt-2 text-sm text-slate-300">
+            Você será redirecionado para autorizar o acesso no site oficial do Mercado Livre.
+          </p>
+
+          {error ? (
+            <div className="mt-4 rounded-lg border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">
+              {error}
+            </div>
+          ) : null}
+
+          <button type="button" onClick={onLogin} className="btn-primary mt-6 w-full py-3 text-base">
+            Conectar conta Mercado Livre
+          </button>
+
+          <p className="mt-4 text-center text-xs text-slate-400">
+            Seus tokens ficam no seu banco Postgres. Nenhum dado é compartilhado.
+          </p>
         </div>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
-  if (view === 'login') {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-6 bg-slate-900">
-        <div className="max-w-md p-8 bg-slate-800 rounded-xl border border-slate-700 shadow-2xl text-white">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded bg-green-500 flex items-center justify-center font-bold">ML</div>
-            <h1 className="text-2xl font-bold">ML Dropshipping</h1>
+function StatCard({ label, value, hint, accent = 'slate' }) {
+  const accents = {
+    slate: 'bg-slate-900 text-white',
+    brand: 'bg-brand-400 text-slate-900',
+    emerald: 'bg-emerald-500 text-white',
+    sky: 'bg-sky-500 text-white',
+  };
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="label">{label}</p>
+          <p className="mt-2 text-2xl font-extrabold tracking-tight">{value}</p>
+        </div>
+        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${accents[accent] || accents.slate}`}>
+          <Icon name={accent === 'emerald' ? 'cart' : accent === 'brand' ? 'tag' : 'grid'} className="h-5 w-5" />
+        </span>
+      </div>
+      {hint ? <p className="mt-3 text-xs text-slate-500">{hint}</p> : null}
+    </div>
+  );
+}
+
+function DashboardView({ account, listings, orders, onNavigate }) {
+  const activeListings = listings.filter((item) => item.status === 'active').length;
+  const revenue = orders.reduce((sum, order) => sum + (Number(order.total_amount) || 0), 0);
+  const avgMargin = listings.length
+    ? listings.reduce((sum, item) => sum + (Number(item.margin) || 0), 0) / listings.length
+    : 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Anúncios" value={number.format(listings.length)} hint={`${activeListings} ativos`} accent="brand" />
+        <StatCard label="Pedidos" value={number.format(orders.length)} hint="Últimos 50 pedidos" accent="emerald" />
+        <StatCard label="Faturamento" value={brl(revenue)} hint="Soma dos pedidos carregados" accent="sky" />
+        <StatCard
+          label="Margem média"
+          value={`${Math.round(avgMargin * 100)}%`}
+          hint="Configurada nos seus anúncios"
+        />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <div className="card overflow-hidden">
+          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+            <div>
+              <h3 className="font-bold">Anúncios recentes</h3>
+              <p className="text-xs text-slate-500">Últimos anúncios criados por você.</p>
+            </div>
+            <button type="button" onClick={() => onNavigate('anuncios')} className="text-sm font-semibold text-brand-700 hover:text-brand-800">
+              Ver todos
+            </button>
           </div>
-          <p className="text-slate-300 mb-6">Plataforma profissional de dropshipping conectada à sua conta Mercado Livre.</p>
-          <div className="space-y-3">
-            <button onClick={loginML} className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-semibold rounded-lg transition">Conectar Conta Mercado Livre</button>
-            <p className="text-center text-xs text-slate-400">Dados reais — sem mocks.</p>
+          {listings.length === 0 ? (
+            <div className="px-5 py-10 text-center text-sm text-slate-500">
+              Nenhum anúncio ainda. Comece escolhendo um produto.
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {listings.slice(0, 5).map((listing) => (
+                <li key={listing.id} className="flex items-center gap-3 px-5 py-3">
+                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100">
+                    {listing.thumbnail ? (
+                      <img src={imageUrl(listing.thumbnail)} alt="" className="h-full w-full object-cover" />
+                    ) : null}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">{listing.title}</p>
+                    <p className="text-xs text-slate-500">{brl(listing.price)} · {listing.supplier}</p>
+                  </div>
+                  <span className="badge bg-slate-100 text-slate-600">{listing.score}%</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="card overflow-hidden">
+          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+            <div>
+              <h3 className="font-bold">Pedidos recentes</h3>
+              <p className="text-xs text-slate-500">Acompanhe suas vendas.</p>
+            </div>
+            <button type="button" onClick={() => onNavigate('pedidos')} className="text-sm font-semibold text-brand-700 hover:text-brand-800">
+              Ver todos
+            </button>
           </div>
+          {orders.length === 0 ? (
+            <div className="px-5 py-10 text-center text-sm text-slate-500">
+              Nenhum pedido encontrado na conta {account.nickname}.
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {orders.slice(0, 5).map((order) => (
+                <li key={order.id} className="flex items-center gap-3 px-5 py-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                    <Icon name="cart" className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold">Pedido #{order.id}</p>
+                    <p className="text-xs text-slate-500">
+                      {order.buyer?.nickname || 'Comprador'} · {formatDate(order.date_created)}
+                    </p>
+                  </div>
+                  <span className="text-sm font-bold">{brl(order.total_amount)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
-    );
-  }
 
+      <div className="card flex flex-col items-start justify-between gap-4 p-5 sm:flex-row sm:items-center">
+        <div>
+          <h3 className="font-bold">Pronto para publicar?</h3>
+          <p className="text-sm text-slate-500">Escolha um nicho, selecione um produto real e crie o anúncio.</p>
+        </div>
+        <button type="button" onClick={() => onNavigate('produtos')} className="btn-primary">
+          Buscar produtos
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProductsView({ nichos, selectedNicho, onSelectNicho, produtos, loading, onCreate }) {
+  return (
+    <div className="space-y-6">
+      <div className="card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-bold">Escolha um nicho</h3>
+            <p className="text-sm text-slate-500">Os produtos são buscados na API oficial do Mercado Livre.</p>
+          </div>
+          {selectedNicho ? (
+            <span className="badge bg-brand-50 text-brand-800">
+              {nichos.find((item) => item.id === selectedNicho)?.nome || selectedNicho}
+            </span>
+          ) : null}
+        </div>
+
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+          {nichos.map((nicho) => {
+            const selected = nicho.id === selectedNicho;
+            return (
+              <button
+                key={nicho.id}
+                type="button"
+                onClick={() => onSelectNicho(nicho.id)}
+                className={`rounded-xl border px-3 py-3 text-left transition ${
+                  selected
+                    ? 'border-brand-400 bg-brand-50 ring-2 ring-brand-200'
+                    : 'border-slate-200 bg-white hover:border-brand-300 hover:bg-brand-50/40'
+                }`}
+              >
+                <p className="text-sm font-semibold">{nicho.nome}</p>
+                <p className="mt-1 text-xs text-slate-500">Ticket médio {brl(nicho.media_ticket)}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {!selectedNicho ? (
+        <div className="card px-6 py-16 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
+            <Icon name="search" className="h-6 w-6" />
+          </div>
+          <h3 className="mt-4 text-lg font-bold">Selecione um nicho para começar</h3>
+          <p className="mt-1 text-sm text-slate-500">Vamos buscar produtos acima de R$ 80 com boa relevância.</p>
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div className="flex items-center justify-center gap-3 py-16 text-sm font-medium text-slate-500">
+          <Spinner />
+          Buscando produtos reais...
+        </div>
+      ) : null}
+
+      {!loading && selectedNicho && produtos.length === 0 ? (
+        <div className="card px-6 py-16 text-center text-sm text-slate-500">
+          Nenhum produto encontrado para este nicho.
+        </div>
+      ) : null}
+
+      {!loading && produtos.length > 0 ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {produtos.map((produto) => (
+            <article key={produto.id} className="card flex flex-col overflow-hidden">
+              <div className="aspect-[4/3] w-full overflow-hidden bg-slate-100">
+                <img
+                  src={imageUrl(produto.thumbnail)}
+                  alt={produto.title}
+                  loading="lazy"
+                  className="h-full w-full object-contain p-2"
+                />
+              </div>
+              <div className="flex flex-1 flex-col p-4">
+                <p className="line-clamp-2 min-h-[2.5rem] text-sm font-semibold leading-snug">{produto.title}</p>
+                <p className="mt-2 text-xl font-extrabold">{brl(produto.price)}</p>
+                <p className="mt-1 truncate text-xs text-slate-500">
+                  {produto.seller?.nickname || 'Vendedor Mercado Livre'}
+                </p>
+                <div className="mt-3 flex items-center gap-2">
+                  {produto.free_shipping ? (
+                    <span className="badge bg-emerald-50 text-emerald-700">Frete grátis</span>
+                  ) : null}
+                  {produto.condition === 'new' ? (
+                    <span className="badge bg-slate-100 text-slate-600">Novo</span>
+                  ) : null}
+                </div>
+                <button type="button" onClick={() => onCreate(produto)} className="btn-primary mt-4 w-full">
+                  Criar anúncio
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SuppliersView({ fornecedores, loading, selectedNicho }) {
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mb-4"></div>
-          <p className="text-slate-600">Carregando plataforma...</p>
+      <div className="flex items-center justify-center gap-3 py-16 text-sm font-medium text-slate-500">
+        <Spinner />
+        Buscando vendedores do nicho...
+      </div>
+    );
+  }
+
+  if (!fornecedores.length) {
+    return (
+      <div className="card px-6 py-16 text-center text-sm text-slate-500">
+        {selectedNicho
+          ? 'Nenhum fornecedor encontrado para este nicho.'
+          : 'Selecione um nicho na aba Produtos para carregar fornecedores reais.'}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {fornecedores.map((fornecedor) => (
+        <article key={fornecedor.id} className="card p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 font-bold text-slate-500">
+                {fornecedor.thumbnail ? (
+                  <img src={imageUrl(fornecedor.thumbnail)} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  (fornecedor.nome || '?').slice(0, 1).toUpperCase()
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate font-bold">{fornecedor.nome}</p>
+                <p className="text-xs text-slate-500">ID {fornecedor.id}</p>
+              </div>
+            </div>
+            <span className="badge bg-emerald-50 text-emerald-700">{fornecedor.reputacao}</span>
+          </div>
+
+          <dl className="mt-4 grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-lg bg-slate-50 p-2">
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Avaliação</dt>
+              <dd className="mt-1 text-sm font-bold">{fornecedor.avaliacao ?? '—'}</dd>
+            </div>
+            <div className="rounded-lg bg-slate-50 p-2">
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">No prazo</dt>
+              <dd className="mt-1 text-sm font-bold">
+                {fornecedor.entregas_no_prazo == null ? '—' : `${fornecedor.entregas_no_prazo}%`}
+              </dd>
+            </div>
+            <div className="rounded-lg bg-slate-50 p-2">
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Vendas</dt>
+              <dd className="mt-1 text-sm font-bold">
+                {fornecedor.vendas == null ? '—' : number.format(fornecedor.vendas)}
+              </dd>
+            </div>
+          </dl>
+
+          {fornecedor.permalink ? (
+            <a
+              href={fornecedor.permalink}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-ghost mt-4 w-full"
+            >
+              Ver no Mercado Livre
+              <Icon name="external" className="h-4 w-4" />
+            </a>
+          ) : null}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function ListingsView({ listings, loading, onRefresh, onClose }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-slate-500">
+          {listings.length} anúncio{listings.length === 1 ? '' : 's'} no total.
+        </p>
+        <button type="button" onClick={onRefresh} className="btn-ghost" disabled={loading}>
+          {loading ? <Spinner className="h-4 w-4" /> : <Icon name="refresh" className="h-4 w-4" />}
+          Atualizar
+        </button>
+      </div>
+
+      {listings.length === 0 ? (
+        <div className="card px-6 py-16 text-center text-sm text-slate-500">
+          Nenhum anúncio criado ainda.
+        </div>
+      ) : (
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Produto</th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Preço</th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Margem</th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Fornecedor</th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Score</th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {listings.map((listing) => (
+                  <tr key={listing.id} className="hover:bg-slate-50/60">
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-slate-100">
+                          {listing.thumbnail ? (
+                            <img src={imageUrl(listing.thumbnail)} alt="" className="h-full w-full object-cover" />
+                          ) : null}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="max-w-xs truncate text-sm font-semibold">{listing.title}</p>
+                          <p className="text-xs text-slate-500">{formatDate(listing.created_at)}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3 text-sm font-bold">{brl(listing.price)}</td>
+                    <td className="px-5 py-3 text-sm">{Math.round((Number(listing.margin) || 0) * 100)}%</td>
+                    <td className="px-5 py-3 text-sm">{listing.supplier}</td>
+                    <td className="px-5 py-3">
+                      <span
+                        className={`badge ${
+                          listing.score >= 85 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                        }`}
+                      >
+                        {listing.score}%
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        {listing.permalink ? (
+                          <a
+                            href={listing.permalink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn-ghost px-2 py-1 text-xs"
+                            title="Abrir no Mercado Livre"
+                          >
+                            <Icon name="external" className="h-3.5 w-3.5" />
+                            Abrir
+                          </a>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => onClose(listing)}
+                          className="btn-danger px-2 py-1 text-xs"
+                        >
+                          Encerrar
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ORDER_STATUS = {
+  confirmed: { label: 'Confirmado', className: 'bg-sky-50 text-sky-700' },
+  payment_required: { label: 'Pagamento pendente', className: 'bg-amber-50 text-amber-700' },
+  payment_in_process: { label: 'Pagamento em análise', className: 'bg-amber-50 text-amber-700' },
+  paid: { label: 'Pago', className: 'bg-emerald-50 text-emerald-700' },
+  partially_refunded: { label: 'Reembolso parcial', className: 'bg-orange-50 text-orange-700' },
+  cancelled: { label: 'Cancelado', className: 'bg-red-50 text-red-700' },
+  invalid: { label: 'Inválido', className: 'bg-red-50 text-red-700' },
+};
+
+function OrdersView({ orders, loading, onRefresh, onLabel }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-slate-500">
+          {orders.length} pedido{orders.length === 1 ? '' : 's'} carregado{orders.length === 1 ? '' : 's'}.
+        </p>
+        <button type="button" onClick={onRefresh} className="btn-ghost" disabled={loading}>
+          {loading ? <Spinner className="h-4 w-4" /> : <Icon name="refresh" className="h-4 w-4" />}
+          Atualizar
+        </button>
+      </div>
+
+      {loading && orders.length === 0 ? (
+        <div className="flex items-center justify-center gap-3 py-16 text-sm font-medium text-slate-500">
+          <Spinner />
+          Carregando pedidos...
+        </div>
+      ) : null}
+
+      {!loading && orders.length === 0 ? (
+        <div className="card px-6 py-16 text-center text-sm text-slate-500">
+          Nenhum pedido encontrado.
+        </div>
+      ) : null}
+
+      <div className="space-y-3">
+        {orders.map((order) => {
+          const status = ORDER_STATUS[order.status] || {
+            label: order.status || 'Desconhecido',
+            className: 'bg-slate-100 text-slate-600',
+          };
+          const itemCount = order.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+
+          return (
+            <article key={order.id} className="card p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                    <Icon name="cart" className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-bold">Pedido #{order.id}</p>
+                      <span className={`badge ${status.className}`}>{status.label}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {formatDate(order.date_created)} · {order.buyer?.nickname || 'Comprador'} · {itemCount} item(ns)
+                    </p>
+                    <p className="mt-2 line-clamp-1 text-sm text-slate-600">
+                      {order.items.map((item) => item.title).filter(Boolean).join(' · ') || 'Sem itens'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="text-right">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Total</p>
+                    <p className="text-lg font-extrabold">{brl(order.total_amount)}</p>
+                  </div>
+                  <a
+                    href={`https://www.mercadolivre.com.br/vendas/${order.id}/detalhe`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-ghost"
+                  >
+                    Abrir venda
+                    <Icon name="external" className="h-4 w-4" />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => onLabel(order)}
+                    className="btn-dark"
+                    disabled={!order.shipping}
+                  >
+                    <Icon name="download" className="h-4 w-4" />
+                    Etiqueta
+                  </button>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CreateListingModal({ produto, margin, setMargin, freeShipping, setFreeShipping, creating, onClose, onConfirm }) {
+  const salePrice = Math.round((Number(produto.price) || 0) / (1 - margin / 100));
+  const profit = salePrice - (Number(produto.price) || 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-4 sm:items-center">
+      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h3 className="font-bold">Criar anúncio</h3>
+            <p className="text-xs text-slate-500">O anúncio será publicado na sua conta do Mercado Livre.</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Fechar">
+            <Icon name="close" className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-5 p-5">
+          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-white">
+              <img src={imageUrl(produto.thumbnail)} alt="" className="h-full w-full object-contain p-1" />
+            </div>
+            <div className="min-w-0">
+              <p className="line-clamp-2 text-sm font-semibold">{produto.title}</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Custo {brl(produto.price)} · {produto.seller?.nickname || 'Mercado Livre'}
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between">
+              <label htmlFor="margin" className="text-sm font-semibold">
+                Margem de lucro
+              </label>
+              <span className="text-sm font-bold text-brand-700">{margin}%</span>
+            </div>
+            <input
+              id="margin"
+              type="range"
+              min="5"
+              max="60"
+              step="1"
+              value={margin}
+              onChange={(event) => setMargin(Number(event.target.value))}
+              className="mt-2 w-full accent-brand-500"
+            />
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Preço de venda</p>
+                <p className="mt-1 text-lg font-extrabold">{brl(salePrice)}</p>
+              </div>
+              <div className="rounded-lg bg-emerald-50 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">Lucro bruto</p>
+                <p className="mt-1 text-lg font-extrabold text-emerald-700">{brl(profit)}</p>
+              </div>
+            </div>
+          </div>
+
+          <label className="flex items-start gap-3 rounded-xl border border-slate-200 p-3">
+            <input
+              type="checkbox"
+              checked={freeShipping}
+              onChange={(event) => setFreeShipping(event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-brand-500"
+            />
+            <span>
+              <span className="block text-sm font-semibold">Oferecer frete grátis</span>
+              <span className="text-xs text-slate-500">
+                O custo do frete sai do seu lucro. Deixe desmarcado para proteger a margem.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
+          <button type="button" onClick={onClose} className="btn-ghost" disabled={creating}>
+            Cancelar
+          </button>
+          <button type="button" onClick={onConfirm} className="btn-primary" disabled={creating}>
+            {creating ? <Spinner className="h-4 w-4" /> : <Icon name="tag" className="h-4 w-4" />}
+            {creating ? 'Publicando...' : 'Publicar anúncio'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [account, setAccount] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [view, setView] = useState('dashboard');
+  const [mobileNav, setMobileNav] = useState(false);
+
+  const [nichos, setNichos] = useState([]);
+  const [selectedNicho, setSelectedNicho] = useState('');
+  const [produtos, setProdutos] = useState([]);
+  const [fornecedores, setFornecedores] = useState([]);
+  const [loadingProdutos, setLoadingProdutos] = useState(false);
+  const [loadingFornecedores, setLoadingFornecedores] = useState(false);
+
+  const [listings, setListings] = useState([]);
+  const [loadingListings, setLoadingListings] = useState(false);
+  const [orders, setOrders] = useState([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+
+  const [toast, setToast] = useState(null);
+  const [authError, setAuthError] = useState('');
+  const [modalProduct, setModalProduct] = useState(null);
+  const [margin, setMargin] = useState(18);
+  const [freeShipping, setFreeShipping] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  const showToast = useCallback((type, message) => {
+    setToast({ type, message, id: Date.now() });
+  }, []);
+
+  const handleApiError = useCallback(
+    (error) => {
+      if (error?.status === 401 || error?.data?.needs_reauth) {
+        setAccount((current) => (current ? { ...current, needs_reauth: true } : current));
+        showToast('error', 'Sua conexão com o Mercado Livre expirou. Reconecte a conta.');
+        return;
+      }
+      showToast('error', error?.message || 'Não foi possível concluir a operação.');
+    },
+    [showToast]
+  );
+
+  const loadListings = useCallback(async () => {
+    setLoadingListings(true);
+    try {
+      const data = await request('/listings');
+      setListings(Array.isArray(data) ? data : []);
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setLoadingListings(false);
+    }
+  }, [handleApiError]);
+
+  const loadOrders = useCallback(async () => {
+    setLoadingOrders(true);
+    try {
+      const data = await request('/orders');
+      setOrders(Array.isArray(data?.orders) ? data.orders : []);
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setLoadingOrders(false);
+    }
+  }, [handleApiError]);
+
+  const loadSession = useCallback(async () => {
+    try {
+      const me = await request('/auth/me');
+      if (me?.connected) {
+        setAccount({
+          user_id: me.user_id,
+          nickname: me.nickname,
+          expires_at: me.expires_at,
+          needs_reauth: Boolean(me.needs_reauth),
+        });
+        return true;
+      }
+      setAccount(null);
+      return false;
+    } catch (error) {
+      handleApiError(error);
+      setAccount(null);
+      return false;
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [handleApiError]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get('ml_connected');
+    const error = params.get('ml_error');
+
+    if (connected || error) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+    if (error) {
+      setAuthError(decodeURIComponent(error));
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      const authenticated = await loadSession();
+      if (cancelled) return;
+
+      try {
+        const data = await request('/suppliers/nichos');
+        if (!cancelled) setNichos(Array.isArray(data) ? data : []);
+      } catch (requestError) {
+        if (!cancelled) handleApiError(requestError);
+      }
+
+      if (authenticated) {
+        if (connected) showToast('success', 'Conta Mercado Livre conectada com sucesso.');
+        await Promise.allSettled([loadListings(), loadOrders()]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [handleApiError, loadListings, loadOrders, loadSession, showToast]);
+
+  useEffect(() => {
+    if (view === 'pedidos' && orders.length === 0 && account && !loadingOrders) {
+      loadOrders();
+    }
+  }, [view, orders.length, account, loadingOrders, loadOrders]);
+
+  const login = () => {
+    window.location.href = `${API}/auth/login`;
+  };
+
+  const logout = async () => {
+    try {
+      await request('/auth/logout', { method: 'POST' });
+    } catch {}
+    setAccount(null);
+    setListings([]);
+    setOrders([]);
+    setProdutos([]);
+    setFornecedores([]);
+    setSelectedNicho('');
+    setView('dashboard');
+  };
+
+  const selectNicho = async (nichoId) => {
+    setSelectedNicho(nichoId);
+    setProdutos([]);
+    setFornecedores([]);
+    setLoadingProdutos(true);
+    setLoadingFornecedores(true);
+
+    const produtosPromise = request(`/suppliers/produtos-reais?nicho=${encodeURIComponent(nichoId)}&limite=12&minPreco=80`)
+      .then((data) => setProdutos(Array.isArray(data?.produtos) ? data.produtos : []))
+      .catch(handleApiError)
+      .finally(() => setLoadingProdutos(false));
+
+    const fornecedoresPromise = request(`/suppliers/fornecedores?nicho=${encodeURIComponent(nichoId)}`)
+      .then((data) => setFornecedores(Array.isArray(data) ? data : []))
+      .catch(() => setFornecedores([]))
+      .finally(() => setLoadingFornecedores(false));
+
+    await Promise.allSettled([produtosPromise, fornecedoresPromise]);
+  };
+
+  const openCreateModal = (produto) => {
+    setModalProduct(produto);
+    setMargin(18);
+    setFreeShipping(false);
+    setAuthError('');
+  };
+
+  const createListing = async () => {
+    if (!modalProduct) return;
+    setCreating(true);
+    try {
+      const created = await request('/listings', {
+        method: 'POST',
+        body: {
+          catalogo_id: modalProduct.catalogo_id || modalProduct.id,
+          item_id: modalProduct.item_id || null,
+          margem: margin / 100,
+          free_shipping: freeShipping,
+          fornecedor: modalProduct.seller?.nickname || null,
+          fornecedor_id: modalProduct.seller?.id || null,
+        },
+      });
+
+      showToast('success', `Anúncio publicado com sucesso (${created.id}).`);
+      setModalProduct(null);
+      await loadListings();
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const closeListing = async (listing) => {
+    const ok = window.confirm(`Encerrar o anúncio "${listing.title}" no Mercado Livre?`);
+    if (!ok) return;
+    try {
+      await request(`/listings/${listing.id}`, { method: 'DELETE' });
+      showToast('success', 'Anúncio encerrado.');
+      await loadListings();
+    } catch (error) {
+      handleApiError(error);
+    }
+  };
+
+  const downloadLabel = async (order) => {
+    try {
+      const info = await request(`/labels/order/${order.id}/info`);
+      if (!info.label_available) {
+        showToast(
+          'warning',
+          `A etiqueta ainda não está disponível. Status do envio: ${info.status || 'desconhecido'}.`
+        );
+        return;
+      }
+      window.open(`${API}/labels/order/${order.id}`, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      handleApiError(error);
+    }
+  };
+
+  const currentTitle = VIEW_TITLES[view] || VIEW_TITLES.dashboard;
+
+  const refreshCurrent = () => {
+    if (view === 'anuncios') return loadListings();
+    if (view === 'pedidos') return loadOrders();
+    if (view === 'produtos' && selectedNicho) return selectNicho(selectedNicho);
+    if (view === 'fornecedores' && selectedNicho) return selectNicho(selectedNicho);
+    return Promise.allSettled([loadListings(), loadOrders()]);
+  };
+
+  const stats = useMemo(
+    () => ({ listings: listings.length, orders: orders.length }),
+    [listings.length, orders.length]
+  );
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
+        <div className="flex flex-col items-center gap-4">
+          <Spinner className="h-8 w-8 text-brand-400" />
+          <p className="text-sm text-slate-400">Carregando painel...</p>
         </div>
       </div>
     );
@@ -124,153 +1141,193 @@ function App() {
 
   if (!account) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6 bg-slate-900">
-        <div className="max-w-md p-8 bg-slate-800 rounded-xl border border-slate-700 shadow-2xl text-white">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded bg-green-500 flex items-center justify-center font-bold">ML</div>
-            <h1 className="text-2xl font-bold">ML Dropshipping</h1>
-          </div>
-          <p className="text-slate-300 mb-6">Faça login na sua conta Mercado Livre para continuar.</p>
-          <div className="space-y-3">
-            <button onClick={loginML} className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-semibold rounded-lg transition">Conectar Conta Mercado Livre</button>
-          </div>
-        </div>
-      </div>
+      <>
+        <LoginScreen onLogin={login} error={authError} />
+        <Toast toast={toast} onClose={() => setToast(null)} />
+      </>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8">
-      <header className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded bg-green-500 flex items-center justify-center font-bold">ML</div>
-          <h1 className="text-2xl font-bold">ML Dropshipping</h1>
-        </div>
-        <div className="flex items-center gap-2 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Conectado</span>
-          <span className="text-xs text-slate-400 ml-2">{account.nickname}</span>
-          <button onClick={logout} className="ml-2 text-xs bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1 rounded font-semibold">Desconectar</button>
-        </div>
-      </header>
+    <div className="min-h-screen lg:flex">
+      {mobileNav ? (
+        <button
+          type="button"
+          aria-label="Fechar menu"
+          onClick={() => setMobileNav(false)}
+          className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden"
+        />
+      ) : null}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <aside className="lg:col-span-1">
-          <nav className="space-y-1">
-            <button
-              onClick={() => setView('dashboard')}
-              className={cn('w-full text-left px-4 py-3 rounded-lg transition', view === 'dashboard' ? 'bg-yellow-500 text-black font-semibold' : 'text-slate-600 hover:bg-slate-100')}
-            >Dashboard</button>
-            <button
-              onClick={() => setView('produtos')}
-              className={cn('w-full text-left px-4 py-3 rounded-lg transition', view === 'produtos' ? 'bg-yellow-500 text-black font-semibold' : 'text-slate-600 hover:bg-slate-100')}
-            >Produtos</button>
-            <button
-              onClick={() => setView('fornecedores')}
-              className={cn('w-full text-left px-4 py-3 rounded-lg transition', view === 'fornecedores' ? 'bg-yellow-500 text-black font-semibold' : 'text-slate-600 hover:bg-slate-100')}
-            >Fornecedores</button>
-            <button
-              onClick={() => setView('listings')}
-              className={cn('w-full text-left px-4 py-3 rounded-lg transition', view === 'listings' ? 'bg-yellow-500 text-black font-semibold' : 'text-slate-600 hover:bg-slate-100')}
-            >Anúncios</button>
-            <button
-              onClick={() => setView('pedidos')}
-              className={cn('w-full text-left px-4 py-3 rounded-lg transition', view === 'pedidos' ? 'bg-yellow-500 text-black font-semibold' : 'text-slate-600 hover:bg-slate-100')}
-            >Pedidos</button>
-            <button onClick={logout} className="w-full text-left px-4 py-3 rounded-lg text-red-600 hover:bg-red-50 font-semibold">Sair</button>
-          </nav>
-        </aside>
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-slate-800 bg-slate-950 text-white transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${
+          mobileNav ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex items-center gap-3 px-5 py-5">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-400 font-black text-slate-950">
+            ML
+          </div>
+          <div>
+            <p className="text-sm font-bold">Melimax</p>
+            <p className="text-[11px] uppercase tracking-wider text-slate-400">Painel pessoal</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMobileNav(false)}
+            className="ml-auto rounded-lg p-2 text-slate-400 hover:bg-white/10 lg:hidden"
+            aria-label="Fechar menu"
+          >
+            <Icon name="close" className="h-5 w-5" />
+          </button>
+        </div>
 
-        <main className="lg:col-span-2">
-          {view === 'dashboard' && (
-            <div className="space-y-6">
-              <h1 className="text-xl font-bold">Visão Geral</h1>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                {[['Anúncios ativos', listings.length], ['Fornecedores', fornecedores.length], ['Margem média', '18%'], ['Preço mínimo', 'R$ 80,00']].map(([label, valor]) => (
-                  <div key={label} className="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
-                    <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{label}</div>
-                    <div className="text-2xl font-bold mt-1">{valor}</div>
-                  </div>
-                ))}
-              </div>
+        <nav className="flex-1 space-y-1 px-3 py-2">
+          {NAV_ITEMS.map((item) => {
+            const active = view === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setView(item.id);
+                  setMobileNav(false);
+                }}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
+                  active
+                    ? 'bg-brand-400 text-slate-950'
+                    : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                <Icon name={item.icon} className="h-5 w-5" />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="border-t border-white/10 p-3">
+          <div className="rounded-xl bg-white/5 p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Conta conectada</p>
+            <p className="mt-1 truncate text-sm font-bold">{account.nickname}</p>
+            <p className="text-[11px] text-slate-400">ID {account.user_id}</p>
+            <div className="mt-3 flex gap-2">
+              <button type="button" onClick={login} className="btn-ghost flex-1 px-2 py-1.5 text-xs">
+                Reconectar
+              </button>
+              <button type="button" onClick={logout} className="btn-ghost flex-1 px-2 py-1.5 text-xs">
+                <Icon name="logout" className="h-3.5 w-3.5" />
+                Sair
+              </button>
             </div>
-          )}
-          {view === 'produtos' && (
-            <div className="space-y-6">
-              <h1 className="text-xl font-bold">Produtos Reais por Nicho</h1>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                {nichos.map(n => (
-                  <button key={n.id} onClick={() => carregarProdutos(n.id)} className="p-3 bg-white rounded-lg border border-slate-200 hover:border-yellow-200 hover:bg-yellow-50 text-left transition">
-                    <div className="font-semibold text-sm">{n.nome}</div>
-                    <div className="text-xs text-slate-500 mt-1">Ticket: R$ {n.media_ticket}</div>
-                  </button>
-                ))}
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                {loading ? (
-                  <div className="col-span-full text-center py-10 text-slate-400">Carregando produtos reais...</div>
-                ) : produtos.map(p => (
-                  <div key={p.id} className="p-4 bg-white rounded-lg border border-slate-200 shadow-sm">
-                    <img src={p.thumbnail} alt={p.title} className="w-full h-32 object-cover rounded-lg mb-3" />
-                    <div className="font-medium text-sm mb-1 line-clamp-2">{p.title}</div>
-                    <div className="text-xl font-bold text-green-600 mb-3">R$ {p.price.toLocaleString('pt-BR')}</div>
-                    <button onClick={() => criarAnuncio(p, fornecedores[0])} className="w-full py-2 bg-yellow-500 hover:bg-yellow-600 text-black rounded font-sm font-semibold">Criar Anúncio</button>
-                  </div>
-                ))}
-              </div>
+          </div>
+        </div>
+      </aside>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-20 border-b border-slate-200 bg-slate-100/90 backdrop-blur">
+          <div className="flex items-center gap-3 px-4 py-4 lg:px-8">
+            <button
+              type="button"
+              onClick={() => setMobileNav(true)}
+              className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 lg:hidden"
+              aria-label="Abrir menu"
+            >
+              <Icon name="menu" className="h-5 w-5" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-xl font-extrabold tracking-tight">{currentTitle.title}</h1>
+              <p className="truncate text-xs text-slate-500">{currentTitle.subtitle}</p>
             </div>
-          )}
-          {view === 'fornecedores' && (
-            <div className="space-y-6">
-              <h1 className="text-xl font-bold">Fornecedores Validados</h1>
-              <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                {fornecedores.map(f => (
-                  <div key={f.id} className="p-4 bg-white rounded-lg border border-slate-200 shadow-sm">
-                    <div className="font-semibold text-sm">{f.nome}</div>
-                    <div className="text-xs text-slate-500 mt-1">Reputação: {f.reputacao}</div>
-                    <div className="text-xs mt-1">Avaliação: {f.avaliacao}/5</div>
-                    <div className="text-xs mt-1">Entregas no prazo: {f.entregas_no_prazo}%</div>
-                  </div>
-                ))}
-              </div>
+            <div className="hidden items-center gap-2 sm:flex">
+              <span className="badge bg-white text-slate-600 ring-1 ring-slate-200">
+                {stats.listings} anúncios
+              </span>
+              <span className="badge bg-white text-slate-600 ring-1 ring-slate-200">
+                {stats.orders} pedidos
+              </span>
             </div>
-          )}
-          {view === 'listings' && (
-            <div className="space-y-6">
-              <h1 className="text-xl font-bold">Anúncios no Mercado Livre</h1>
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Título</th>
-                      <th className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Preço</th>
-                      <th className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Fornecedor</th>
-                      <th className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Qualificação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {listings.map(l => (
-                      <tr key={l.ml_item_id} className="border-t border-slate-100">
-                        <td className="px-4 py-3 text-sm">{l.title}</td>
-                        <td className="px-4 py-3 text-sm font-bold">R$ {l.price.toLocaleString('pt-BR')}</td>
-                        <td className="px-4 py-3 text-sm">{l.supplier}</td>
-                        <td className="px-4 py-3 text-sm">{l.score}%</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <button type="button" onClick={refreshCurrent} className="btn-ghost px-3 py-2" title="Atualizar dados">
+              <Icon name="refresh" className="h-4 w-4" />
+              <span className="hidden sm:inline">Atualizar</span>
+            </button>
+          </div>
+        </header>
+
+        {account.needs_reauth ? (
+          <div className="mx-4 mt-4 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between lg:mx-8">
+            <div className="flex items-start gap-2">
+              <Icon name="alert" className="mt-0.5 h-5 w-5 shrink-0" />
+              <p>
+                Sua sessão do Mercado Livre expirou. Reconecte para continuar usando produtos,
+                anúncios e pedidos.
+              </p>
             </div>
-          )}
-          {view === 'pedidos' && (
-            <div className="p-6 bg-white rounded-xl border border-slate-200 shadow-sm">
-              <h1 className="text-xl font-bold mb-4">Pedidos e Etiquetas</h1>
-              <p className="text-sm text-slate-600">Os pedidos são importados da sua conta Mercado Livre. As etiquetas de remessa são enviadas automaticamente ao fornecedor.</p>
-            </div>
-          )}
+            <button type="button" onClick={login} className="btn-dark shrink-0">
+              Reconectar conta
+            </button>
+          </div>
+        ) : null}
+
+        <main className="flex-1 px-4 py-6 lg:px-8">
+          {view === 'dashboard' ? (
+            <DashboardView
+              account={account}
+              listings={listings}
+              orders={orders}
+              onNavigate={setView}
+            />
+          ) : null}
+          {view === 'produtos' ? (
+            <ProductsView
+              nichos={nichos}
+              selectedNicho={selectedNicho}
+              onSelectNicho={selectNicho}
+              produtos={produtos}
+              loading={loadingProdutos}
+              onCreate={openCreateModal}
+            />
+          ) : null}
+          {view === 'fornecedores' ? (
+            <SuppliersView
+              fornecedores={fornecedores}
+              loading={loadingFornecedores}
+              selectedNicho={selectedNicho}
+            />
+          ) : null}
+          {view === 'anuncios' ? (
+            <ListingsView
+              listings={listings}
+              loading={loadingListings}
+              onRefresh={loadListings}
+              onClose={closeListing}
+            />
+          ) : null}
+          {view === 'pedidos' ? (
+            <OrdersView
+              orders={orders}
+              loading={loadingOrders}
+              onRefresh={loadOrders}
+              onLabel={downloadLabel}
+            />
+          ) : null}
         </main>
       </div>
+
+      <Toast toast={toast} onClose={() => setToast(null)} />
+
+      {modalProduct ? (
+        <CreateListingModal
+          produto={modalProduct}
+          margin={margin}
+          setMargin={setMargin}
+          freeShipping={freeShipping}
+          setFreeShipping={setFreeShipping}
+          creating={creating}
+          onClose={() => setModalProduct(null)}
+          onConfirm={createListing}
+        />
+      ) : null}
     </div>
   );
 }
-
-export default App;

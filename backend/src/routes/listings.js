@@ -1,161 +1,463 @@
 import express from 'express';
-import fetch from 'node-fetch';
-import { query, memPush } from '../lib/db.js';
+import { query } from '../lib/db.js';
+import { mlFetch } from '../lib/ml.js';
 
 const router = express.Router();
 
-const NICHOS = [
-  { id: 'eletronicos', nome: 'Eletrônicos', media_ticket: 450 },
-  { id: 'celulares', nome: 'Celulares e Acessórios', media_ticket: 320 },
-  { id: 'informatica', nome: 'Informática', media_ticket: 680 },
-  { id: 'games', nome: 'Games e Consoles', media_ticket: 590 },
-  { id: 'casa', nome: 'Casa e Decoração', media_ticket: 280 },
-  { id: 'moda', nome: 'Moda e Acessórios', media_ticket: 210 },
-  { id: 'beleza', nome: 'Beleza e Perfumaria', media_ticket: 180 },
-  { id: 'esportes', nome: 'Esportes e Lazer', media_ticket: 340 },
-  { id: 'automotivo', nome: 'Automotivo', media_ticket: 420 },
-  { id: 'bebe', nome: 'Bebê e Infantil', media_ticket: 260 },
-  { id: 'pet', nome: 'Pet Shop', media_ticket: 190 },
-  { id: 'ferramentas', nome: 'Ferramentas e Construção', media_ticket: 310 },
-  { id: 'eletrodomesticos', nome: 'Eletrodomésticos', media_ticket: 750 },
-  { id: 'relogios', nome: 'Relógios e Joias', media_ticket: 520 },
-  { id: 'livros', nome: 'Livros e Papelaria', media_ticket: 90 },
-  { id: 'musica', nome: 'Instrumentos Musicais', media_ticket: 400 },
-  { id: 'brinquedos', nome: 'Brinquedos e Hobbies', media_ticket: 200 },
-  { id: 'saude', nome: 'Saúde e Cuidado Pessoal', media_ticket: 230 },
-  { id: 'alimentos', nome: 'Alimentos e Bebidas', media_ticket: 150 },
-  { id: 'cama', nome: 'Cama, Mesa e Banho', media_ticket: 240 },
-];
+const LISTING_TYPE = process.env.ML_LISTING_TYPE || 'gold_special';
+const SKIP_ATTRIBUTES = new Set([
+  'ITEM_CONDITION',
+  'SELLER_SKU',
+  'SELLER_PACKAGE_HEIGHT',
+  'SELLER_PACKAGE_LENGTH',
+  'SELLER_PACKAGE_WIDTH',
+  'SELLER_PACKAGE_WEIGHT',
+]);
 
-const FORNECEDORES = [
-  { id: 'magalu', nome: 'Magazine Luiza', avaliacao: 4.6, entregas_no_prazo: 92, reputacao: 'A' },
-  { id: 'americanas', nome: 'Americanas', avaliacao: 4.4, entregas_no_prazo: 89, reputacao: 'A' },
-  { id: 'extra', nome: 'Extra', avaliacao: 4.3, entregas_no_prazo: 88, reputacao: 'B' },
-  { id: 'pontofrio', nome: 'Pontofrio', avaliacao: 4.2, entregas_no_prazo: 87, reputacao: 'B' },
-  { id: 'submarino', nome: 'Submarino', avaliacao: 4.4, entregas_no_prazo: 90, reputacao: 'A' },
-  { id: 'shoptime', nome: 'Shoptime', avaliacao: 4.3, entregas_no_prazo: 89, reputacao: 'A' },
-  { id: 'fastshop', nome: 'Fast Shop', avaliacao: 4.5, entregas_no_prazo: 91, reputacao: 'A' },
-  { id: 'kabum', nome: 'Kabum', avaliacao: 4.6, entregas_no_prazo: 93, reputacao: 'A' },
-  { id: 'pichau', nome: 'Pichau', avaliacao: 4.5, entregas_no_prazo: 92, reputacao: 'A' },
-  { id: 'terabyteshop', nome: 'Terabyte Shop', avaliacao: 4.6, entregas_no_prazo: 93, reputacao: 'A' },
-];
+function clampMargin(value) {
+  const margin = Number(value);
+  if (!Number.isFinite(margin)) return 0.18;
+  return Math.min(Math.max(margin, 0.05), 0.6);
+}
 
-router.get('/nichos', (_req, res) => res.json(NICHOS));
+function buildAttributes(attributes) {
+  const seen = new Set();
+  return (attributes || [])
+    .filter((attr) => attr.id && !SKIP_ATTRIBUTES.has(attr.id))
+    .filter((attr) => attr.value_id || attr.value_name)
+    .filter((attr) => {
+      if (seen.has(attr.id)) return false;
+      seen.add(attr.id);
+      return true;
+    })
+    .map((attr) =>
+      attr.value_id
+        ? { id: attr.id, value_id: String(attr.value_id) }
+        : { id: attr.id, value_name: String(attr.value_name) }
+    );
+}
 
-router.get('/fornecedores', (_req, res) => res.json(FORNECEDORES));
+function buildPictures(pictures) {
+  return (pictures || [])
+    .map((picture) => picture.secure_url || picture.url)
+    .filter(Boolean)
+    .slice(0, 6)
+    .map((url) => ({ source: String(url).replace(/^http:/, 'https:') }));
+}
 
-router.get('/produtos-reais', async (_req, res) => {
-  const { nicho, limite = 20, minPreco = 80 } = _req.query;
-  try {
-    const url = nicho
-      ? `https://api.mercadolibre.com/sites/MLB/search?category=${nicho}&limit=${limite}&sort=relevance`
-      : `https://api.mercadolibre.com/sites/MLB/search?limit=${limite}&sort=relevance`;
-    const resp = await fetch(url);
-    const data = await resp.json();
-    const produtos = (data.results || [])
-      .filter(p => p.price >= minPreco)
-      .map(p => ({
-        id: p.id,
-        title: p.title,
-        price: p.price,
-        currency_id: p.currency_id,
-        thumbnail: p.thumbnail,
-        permalink: p.permalink,
-        condition: p.condition,
-        shipping: p.shipping,
-        seller: p.seller,
-      }));
-    res.json({ total: produtos.length, produtos });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+function sanitizeTitle(title) {
+  return String(title || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+}
 
-function scoreQualificacao(anuncio) {
+function scoreListing(payload, descriptionText) {
   let score = 0;
-  if (anuncio.title && anuncio.title.length > 20) score += 20;
-  if (anuncio.pictures && anuncio.pictures.length >= 3) score += 20;
-  if (anuncio.description && anuncio.description.plain_text && anuncio.description.plain_text.length > 100) score += 20;
-  if (anuncio.price >= 80) score += 15;
-  if (anuncio.shipping && anuncio.shipping.free_shipping) score += 10;
-  if (anuncio.attributes && anuncio.attributes.length > 5) score += 10;
-  if (anuncio.accepts_mercadopago) score += 5;
+  if (payload.title && payload.title.length >= 20) score += 20;
+  if (payload.pictures && payload.pictures.length >= 3) score += 20;
+  if (String(descriptionText || '').length > 100) score += 20;
+  if (payload.price >= 80) score += 15;
+  if (payload.shipping?.free_shipping) score += 10;
+  if (payload.attributes && payload.attributes.length > 5) score += 10;
+  if (payload.accepts_mercadopago) score += 5;
   return Math.min(score, 100);
 }
 
-router.post('/', async (req, res) => {
-  const rows = (await query('SELECT access_token FROM ml_accounts ORDER BY updated_at DESC LIMIT 1')).rows;
-  const t = rows[0];
-  if (!t) return res.status(401).json({ error: 'Conta ML nao conectada' });
+function formatMlError(err) {
+  const causes = err?.details?.cause;
+  if (Array.isArray(causes) && causes.length) {
+    return causes
+      .map((cause) => cause.description || cause.message || cause.code)
+      .filter(Boolean)
+      .join(' | ');
+  }
+  return err?.message || 'Falha ao criar anuncio no Mercado Livre';
+}
 
-  const { produto, fornecedor, margem = 0.18 } = req.body;
-  const precoVenda = Math.round(produto.price / (1 - margem));
-  if (precoVenda < 80) return res.status(400).json({ error: 'Preco minimo de 80 reais necessario' });
+function pickOffer(items, wantedItemId) {
+  const valid = (items || []).filter((item) => Number(item.price) > 0);
+  if (!valid.length) return null;
+  if (wantedItemId) {
+    const wanted = valid.find((item) => item.item_id === wantedItemId);
+    if (wanted) return wanted;
+  }
+  return [...valid].sort((a, b) => Number(a.price) - Number(b.price))[0];
+}
 
-  const anuncio = {
-    title: `${produto.title} - Envio Rapido | ${fornecedor.nome}`,
-    category_id: produto.category_id || 'MLB1055',
-    price: precoVenda,
-    currency_id: 'BRL',
-    available_quantity: 999,
-    buying_mode: 'buy_it_now',
-    condition: produto.condition || 'new',
-    listing_type_id: 'gold_special',
-    description: { plain_text: produto.description || `Produto original ${produto.title}. Envio rápido e seguro. Qualidade garantida.` },
-    pictures: (produto.pictures || []).slice(0, 6).map(p => ({ url: p.secure_url || p.url })),
-    video_id: null,
-    accepts_mercadopago: true,
-    non_mercado_pago_payment_methods: [],
-    shipping: { mode: 'me2', local_pick_up: false, free_shipping: precoVenda >= 200 },
-    local_pick_up: false,
-    attributes: [
-      { id: 'BRAND', value_name: fornecedor.nome },
-      { id: 'ITEM_CONDITION', value_name: 'Novo' },
-      { id: 'WARRANTY_TYPE', value_name: 'Garantia de fábrica' },
-      { id: 'WARRANTY_TIME', value_name: '90 dias' },
-    ],
-  };
+function normalizeText(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'object') {
+    return String(
+      value.plain_text || value.text || value.description || ''
+    ).trim();
+  }
+  return '';
+}
 
-  const score = scoreQualificacao(anuncio);
-  if (score < 85) {
-    return res.status(400).json({ error: `Qualificacao do anuncio abaixo de 85% (${score}%).` });
+async function resolveSource(body) {
+  const catalogoId =
+    body.catalogo_id || body.catalog_product_id || body.catalogoId;
+  const itemId = body.item_id || body.itemId;
+
+  if (catalogoId) {
+    const product = await mlFetch(`/products/${encodeURIComponent(catalogoId)}`);
+    const offers = await mlFetch(
+      `/products/${encodeURIComponent(catalogoId)}/items?limit=20`
+    );
+    const offer = pickOffer(offers.results, itemId);
+    if (!offer) {
+      const err = new Error('Nenhuma oferta ativa encontrada para este produto.');
+      err.status = 422;
+      throw err;
+    }
+    return {
+      kind: 'catalog',
+      product,
+      offer,
+      itemId: offer.item_id,
+      title: product.name,
+      price: Number(offer.price) || 0,
+      currencyId: offer.currency_id || 'BRL',
+      condition: offer.condition || 'new',
+      categoryId: offer.category_id || null,
+      pictures: product.pictures || [],
+      attributes: product.attributes || [],
+      sellerId: offer.seller_id ? String(offer.seller_id) : null,
+      warranty: offer.warranty || null,
+      description: normalizeText(product.short_description),
+    };
   }
 
+  if (!itemId) {
+    const err = new Error('Informe catalogo_id ou item_id.');
+    err.status = 400;
+    throw err;
+  }
+
+  let item;
   try {
-    const resp = await fetch('https://api.mercadolibre.com/items', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${t.access_token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(anuncio),
+    item = await mlFetch(`/items/${encodeURIComponent(itemId)}`);
+  } catch (err) {
+    if (err.status === 403) {
+      const friendly = new Error(
+        'O Mercado Livre nao libera os detalhes de itens de terceiros. Use um produto do catalogo.'
+      );
+      friendly.status = 422;
+      throw friendly;
+    }
+    throw err;
+  }
+
+  const description = await mlFetch(
+    `/items/${encodeURIComponent(itemId)}/description`
+  ).catch(() => null);
+
+  return {
+    kind: 'item',
+    product: null,
+    offer: null,
+    itemId,
+    title: item.title,
+    price: Number(item.price) || 0,
+    currencyId: item.currency_id || 'BRL',
+    condition: item.condition || 'new',
+    categoryId: item.category_id || null,
+    pictures: item.pictures || [],
+    attributes: item.attributes || [],
+    sellerId: item.seller?.id ? String(item.seller.id) : null,
+    warranty: null,
+    description: normalizeText(description),
+  };
+}
+
+function buildDescription(source, title) {
+  const custom = normalizeText(source.description);
+  if (custom.length > 60) return custom;
+  const brand = (source.attributes || []).find((attr) => attr.id === 'BRAND');
+  const brandText = brand?.value_name ? ` Marca: ${brand.value_name}.` : '';
+  return `${title}. Produto novo e pronto para envio.${brandText}`;
+}
+
+function buildPayloads(source, body, margin, freeShipping, descriptionText) {
+  const sourcePrice = Number(source.price) || 0;
+  if (sourcePrice <= 0) {
+    const err = new Error('O produto de origem nao possui preco valido.');
+    err.status = 422;
+    throw err;
+  }
+  if (!source.categoryId) {
+    const err = new Error('Nao foi possivel identificar a categoria do produto.');
+    err.status = 422;
+    throw err;
+  }
+
+  const pictures = buildPictures(source.pictures);
+  if (!pictures.length) {
+    const err = new Error('O produto de origem nao possui imagens utilizaveis.');
+    err.status = 422;
+    throw err;
+  }
+
+  const price = Math.round(sourcePrice / (1 - margin));
+  const title = sanitizeTitle(body.titulo || source.title);
+
+  const base = {
+    title,
+    category_id: source.categoryId,
+    price,
+    currency_id: source.currencyId,
+    available_quantity: Math.max(Number(body.available_quantity) || 1, 1),
+    buying_mode: 'buy_it_now',
+    condition: source.condition,
+    listing_type_id: body.listing_type_id || LISTING_TYPE,
+    pictures,
+    accepts_mercadopago: true,
+    shipping: {
+      mode: 'me2',
+      local_pick_up: false,
+      free_shipping: Boolean(freeShipping),
+    },
+    attributes: buildAttributes(source.attributes),
+  };
+
+  const payloads = [];
+
+  if (source.product) {
+    payloads.push({
+      variant: 'catalog',
+      payload: {
+        ...base,
+        catalog_product_id: source.product.id,
+        catalog_listing: true,
+        family_name: sanitizeTitle(source.product.name),
+      },
     });
-    const data = await resp.json();
-    if (!resp.ok) return res.status(resp.status).json({ error: data });
+  }
 
-    const listing = {
-      id: Date.now(),
-      ml_item_id: data.id,
-      title: anuncio.title,
-      price: precoVenda,
-      supplier: fornecedor.nome,
-      status: 'active',
-      score,
-      created_at: new Date().toISOString(),
-    };
-    memPush('listings', listing);
-    await query(
-      `INSERT INTO listings (ml_item_id, title, price, supplier, status, score, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW()) RETURNING *`,
-      [data.id, anuncio.title, precoVenda, fornecedor.nome, 'active', score]
-    ).catch(() => {});
+  payloads.push({ variant: 'normal', payload: base });
 
-    res.json({ ...data, score, preco_venda: precoVenda, margem_aplicada: margem });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+  if (base.listing_type_id !== 'free') {
+    payloads.push({
+      variant: 'free',
+      payload: { ...base, listing_type_id: 'free' },
+    });
+  }
+
+  return {
+    payloads,
+    price,
+    margin,
+    sourcePrice,
+    title,
+    descriptionText,
+    pictures,
+  };
+}
+
+async function createItem(payloads) {
+  const errors = [];
+  for (const { variant, payload } of payloads) {
+    try {
+      const created = await mlFetch('/items', { method: 'POST', body: payload });
+      return { created, variant, errors };
+    } catch (err) {
+      errors.push(`${variant}: ${formatMlError(err)}`);
+    }
+  }
+  const err = new Error(errors[errors.length - 1] || 'Falha ao criar anuncio.');
+  err.friendlyMessage = errors.join(' | ');
+  err.status = 422;
+  throw err;
+}
+
+async function createDescription(itemId, text) {
+  if (!text) return null;
+  try {
+    return await mlFetch(`/items/${encodeURIComponent(itemId)}/description`, {
+      method: 'POST',
+      body: { plain_text: text },
+    });
+  } catch (err) {
+    console.error('[listings] falha ao criar descricao:', formatMlError(err));
+    return null;
+  }
+}
+
+router.get('/', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      'SELECT * FROM listings ORDER BY created_at DESC LIMIT 200'
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
   }
 });
 
-router.get('/', async (_req, res) => {
-  const rows = (await query('SELECT * FROM listings ORDER BY created_at DESC LIMIT 50')).rows;
-  res.json(rows.length ? rows : mem('listings'));
+router.post('/validar', async (req, res, next) => {
+  try {
+    const margin = clampMargin(req.body.margem ?? req.body.margin);
+    const source = await resolveSource(req.body);
+    const descriptionText = buildDescription(source, source.title);
+    const built = buildPayloads(
+      source,
+      req.body,
+      margin,
+      req.body.free_shipping,
+      descriptionText
+    );
+
+    const results = [];
+    for (const { variant, payload } of built.payloads) {
+      try {
+        const result = await mlFetch('/items/validate', {
+          method: 'POST',
+          body: payload,
+        });
+        results.push({ variant, ok: true, result });
+      } catch (err) {
+        results.push({
+          variant,
+          ok: false,
+          error: formatMlError(err),
+          details: err.details || null,
+        });
+      }
+    }
+
+    res.json({
+      source: {
+        catalogo_id: source.product?.id || null,
+        item_id: source.itemId,
+        title: built.title,
+        source_price: built.sourcePrice,
+        price: built.price,
+        category_id: source.categoryId,
+        seller_id: source.sellerId,
+      },
+      variants: results,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/', async (req, res, next) => {
+  try {
+    const margin = clampMargin(req.body.margem ?? req.body.margin);
+    const source = await resolveSource(req.body);
+    const descriptionText = buildDescription(source, source.title);
+    const built = buildPayloads(
+      source,
+      req.body,
+      margin,
+      req.body.free_shipping,
+      descriptionText
+    );
+
+    let created;
+    let usedVariant;
+    let attemptErrors = [];
+    try {
+      const result = await createItem(built.payloads);
+      created = result.created;
+      usedVariant = result.variant;
+      attemptErrors = result.errors;
+    } catch (err) {
+      return res.status(err.status && err.status < 500 ? 422 : 502).json({
+        error: err.friendlyMessage || err.message,
+        details: err.details || null,
+      });
+    }
+
+    await createDescription(created.id, descriptionText);
+
+    const supplierInput = req.body.fornecedor;
+    const supplier =
+      (typeof supplierInput === 'string' ? supplierInput : null) ||
+      supplierInput?.nome ||
+      (source.sellerId ? `Vendedor ${source.sellerId}` : 'Mercado Livre');
+    const supplierId =
+      req.body.fornecedor_id ||
+      (typeof supplierInput === 'object' ? supplierInput?.id : null) ||
+      source.sellerId ||
+      null;
+
+    const score = scoreListing(built.payloads[0].payload, descriptionText);
+    const permalink =
+      created.permalink ||
+      `https://www.mercadolivre.com.br/p/${source.product?.id || source.itemId}`;
+
+    await query(
+      `INSERT INTO listings
+         (ml_item_id, title, price, supplier, status, score, source_item_id,
+          source_price, supplier_id, permalink, margin, thumbnail, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+       ON CONFLICT (ml_item_id) DO UPDATE SET
+         title = EXCLUDED.title,
+         price = EXCLUDED.price,
+         status = EXCLUDED.status,
+         score = EXCLUDED.score`,
+      [
+        created.id,
+        built.title,
+        built.price,
+        supplier,
+        created.status || 'active',
+        score,
+        source.itemId,
+        built.sourcePrice,
+        supplierId ? String(supplierId) : null,
+        permalink,
+        built.margin,
+        built.pictures[0]?.source || null,
+      ]
+    );
+
+    res.status(201).json({
+      ...created,
+      score,
+      price: built.price,
+      margin: built.margin,
+      variant: usedVariant,
+      source_item_id: source.itemId,
+      catalogo_id: source.product?.id || null,
+      source_price: built.sourcePrice,
+      permalink,
+      warnings: [
+        ...(attemptErrors.length ? [`Tentativas: ${attemptErrors.join(' | ')}`] : []),
+        ...(score < 85
+          ? ['Qualificacao abaixo de 85%. O anuncio foi criado, mas pode ter menos visitas.']
+          : []),
+      ],
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      'SELECT * FROM listings WHERE id = $1 OR ml_item_id = $1 LIMIT 1',
+      [req.params.id]
+    );
+    const listing = rows[0];
+    if (!listing) return res.status(404).json({ error: 'Anuncio nao encontrado.' });
+
+    try {
+      await mlFetch(`/items/${listing.ml_item_id}`, {
+        method: 'PUT',
+        body: { status: 'closed' },
+      });
+    } catch (err) {
+      if (err.status !== 404) throw err;
+    }
+
+    await query('UPDATE listings SET status = $1 WHERE id = $2', ['closed', listing.id]);
+    res.json({ ok: true, status: 'closed' });
+  } catch (err) {
+    next(err);
+  }
 });
 
 export default router;

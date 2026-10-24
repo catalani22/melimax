@@ -1,72 +1,185 @@
 import express from 'express';
-import querystring from 'node:querystring';
+import crypto from 'node:crypto';
 import fetch from 'node-fetch';
-import { query, memPush, memFind } from '../lib/db.js';
+import { query } from '../lib/db.js';
+import { getAccount } from '../lib/ml.js';
+import { FRONTEND_URL, REDIRECT_URI, frontendUrl } from '../lib/config.js';
 
 const router = express.Router();
 
-const APP_ID = process.env.ML_APP_ID;
-const CLIENT_SECRET = process.env.ML_CLIENT_SECRET;
-const REDIRECT_URI = process.env.ML_REDIRECT_URI;
+const ML_APP_ID = process.env.ML_APP_ID;
+const ML_CLIENT_SECRET = process.env.ML_CLIENT_SECRET;
+const STATE_TTL_MS = 10 * 60 * 1000;
 
-router.get('/login', (req, res) => {
-  const params = querystring.stringify({
-    response_type: 'code',
-    client_id: APP_ID,
+function signState() {
+  const payload = `${Date.now()}.${crypto.randomBytes(16).toString('hex')}`;
+  const signature = crypto
+    .createHmac('sha256', ML_CLIENT_SECRET || '')
+    .update(payload)
+    .digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function verifyState(state) {
+  if (!state || !ML_CLIENT_SECRET) return false;
+  const parts = String(state).split('.');
+  if (parts.length !== 3) return false;
+  const [timestamp, nonce, signature] = parts;
+  const expected = crypto
+    .createHmac('sha256', ML_CLIENT_SECRET)
+    .update(`${timestamp}.${nonce}`)
+    .digest('base64url');
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+  return Date.now() - Number(timestamp) < STATE_TTL_MS;
+}
+
+function redirectError(res, message) {
+  return res.redirect(frontendUrl('/', { ml_error: String(message).slice(0, 300) }));
+}
+
+function redirectConnected(res) {
+  return res.redirect(frontendUrl('/', { ml_connected: '1' }));
+}
+
+async function exchangeCode(code) {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: ML_APP_ID,
+    client_secret: ML_CLIENT_SECRET,
+    code,
     redirect_uri: REDIRECT_URI,
-    scope: 'read write',
   });
-  res.redirect(`https://auth.mercadolivre.com.br/authorization?${params}`);
+
+  const res = await fetch('https://api.mercadolibre.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.access_token) {
+    const message = data.message || data.error_description || data.error || 'Falha ao trocar o code por token';
+    throw new Error(message);
+  }
+  return data;
+}
+
+router.get(['/login', '/ml/login'], (req, res) => {
+  if (!ML_APP_ID || !ML_CLIENT_SECRET) {
+    return res.status(500).json({
+      error: 'ML_APP_ID/ML_CLIENT_SECRET nao configurados no backend.',
+    });
+  }
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: ML_APP_ID,
+    redirect_uri: REDIRECT_URI,
+    scope: 'offline_access read write',
+    state: signState(),
+  });
+
+  res.set('Cache-Control', 'no-store');
+  res.redirect(`https://auth.mercadolivre.com.br/authorization?${params.toString()}`);
 });
 
-router.get('/callback', async (req, res) => {
-  const { code } = req.query;
-  if (!code) return res.status(400).json({ error: 'code nao fornecido' });
+const callbackHandler = async (req, res) => {
+  const { code, state, error, error_description } = req.query;
+
+  if (error) {
+    return redirectError(res, error_description || error);
+  }
+  if (!code) {
+    return redirectError(res, 'Codigo de autorizacao ausente.');
+  }
+  if (!verifyState(state)) {
+    return redirectError(res, 'State invalido ou expirado. Tente conectar novamente.');
+  }
 
   try {
-    const tokenRes = await fetch('https://api.mercadolibre.com/oauth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: querystring.stringify({
-        grant_type: 'authorization_code',
-        client_id: APP_ID,
-        client_secret: CLIENT_SECRET,
-        code,
-        redirect_uri: REDIRECT_URI,
-      }),
-    });
-    const data = await tokenRes.json();
-    if (!tokenRes.ok) return res.status(400).json({ error: data });
+    const token = await exchangeCode(code);
 
-    const account = {
-      id: Date.now(),
-      user_id: data.user_id,
-      nickname: data.nickname,
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-      expires_in: data.expires_in,
-      updated_at: new Date().toISOString(),
-    };
-    const existing = memFind('accounts', a => a.user_id === data.user_id);
-    if (existing) Object.assign(existing, account);
-    else memPush('accounts', account);
+    let nickname = token.nickname || null;
+    try {
+      const userRes = await fetch(`https://api.mercadolibre.com/users/${token.user_id}`, {
+        headers: { Authorization: `Bearer ${token.access_token}` },
+      });
+      if (userRes.ok) {
+        const user = await userRes.json();
+        nickname = user.nickname || nickname;
+      }
+    } catch {}
+
+    const expiresIn = Number(token.expires_in) || 21600;
+    const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
     await query(
-      `INSERT INTO ml_accounts (user_id, nickname, access_token, refresh_token, expires_in, updated_at)
-       VALUES ($1,$2,$3,$4,$5,NOW()) ON CONFLICT (user_id) DO UPDATE SET access_token=EXCLUDED.access_token, refresh_token=EXCLUDED.refresh_token, expires_in=EXCLUDED.expires_in, updated_at=NOW()`,
-      [data.user_id, data.nickname, data.access_token, data.refresh_token, data.expires_in]
-    ).catch(() => {});
+      `INSERT INTO ml_accounts
+         (user_id, nickname, access_token, refresh_token, expires_in, expires_at, scope, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         nickname = EXCLUDED.nickname,
+         access_token = EXCLUDED.access_token,
+         refresh_token = EXCLUDED.refresh_token,
+         expires_in = EXCLUDED.expires_in,
+         expires_at = EXCLUDED.expires_at,
+         scope = EXCLUDED.scope,
+         updated_at = NOW()`,
+      [
+        token.user_id,
+        nickname,
+        token.access_token,
+        token.refresh_token,
+        expiresIn,
+        expiresAt,
+        token.scope || null,
+      ]
+    );
 
-    res.redirect(`${process.env.CORS_ORIGIN || 'http://localhost:5173'}/dashboard?ml_connected=1&user_id=${data.user_id}`);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+    return redirectConnected(res);
+  } catch (err) {
+    console.error('[auth] callback error:', err.message);
+    return redirectError(res, err.message);
+  }
+};
+
+router.get('/callback', callbackHandler);
+router.get('/ml/callback', callbackHandler);
+
+router.get('/me', async (req, res, next) => {
+  try {
+    const account = await getAccount();
+    if (!account) {
+      return res.json({ connected: false });
+    }
+    res.json({
+      connected: true,
+      user_id: String(account.user_id),
+      nickname: account.nickname || `Usuario ${account.user_id}`,
+      expires_at: account.expires_at || null,
+      needs_reauth: Boolean(account.needs_reauth),
+    });
+  } catch (err) {
+    next(err);
   }
 });
 
-router.get('/me', async (req, res) => {
-  const rows = (await query('SELECT user_id, nickname, updated_at FROM ml_accounts ORDER BY updated_at DESC LIMIT 1')).rows;
-  const acc = rows[0] || (mem('accounts').slice(-1)[0] || null);
-  res.json(acc || { connected: false });
+router.post('/logout', async (req, res, next) => {
+  try {
+    await query('DELETE FROM ml_accounts');
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/config', (req, res) => {
+  res.json({
+    configured: Boolean(ML_APP_ID && ML_CLIENT_SECRET),
+    redirect_uri: REDIRECT_URI,
+    frontend_url: FRONTEND_URL,
+  });
 });
 
 export default router;
