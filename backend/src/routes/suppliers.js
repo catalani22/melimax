@@ -313,6 +313,84 @@ router.post('/registro', async (req, res, next) => {
   }
 });
 
+router.get('/custos/resumo', async (req, res, next) => {
+  try {
+    const hours = Math.min(
+      Math.max(Number(req.query.horas) || 24, 1),
+      24 * 30
+    );
+    const { rows } = await dbQuery(
+      `SELECT
+         fornecedor_id,
+         COALESCE(MAX(fornecedor_nome), fornecedor_id) AS fornecedor_nome,
+         COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE ativo)::int AS ativos,
+         COUNT(*) FILTER (WHERE NOT ativo)::int AS inativos,
+         COUNT(*) FILTER (
+           WHERE atualizado_em < NOW() - ($1::numeric * INTERVAL '1 hour')
+         )::int AS desatualizados,
+         ROUND(AVG(custo)::numeric, 2) AS custo_medio,
+         MIN(custo)::numeric AS custo_min,
+         MAX(custo)::numeric AS custo_max,
+         MAX(atualizado_em) AS ultima_atualizacao
+       FROM supplier_products
+       GROUP BY fornecedor_id
+       ORDER BY total DESC`,
+      [hours]
+    );
+    const resumo = rows.reduce(
+      (acc, row) => ({
+        total: acc.total + Number(row.total || 0),
+        ativos: acc.ativos + Number(row.ativos || 0),
+        inativos: acc.inativos + Number(row.inativos || 0),
+        desatualizados: acc.desatualizados + Number(row.desatualizados || 0),
+      }),
+      { total: 0, ativos: 0, inativos: 0, desatualizados: 0 }
+    );
+    res.json({ horas, ...resumo, fornecedores: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/custos/desatualizados', async (req, res, next) => {
+  try {
+    const hours = Math.min(
+      Math.max(Number(req.query.horas) || 24, 1),
+      24 * 30
+    );
+    const limit = Math.min(Math.max(Number(req.query.limite) || 100, 1), 500);
+    const { rows } = await dbQuery(
+      `SELECT
+         *,
+         ROUND(
+           (EXTRACT(EPOCH FROM (NOW() - atualizado_em)) / 3600)::numeric,
+           1
+         ) AS horas_desatualizado
+       FROM supplier_products
+       WHERE ativo = TRUE
+         AND atualizado_em < NOW() - ($1::numeric * INTERVAL '1 hour')
+       ORDER BY atualizado_em ASC
+       LIMIT ${limit}`,
+      [hours]
+    );
+    const { rows: countRows } = await dbQuery(
+      `SELECT COUNT(*)::int AS total
+       FROM supplier_products
+       WHERE ativo = TRUE
+         AND atualizado_em < NOW() - ($1::numeric * INTERVAL '1 hour')`,
+      [hours]
+    );
+    res.json({
+      horas,
+      total: countRows[0]?.total || 0,
+      produtos: rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/custos', async (req, res, next) => {
   try {
     const filters = [];
@@ -330,12 +408,41 @@ router.get('/custos', async (req, res, next) => {
     }
     if (req.query.ativo === 'true') filters.push('ativo = TRUE');
     if (req.query.ativo === 'false') filters.push('ativo = FALSE');
+    if (req.query.desatualizado === 'true') {
+      filters.push("atualizado_em < NOW() - INTERVAL '24 hours'");
+    }
+    if (req.query.desatualizado === 'false') {
+      filters.push("atualizado_em >= NOW() - INTERVAL '24 hours'");
+    }
+    if (req.query.q) {
+      params.push(`%${String(req.query.q).trim()}%`);
+      filters.push(
+        `(sku ILIKE $${params.length} OR COALESCE(gtin, '') ILIKE $${params.length} OR COALESCE(titulo, '') ILIKE $${params.length})`
+      );
+    }
 
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-    const limit = Math.min(Math.max(Number(req.query.limite) || 200, 1), 1000);
+    const limit = Math.min(Math.max(Number(req.query.limite) || 200, 1), 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const sort = {
+      custo_asc: 'custo ASC',
+      custo_desc: 'custo DESC',
+      recente: 'atualizado_em DESC',
+      antigo: 'atualizado_em ASC',
+      titulo: 'titulo ASC NULLS LAST',
+    }[req.query.ordem] || 'custo ASC';
+
     const { rows } = await dbQuery(
-      `SELECT * FROM supplier_products ${where}
-       ORDER BY custo ASC LIMIT ${limit}`,
+      `SELECT
+         *,
+         (atualizado_em < NOW() - INTERVAL '24 hours') AS desatualizado,
+         ROUND(
+           (EXTRACT(EPOCH FROM (NOW() - atualizado_em)) / 3600)::numeric,
+           1
+         ) AS horas_desde_atualizacao
+       FROM supplier_products ${where}
+       ORDER BY ${sort}
+       LIMIT ${limit} OFFSET ${offset}`,
       params
     );
     res.json(rows);
@@ -366,7 +473,8 @@ const FIELD_ALIASES = {
   estoque: ['estoque', 'qtd', 'quantidade', 'saldo', 'disponivel'],
   catalogo_id: ['catalogo_id', 'catalog_product_id', 'mlb', 'id_ml'],
   item_id: ['item_id', 'ml_item_id', 'id_item'],
-  peso_kg: ['peso', 'peso_kg', 'weight'],
+  peso_kg: ['peso', 'peso_kg', 'weight', 'weight_kg'],
+  peso_g: ['peso_g', 'peso_gramas', 'weight_g'],
   altura_cm: ['altura', 'altura_cm', 'height'],
   largura_cm: ['largura', 'largura_cm', 'width'],
   comprimento_cm: ['comprimento', 'comprimento_cm', 'length'],
@@ -458,20 +566,29 @@ function normalizeSupplierItem(item, fornecedorId, fornecedorNome) {
 
   if (!owner || !Number.isFinite(custo) || custo <= 0 || !sku) return null;
 
+  const pesoKg = parseBrNumber(item.peso_kg ?? item.weight_kg);
+  const pesoG = parseBrNumber(item.peso_g ?? item.peso_gramas ?? item.weight_g);
+  const pesoFinal =
+    pesoKg != null ? pesoKg : pesoG != null ? pesoG / 1000 : null;
+  const estoqueRaw = item.estoque ?? item.stock;
+  const estoque =
+    estoqueRaw == null || String(estoqueRaw).trim() === ''
+      ? null
+      : Math.max(Math.trunc(parseBrNumber(estoqueRaw) || 0), 0);
+
   return {
     fornecedor_id: owner,
     fornecedor_nome: item.fornecedor_nome || fornecedorNome || null,
-    catalogo_id: item.catalogo_id ? String(item.catalogo_id) : null,
-    item_id: item.item_id ? String(item.item_id) : null,
+    catalogo_id: item.catalogo_id ? String(item.catalogo_id).trim() : null,
+    item_id: item.item_id ? String(item.item_id).trim() : null,
     sku,
-    gtin: item.gtin ? String(item.gtin) : null,
+    gtin: item.gtin
+      ? String(item.gtin).replace(/[^0-9]/g, '') || null
+      : null,
     titulo: item.titulo || item.title || null,
     custo,
-    estoque: Math.max(
-      Math.trunc(parseBrNumber(item.estoque ?? item.stock ?? 0) || 0),
-      0
-    ),
-    peso_kg: parseBrNumber(item.peso_kg ?? item.weight_kg),
+    estoque,
+    peso_kg: pesoFinal,
     altura_cm: parseBrNumber(item.altura_cm ?? item.height_cm),
     largura_cm: parseBrNumber(item.largura_cm ?? item.width_cm),
     comprimento_cm: parseBrNumber(item.comprimento_cm ?? item.length_cm),
@@ -479,8 +596,96 @@ function normalizeSupplierItem(item, fornecedorId, fornecedorNome) {
   };
 }
 
+async function upsertSupplierProduct(item) {
+  await dbQuery(
+    `INSERT INTO supplier_products
+       (fornecedor_id, fornecedor_nome, catalogo_id, item_id, sku, gtin,
+        titulo, custo, estoque, peso_kg, altura_cm, largura_cm,
+        comprimento_cm, ativo, atualizado_em)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+     ON CONFLICT (fornecedor_id, sku) DO UPDATE SET
+       fornecedor_nome = EXCLUDED.fornecedor_nome,
+       catalogo_id = EXCLUDED.catalogo_id,
+       item_id = EXCLUDED.item_id,
+       gtin = EXCLUDED.gtin,
+       titulo = EXCLUDED.titulo,
+       custo = EXCLUDED.custo,
+       estoque = EXCLUDED.estoque,
+       peso_kg = EXCLUDED.peso_kg,
+       altura_cm = EXCLUDED.altura_cm,
+       largura_cm = EXCLUDED.largura_cm,
+       comprimento_cm = EXCLUDED.comprimento_cm,
+       ativo = EXCLUDED.ativo,
+       atualizado_em = NOW()`,
+    [
+      item.fornecedor_id,
+      item.fornecedor_nome,
+      item.catalogo_id,
+      item.item_id,
+      item.sku,
+      item.gtin,
+      item.titulo,
+      item.custo,
+      item.estoque,
+      item.peso_kg,
+      item.altura_cm,
+      item.largura_cm,
+      item.comprimento_cm,
+      item.ativo,
+    ]
+  );
+}
+
+async function batchUpsertSupplierProducts(items) {
+  const columns = [
+    items.map((item) => item.fornecedor_id),
+    items.map((item) => item.fornecedor_nome),
+    items.map((item) => item.catalogo_id),
+    items.map((item) => item.item_id),
+    items.map((item) => item.sku),
+    items.map((item) => item.gtin),
+    items.map((item) => item.titulo),
+    items.map((item) => item.custo),
+    items.map((item) => item.estoque),
+    items.map((item) => item.peso_kg),
+    items.map((item) => item.altura_cm),
+    items.map((item) => item.largura_cm),
+    items.map((item) => item.comprimento_cm),
+    items.map((item) => item.ativo),
+  ];
+
+  await dbQuery(
+    `INSERT INTO supplier_products
+       (fornecedor_id, fornecedor_nome, catalogo_id, item_id, sku, gtin,
+        titulo, custo, estoque, peso_kg, altura_cm, largura_cm,
+        comprimento_cm, ativo, atualizado_em)
+     SELECT *, NOW()
+     FROM UNNEST(
+       $1::text[], $2::text[], $3::text[], $4::text[], $5::text[],
+       $6::text[], $7::text[], $8::numeric[], $9::integer[],
+       $10::numeric[], $11::numeric[], $12::numeric[], $13::numeric[],
+       $14::boolean[]
+     )
+     ON CONFLICT (fornecedor_id, sku) DO UPDATE SET
+       fornecedor_nome = EXCLUDED.fornecedor_nome,
+       catalogo_id = EXCLUDED.catalogo_id,
+       item_id = EXCLUDED.item_id,
+       gtin = EXCLUDED.gtin,
+       titulo = EXCLUDED.titulo,
+       custo = EXCLUDED.custo,
+       estoque = EXCLUDED.estoque,
+       peso_kg = EXCLUDED.peso_kg,
+       altura_cm = EXCLUDED.altura_cm,
+       largura_cm = EXCLUDED.largura_cm,
+       comprimento_cm = EXCLUDED.comprimento_cm,
+       ativo = EXCLUDED.ativo,
+       atualizado_em = NOW()`,
+    columns
+  );
+}
+
 async function upsertSupplierProducts(produtos, fornecedorId, fornecedorNome) {
-  let importados = 0;
+  const unicos = new Map();
   const erros = [];
 
   for (const raw of produtos) {
@@ -494,45 +699,32 @@ async function upsertSupplierProducts(produtos, fornecedorId, fornecedorNome) {
       }
       continue;
     }
+    unicos.set(`${item.fornecedor_id}\u0000${item.sku}`, item);
+  }
 
-    await dbQuery(
-      `INSERT INTO supplier_products
-         (fornecedor_id, fornecedor_nome, catalogo_id, item_id, sku, gtin,
-          titulo, custo, estoque, peso_kg, altura_cm, largura_cm,
-          comprimento_cm, ativo, atualizado_em)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
-       ON CONFLICT (fornecedor_id, sku) DO UPDATE SET
-         fornecedor_nome = EXCLUDED.fornecedor_nome,
-         catalogo_id = EXCLUDED.catalogo_id,
-         item_id = EXCLUDED.item_id,
-         gtin = EXCLUDED.gtin,
-         titulo = EXCLUDED.titulo,
-         custo = EXCLUDED.custo,
-         estoque = EXCLUDED.estoque,
-         peso_kg = EXCLUDED.peso_kg,
-         altura_cm = EXCLUDED.altura_cm,
-         largura_cm = EXCLUDED.largura_cm,
-         comprimento_cm = EXCLUDED.comprimento_cm,
-         ativo = EXCLUDED.ativo,
-         atualizado_em = NOW()`,
-      [
-        item.fornecedor_id,
-        item.fornecedor_nome,
-        item.catalogo_id,
-        item.item_id,
-        item.sku,
-        item.gtin,
-        item.titulo,
-        item.custo,
-        item.estoque,
-        item.peso_kg,
-        item.altura_cm,
-        item.largura_cm,
-        item.comprimento_cm,
-        item.ativo,
-      ]
-    );
-    importados += 1;
+  const validos = [...unicos.values()];
+  let importados = 0;
+  const chunkSize = 500;
+  for (let index = 0; index < validos.length; index += chunkSize) {
+    const chunk = validos.slice(index, index + chunkSize);
+    try {
+      await batchUpsertSupplierProducts(chunk);
+      importados += chunk.length;
+    } catch {
+      for (const item of chunk) {
+        try {
+          await upsertSupplierProduct(item);
+          importados += 1;
+        } catch (rowError) {
+          if (erros.length < 10) {
+            erros.push({
+              sku: item.sku,
+              erro: rowError?.message || 'falha ao gravar produto',
+            });
+          }
+        }
+      }
+    }
   }
 
   return { importados, erros };

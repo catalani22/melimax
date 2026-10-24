@@ -34,7 +34,7 @@ export async function findSupplierCost({
     ...filters,
     `(${matches.join(' OR ')})`,
     'ativo = TRUE',
-    'estoque > 0',
+    '(estoque > 0 OR estoque IS NULL)',
   ].join(' AND ');
 
   const { rows } = await query(
