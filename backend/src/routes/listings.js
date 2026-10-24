@@ -1,10 +1,17 @@
 import express from 'express';
 import { query } from '../lib/db.js';
 import { mlFetch } from '../lib/ml.js';
+import { findSupplierCost } from '../lib/supplier-costs.js';
 
 const router = express.Router();
 
 const LISTING_TYPE = process.env.ML_LISTING_TYPE || 'gold_special';
+const EMPTY_GTIN_REASON = process.env.ML_EMPTY_GTIN_REASON || '17055160';
+const DEFAULT_SHIPPING_COST = Number(process.env.ML_SHIPPING_COST || 25);
+const TAX_RATE = Number(process.env.ML_TAX_RATE || 0.06);
+const MIN_NET_MARGIN = Number(process.env.ML_MIN_NET_MARGIN || 0.15);
+const MARKET_TOLERANCE = Number(process.env.ML_MARKET_TOLERANCE || 1.05);
+const feeCache = new Map();
 const SKIP_ATTRIBUTES = new Set([
   'ITEM_CONDITION',
   'SELLER_SKU',
@@ -20,21 +27,52 @@ function clampMargin(value) {
   return Math.min(Math.max(margin, 0.05), 0.6);
 }
 
+function normalizeAttribute(attr) {
+  const valueId =
+    attr.value_id != null && String(attr.value_id).trim() !== ''
+      ? String(attr.value_id).trim()
+      : null;
+  if (valueId) return { id: attr.id, value_id: valueId };
+
+  const valueName =
+    attr.value_name != null && String(attr.value_name).trim() !== ''
+      ? String(attr.value_name).trim()
+      : null;
+  if (valueName) return { id: attr.id, value_name: valueName };
+
+  const first = Array.isArray(attr.values)
+    ? attr.values.find(
+        (item) =>
+          item &&
+          ((item.id != null && String(item.id).trim() !== '') ||
+            (item.name != null && String(item.name).trim() !== ''))
+      )
+    : null;
+  if (first?.id != null && String(first.id).trim() !== '') {
+    return { id: attr.id, value_id: String(first.id).trim() };
+  }
+  if (first?.name) return { id: attr.id, value_name: String(first.name).trim() };
+
+  return null;
+}
+
 function buildAttributes(attributes) {
   const seen = new Set();
-  return (attributes || [])
-    .filter((attr) => attr.id && !SKIP_ATTRIBUTES.has(attr.id))
-    .filter((attr) => attr.value_id || attr.value_name)
-    .filter((attr) => {
-      if (seen.has(attr.id)) return false;
-      seen.add(attr.id);
-      return true;
-    })
-    .map((attr) =>
-      attr.value_id
-        ? { id: attr.id, value_id: String(attr.value_id) }
-        : { id: attr.id, value_name: String(attr.value_name) }
-    );
+  const result = [];
+
+  for (const attr of attributes || []) {
+    if (!attr?.id || SKIP_ATTRIBUTES.has(attr.id) || seen.has(attr.id)) continue;
+    const normalized = normalizeAttribute(attr);
+    if (!normalized) continue;
+    seen.add(attr.id);
+    result.push(normalized);
+  }
+
+  if (!seen.has('GTIN') && !seen.has('EMPTY_GTIN_REASON')) {
+    result.push({ id: 'EMPTY_GTIN_REASON', value_id: EMPTY_GTIN_REASON });
+  }
+
+  return result;
 }
 
 function buildPictures(pictures) {
@@ -49,9 +87,9 @@ function sanitizeTitle(title) {
   return String(title || '').replace(/\s+/g, ' ').trim().slice(0, 60);
 }
 
-function scoreListing(payload, descriptionText) {
+function scoreListing(payload, descriptionText, title) {
   let score = 0;
-  if (payload.title && payload.title.length >= 20) score += 20;
+  if (title && title.length >= 20) score += 20;
   if (payload.pictures && payload.pictures.length >= 3) score += 20;
   if (String(descriptionText || '').length > 100) score += 20;
   if (payload.price >= 80) score += 15;
@@ -61,15 +99,56 @@ function scoreListing(payload, descriptionText) {
   return Math.min(score, 100);
 }
 
+function friendlyMlText(text) {
+  const raw = String(text || '');
+  if (raw.includes('cellphone_not_unlocked')) {
+    return 'Categoria de celulares nao liberada para esta conta. Desbloqueie no Mercado Livre ou use outro nicho.';
+  }
+  if (raw.includes('item.catalog_listing.not_eligible')) {
+    return 'Este produto nao pode ser anunciado como catalogo nesta conta. Tentando anuncio normal.';
+  }
+  if (raw.includes('body.required_fields')) {
+    return 'O Mercado Livre exige campos adicionais na ficha tecnica. Verifique os atributos do produto.';
+  }
+  if (raw.includes('shipping.lost_me1_by_user')) {
+    return 'Sua conta nao tem o modo de envio me1 ativo; o Mercado Livre pode limitar opcoes de frete.';
+  }
+  if (raw.includes('item.shipping.mandatory_free_shipping')) {
+    return 'O Mercado Livre aplicou frete gratis obrigatorio; inclua esse custo no preco.';
+  }
+  return raw;
+}
+
 function formatMlError(err) {
   const causes = err?.details?.cause;
   if (Array.isArray(causes) && causes.length) {
-    return causes
+    const text = causes
       .map((cause) => cause.description || cause.message || cause.code)
       .filter(Boolean)
       .join(' | ');
+    return friendlyMlText(text);
   }
-  return err?.message || 'Falha ao criar anuncio no Mercado Livre';
+  return friendlyMlText(
+    err?.message || 'Falha ao criar anuncio no Mercado Livre'
+  );
+}
+
+function warningOnly(err) {
+  const causes = err?.details?.cause;
+  return (
+    Array.isArray(causes) &&
+    causes.length > 0 &&
+    causes.every((cause) => cause.type === 'warning')
+  );
+}
+
+function warningMessages(err) {
+  const causes = err?.details?.cause;
+  if (!Array.isArray(causes)) return [];
+  return causes
+    .filter((cause) => cause.type === 'warning')
+    .map((cause) => cause.message || cause.code)
+    .filter(Boolean);
 }
 
 function pickOffer(items, wantedItemId) {
@@ -80,6 +159,128 @@ function pickOffer(items, wantedItemId) {
     if (wanted) return wanted;
   }
   return [...valid].sort((a, b) => Number(a.price) - Number(b.price))[0];
+}
+
+function marketSummary(offers) {
+  const prices = (offers || [])
+    .map((offer) => Number(offer.price))
+    .filter((price) => Number.isFinite(price) && price > 0)
+    .sort((a, b) => a - b);
+  if (!prices.length) return { min: null, median: null, max: null, count: 0 };
+  return {
+    min: prices[0],
+    median: prices[Math.floor(prices.length / 2)],
+    max: prices[prices.length - 1],
+    count: prices.length,
+  };
+}
+
+async function getSaleFee(categoryId, listingTypeId, referencePrice) {
+  const key = `${categoryId}:${listingTypeId}`;
+  if (feeCache.has(key)) return feeCache.get(key);
+
+  try {
+    const data = await mlFetch(
+      `/sites/MLB/listing_prices?price=${encodeURIComponent(
+        referencePrice
+      )}&listing_type_id=${encodeURIComponent(
+        listingTypeId
+      )}&category_id=${encodeURIComponent(categoryId)}`
+    );
+    const percentage =
+      Number(data.sale_fee_details?.percentage_fee || 0) / 100;
+    const fixed = Number(data.sale_fee_details?.fixed_fee || 0);
+    const fee = { percentage, fixed };
+    feeCache.set(key, fee);
+    return fee;
+  } catch {
+    return { percentage: 0.12, fixed: 0 };
+  }
+}
+
+async function priceListing(source, body, margin) {
+  const gtin =
+    (source.attributes || []).find((attr) => attr.id === 'GTIN')?.value_name ||
+    null;
+  const supplierCost = await findSupplierCost({
+    catalogoId: source.product?.id,
+    itemId: source.itemId,
+    gtin,
+    fornecedorId: body.fornecedor_id,
+  }).catch(() => null);
+  const explicitCost = Number(body.custo ?? body.cost);
+  const cost =
+    explicitCost > 0
+      ? explicitCost
+      : Number(supplierCost?.custo) || Number(source.price) || 0;
+  const costSource =
+    explicitCost > 0
+      ? 'manual'
+      : supplierCost
+        ? 'supplier'
+        : 'ml_offer';
+  const shippingCost =
+    Number(body.frete ?? body.shipping_cost ?? DEFAULT_SHIPPING_COST) || 0;
+  const taxRate = Number(body.taxa ?? body.tax_rate ?? TAX_RATE) || 0;
+  const desiredMargin = clampMargin(body.margem ?? margin);
+  const listingType = body.listing_type_id || LISTING_TYPE;
+
+  if (cost <= 0) {
+    const err = new Error('O custo do fornecedor precisa ser maior que zero.');
+    err.status = 422;
+    throw err;
+  }
+
+  const fee = await getSaleFee(source.categoryId, listingType, cost);
+  const denominator = 1 - fee.percentage - taxRate - desiredMargin;
+  if (denominator <= 0) {
+    const err = new Error(
+      'Margem, taxa do Mercado Livre e impostos tornam o preco inviavel.'
+    );
+    err.status = 422;
+    throw err;
+  }
+
+  const computedPrice = Math.ceil(
+    (cost + shippingCost + fee.fixed) / denominator
+  );
+  const manualPrice = Number(body.preco ?? body.price);
+  const price =
+    Number.isFinite(manualPrice) && manualPrice > 0
+      ? Math.round(manualPrice)
+      : computedPrice;
+
+  const saleFee = Math.round(price * fee.percentage + fee.fixed);
+  const taxes = Math.round(price * taxRate);
+  const netProfit = Math.round(price - cost - shippingCost - saleFee - taxes);
+  const netMargin = price > 0 ? netProfit / price : 0;
+  const market = source.market || marketSummary(source.offers);
+  const competitive =
+    market?.median != null ? price <= market.median * MARKET_TOLERANCE : null;
+
+  return {
+    cost,
+    cost_source: costSource,
+    supplier: supplierCost
+      ? {
+          id: supplierCost.fornecedor_id,
+          nome: supplierCost.fornecedor_nome,
+          sku: supplierCost.sku,
+        }
+      : null,
+    price,
+    computed_price: computedPrice,
+    shipping_cost: shippingCost,
+    sale_fee: saleFee,
+    taxes,
+    net_profit: netProfit,
+    net_margin: Number(netMargin.toFixed(4)),
+    fee_percentage: Number((fee.percentage * 100).toFixed(2)),
+    market,
+    competitive,
+    viable:
+      netMargin >= MIN_NET_MARGIN && (competitive === null || competitive),
+  };
 }
 
 function normalizeText(value) {
@@ -124,6 +325,8 @@ async function resolveSource(body) {
       sellerId: offer.seller_id ? String(offer.seller_id) : null,
       warranty: offer.warranty || null,
       description: normalizeText(product.short_description),
+      offers: offers.results || [],
+      market: marketSummary(offers.results),
     };
   }
 
@@ -166,18 +369,41 @@ async function resolveSource(body) {
     sellerId: item.seller?.id ? String(item.seller.id) : null,
     warranty: null,
     description: normalizeText(description),
+    offers: [item],
+    market: marketSummary([item]),
   };
 }
 
 function buildDescription(source, title) {
   const custom = normalizeText(source.description);
-  if (custom.length > 60) return custom;
-  const brand = (source.attributes || []).find((attr) => attr.id === 'BRAND');
-  const brandText = brand?.value_name ? ` Marca: ${brand.value_name}.` : '';
-  return `${title}. Produto novo e pronto para envio.${brandText}`;
+  const specs = (source.attributes || [])
+    .filter((attr) => attr.value_name)
+    .slice(0, 14)
+    .map((attr) => `- ${attr.name || attr.id}: ${attr.value_name}`)
+    .join('\n');
+
+  const intro =
+    custom.length > 120
+      ? custom
+      : `${title} novo, pronto para envio. Produto selecionado para entregar qualidade, durabilidade e o melhor custo-benefício.`;
+
+  const warranty = source.warranty
+    ? `Garantia: ${source.warranty}.`
+    : 'Garantia: conforme descrito no anuncio.';
+
+  return [
+    intro,
+    specs ? `\nEspecificações técnicas:\n${specs}` : '',
+    `\nItens inclusos:\n- 1x ${title}`,
+    `\n${warranty}`,
+    'Envio: produto enviado com rastreamento e embalagem segura.',
+    'Dúvidas? Estamos à disposição para ajudar antes e depois da compra.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
-function buildPayloads(source, body, margin, freeShipping, descriptionText) {
+function buildPayloads(source, body, pricing, descriptionText) {
   const sourcePrice = Number(source.price) || 0;
   if (sourcePrice <= 0) {
     const err = new Error('O produto de origem nao possui preco valido.');
@@ -197,11 +423,18 @@ function buildPayloads(source, body, margin, freeShipping, descriptionText) {
     throw err;
   }
 
-  const price = Math.round(sourcePrice / (1 - margin));
+  const price = pricing.price;
   const title = sanitizeTitle(body.titulo || source.title);
 
+  const familyName = sanitizeTitle(source.product?.name || source.title);
+
+  const strategy = source.product?.settings?.listing_strategy || null;
+  const catalogOnly =
+    strategy === 'catalog_required' || strategy === 'catalog_only';
+  const freeShipping = catalogOnly ? true : body.free_shipping !== false;
+
   const base = {
-    title,
+    family_name: familyName,
     category_id: source.categoryId,
     price,
     currency_id: source.currencyId,
@@ -214,7 +447,7 @@ function buildPayloads(source, body, margin, freeShipping, descriptionText) {
     shipping: {
       mode: 'me2',
       local_pick_up: false,
-      free_shipping: Boolean(freeShipping),
+      free_shipping: freeShipping,
     },
     attributes: buildAttributes(source.attributes),
   };
@@ -228,24 +461,27 @@ function buildPayloads(source, body, margin, freeShipping, descriptionText) {
         ...base,
         catalog_product_id: source.product.id,
         catalog_listing: true,
-        family_name: sanitizeTitle(source.product.name),
+        family_name: familyName,
       },
     });
   }
 
-  payloads.push({ variant: 'normal', payload: base });
+  if (!catalogOnly) {
+    payloads.push({ variant: 'normal', payload: base });
 
-  if (base.listing_type_id !== 'free') {
-    payloads.push({
-      variant: 'free',
-      payload: { ...base, listing_type_id: 'free' },
-    });
+    if (base.listing_type_id !== 'free') {
+      payloads.push({
+        variant: 'free',
+        payload: { ...base, listing_type_id: 'free' },
+      });
+    }
   }
 
   return {
     payloads,
     price,
-    margin,
+    margin: pricing.net_margin,
+    pricing,
     sourcePrice,
     title,
     descriptionText,
@@ -297,12 +533,12 @@ router.post('/validar', async (req, res, next) => {
   try {
     const margin = clampMargin(req.body.margem ?? req.body.margin);
     const source = await resolveSource(req.body);
+    const pricing = await priceListing(source, req.body, margin);
     const descriptionText = buildDescription(source, source.title);
     const built = buildPayloads(
       source,
       req.body,
-      margin,
-      req.body.free_shipping,
+      pricing,
       descriptionText
     );
 
@@ -313,18 +549,32 @@ router.post('/validar', async (req, res, next) => {
           method: 'POST',
           body: payload,
         });
-        results.push({ variant, ok: true, result });
-      } catch (err) {
         results.push({
           variant,
-          ok: false,
-          error: formatMlError(err),
+          ok: true,
+          score: scoreListing(payload, descriptionText, built.title),
+          result,
+        });
+      } catch (err) {
+        const warnings = warningMessages(err);
+        const ok = warningOnly(err);
+        results.push({
+          variant,
+          ok,
+          score: scoreListing(payload, descriptionText, built.title),
+          error: ok ? null : formatMlError(err),
+          warnings: warnings.length ? warnings : undefined,
           details: err.details || null,
         });
       }
     }
 
+    const best = results.find((result) => result.ok) || null;
     res.json({
+      ok: Boolean(best),
+      best_variant: best?.variant || null,
+      score: best?.score ?? null,
+      description_preview: descriptionText.slice(0, 600),
       source: {
         catalogo_id: source.product?.id || null,
         item_id: source.itemId,
@@ -334,6 +584,7 @@ router.post('/validar', async (req, res, next) => {
         category_id: source.categoryId,
         seller_id: source.sellerId,
       },
+      pricing,
       variants: results,
     });
   } catch (err) {
@@ -345,12 +596,19 @@ router.post('/', async (req, res, next) => {
   try {
     const margin = clampMargin(req.body.margem ?? req.body.margin);
     const source = await resolveSource(req.body);
+    const pricing = await priceListing(source, req.body, margin);
+    if (!pricing.viable && !req.body.force) {
+      return res.status(422).json({
+        error:
+          'Anuncio inviavel: margem liquida abaixo do minimo ou preco acima da referencia de mercado.',
+        pricing,
+      });
+    }
     const descriptionText = buildDescription(source, source.title);
     const built = buildPayloads(
       source,
       req.body,
-      margin,
-      req.body.free_shipping,
+      pricing,
       descriptionText
     );
 
@@ -375,14 +633,16 @@ router.post('/', async (req, res, next) => {
     const supplier =
       (typeof supplierInput === 'string' ? supplierInput : null) ||
       supplierInput?.nome ||
+      pricing.supplier?.nome ||
       (source.sellerId ? `Vendedor ${source.sellerId}` : 'Mercado Livre');
     const supplierId =
       req.body.fornecedor_id ||
       (typeof supplierInput === 'object' ? supplierInput?.id : null) ||
+      pricing.supplier?.id ||
       source.sellerId ||
       null;
 
-    const score = scoreListing(built.payloads[0].payload, descriptionText);
+    const score = scoreListing(built.payloads[0].payload, descriptionText, built.title);
     const permalink =
       created.permalink ||
       `https://www.mercadolivre.com.br/p/${source.product?.id || source.itemId}`;

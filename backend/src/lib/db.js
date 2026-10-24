@@ -82,6 +82,66 @@ CREATE TABLE IF NOT EXISTS labels (
   status TEXT DEFAULT 'gerada',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS supplier_products (
+  id SERIAL PRIMARY KEY,
+  fornecedor_id TEXT NOT NULL,
+  fornecedor_nome TEXT,
+  catalogo_id TEXT,
+  item_id TEXT,
+  sku TEXT NOT NULL,
+  gtin TEXT,
+  titulo TEXT,
+  custo NUMERIC NOT NULL,
+  estoque INTEGER DEFAULT 0,
+  peso_kg NUMERIC,
+  altura_cm NUMERIC,
+  largura_cm NUMERIC,
+  comprimento_cm NUMERIC,
+  ativo BOOLEAN DEFAULT TRUE,
+  atualizado_em TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (fornecedor_id, sku)
+);
+
+CREATE INDEX IF NOT EXISTS idx_supplier_products_catalogo
+  ON supplier_products (catalogo_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_products_gtin
+  ON supplier_products (gtin);
+CREATE INDEX IF NOT EXISTS idx_supplier_products_item
+  ON supplier_products (item_id);
+
+CREATE TABLE IF NOT EXISTS suppliers (
+  id SERIAL PRIMARY KEY,
+  slug TEXT UNIQUE NOT NULL,
+  nome TEXT NOT NULL,
+  site TEXT,
+  descricao TEXT,
+  nichos TEXT[] DEFAULT '{}',
+  pedido_minimo NUMERIC,
+  dropshipping BOOLEAN DEFAULT FALSE,
+  integracao TEXT DEFAULT 'manual',
+  ativo BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO suppliers (slug, nome, descricao, nichos, pedido_minimo, dropshipping, integracao)
+VALUES
+  ('plb-importadora', 'PLB Importadora',
+   'Importadora de aco inoxidavel: correntes, aliancas, brincos, pulseiras e acessorios antialergicos. Regiao da 25 de Marco/Bras, Sao Paulo.',
+   ARRAY['moda','acessorios','joias'], NULL, FALSE, 'manual'),
+  ('lb-eletronicos', 'LB Eletronicos',
+   'Importadora e distribuidora na Galeria Page do Bras. Fones Bluetooth, carregadores, caixas de som, smartwatches e suportes veiculares.',
+   ARRAY['eletronicos','informatica','celulares','games'], 500, FALSE, 'manual'),
+  ('adjuntos-acessorios', 'ADJuntos Acessorios (Junto Acessorios)',
+   'Importadora de acessorios de informatica, som e carregadores rapidos. Cabos, power banks, adaptadores e pequenos eletroportateis.',
+   ARRAY['informatica','eletronicos'], NULL, FALSE, 'manual'),
+  ('ultimix-atacado', 'Ultimix Atacado',
+   'Atacadista de utilidades domesticas e organizacao. Utensilios de cozinha em silicone/inox, potes e organizadores.',
+   ARRAY['casa','eletrodomesticos'], NULL, FALSE, 'manual'),
+  ('vinha-costa', 'Vinha Costa (Costa.Tech)',
+   'Fornecedor de smartwatches e wearables de marcas asiaticas de alto giro, com chamadas, ilha dinamica e telas AMOLED.',
+   ARRAY['relogios','eletronicos'], NULL, FALSE, 'manual')
+ON CONFLICT (slug) DO NOTHING;
 `;
 
 export async function ensureSchema() {
