@@ -110,6 +110,47 @@ CREATE INDEX IF NOT EXISTS idx_supplier_products_gtin
 CREATE INDEX IF NOT EXISTS idx_supplier_products_item
   ON supplier_products (item_id);
 
+CREATE TABLE IF NOT EXISTS trend_keyword_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  keyword TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  captured_on DATE NOT NULL,
+  captured_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (keyword, captured_on)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trend_keywords_date
+  ON trend_keyword_snapshots (captured_on DESC, position ASC);
+
+CREATE TABLE IF NOT EXISTS trend_product_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  keyword TEXT NOT NULL,
+  product_id TEXT NOT NULL,
+  gtin TEXT,
+  name TEXT,
+  domain_id TEXT,
+  thumbnail TEXT,
+  permalink TEXT,
+  best_item_id TEXT,
+  best_seller_id BIGINT,
+  price_min NUMERIC,
+  price_max NUMERIC,
+  offers_count INTEGER DEFAULT 0,
+  sellers_count INTEGER DEFAULT 0,
+  free_shipping_count INTEGER DEFAULT 0,
+  official_count INTEGER DEFAULT 0,
+  best_listing_type TEXT,
+  position INTEGER,
+  captured_on DATE NOT NULL,
+  captured_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (keyword, product_id, captured_on)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trend_products_date
+  ON trend_product_snapshots (captured_on DESC, keyword, position ASC);
+CREATE INDEX IF NOT EXISTS idx_trend_products_product
+  ON trend_product_snapshots (product_id, captured_on DESC);
+
 CREATE TABLE IF NOT EXISTS suppliers (
   id SERIAL PRIMARY KEY,
   slug TEXT UNIQUE NOT NULL,
@@ -140,7 +181,10 @@ VALUES
    ARRAY['casa','eletrodomesticos'], NULL, FALSE, 'manual'),
   ('vinha-costa', 'Vinha Costa (Costa.Tech)',
    'Fornecedor de smartwatches e wearables de marcas asiaticas de alto giro, com chamadas, ilha dinamica e telas AMOLED.',
-   ARRAY['relogios','eletronicos'], NULL, FALSE, 'manual')
+   ARRAY['relogios','eletronicos'], NULL, FALSE, 'manual'),
+  ('fforder', 'FFOrder',
+   'Catalogo global com dropshipping e fulfillment. Sem integracao nativa com Mercado Livre: importar CSV/API e validar prazo, estoque e nota fiscal por SKU.',
+   ARRAY['eletronicos','casa','moda','beleza','esportes','pet','ferramentas','brinquedos','automotivo'], NULL, TRUE, 'csv')
 ON CONFLICT (slug) DO NOTHING;
 `;
 
