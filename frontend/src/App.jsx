@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const API = (import.meta.env.VITE_API_URL || 'https://melimax-backend.vercel.app/api').replace(/\/+$/, '');
+const DASHBOARD_KEY_STORAGE = 'melimax_dashboard_key';
 
 async function request(path, options = {}) {
   const { body, headers, ...rest } = options;
+  const dashboardKey = sessionStorage.getItem(DASHBOARD_KEY_STORAGE) || '';
   const res = await fetch(`${API}${path}`, {
     ...rest,
     headers: {
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...(dashboardKey ? { 'x-dashboard-key': dashboardKey } : {}),
       ...(headers || {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -231,6 +234,76 @@ function Toast({ toast, onClose }) {
         <button type="button" onClick={onClose} className="rounded p-1 hover:bg-black/5" aria-label="Fechar">
           <Icon name="close" className="h-4 w-4" />
         </button>
+      </div>
+    </div>
+  );
+}
+
+function PasswordScreen({ onSubmit, error, loading }) {
+  const [password, setPassword] = useState('');
+
+  return (
+    <div className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-brand-500/20 blur-3xl" />
+        <div className="absolute -right-24 bottom-0 h-96 w-96 rounded-full bg-emerald-500/10 blur-3xl" />
+      </div>
+
+      <div className="relative mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 py-14">
+        <div className="w-full rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur sm:p-8">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-400 font-black text-slate-950">
+              ML
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-300">Melimax</p>
+              <h1 className="text-lg font-bold">Acesso restrito</h1>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <Icon name="shield" className="h-4 w-4" />
+            Painel protegido
+          </div>
+          <p className="mt-2 text-sm text-slate-300">
+            Informe a senha do painel para liberar anúncios, pedidos e integrações.
+          </p>
+
+          <form
+            className="mt-5 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!loading && password) onSubmit(password);
+            }}
+          >
+            <input
+              type="password"
+              autoFocus
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Senha do painel"
+              className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-400/20"
+            />
+            {error ? (
+              <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">
+                {error}
+              </div>
+            ) : null}
+            <button
+              type="submit"
+              disabled={loading || !password}
+              className="btn-primary w-full py-3 text-base disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? <Spinner className="h-4 w-4" /> : <Icon name="shield" className="h-4 w-4" />}
+              Entrar no painel
+            </button>
+          </form>
+
+          <p className="mt-4 text-center text-xs text-slate-400">
+            A senha fica apenas nesta sessão do navegador e é validada no servidor.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -1718,6 +1791,10 @@ function CreateListingModal({
 export default function App() {
   const [account, setAccount] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [dashboardUnlocked, setDashboardUnlocked] = useState(false);
+  const [dashboardChecking, setDashboardChecking] = useState(true);
+  const [dashboardError, setDashboardError] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
   const [view, setView] = useState('dashboard');
   const [mobileNav, setMobileNav] = useState(false);
 
@@ -1757,6 +1834,12 @@ export default function App() {
 
   const handleApiError = useCallback(
     (error) => {
+      if (error?.data?.code === 'DASHBOARD_LOCKED') {
+        sessionStorage.removeItem(DASHBOARD_KEY_STORAGE);
+        setDashboardUnlocked(false);
+        setDashboardError('Sessão bloqueada. Informe a senha novamente.');
+        return;
+      }
       if (error?.status === 401 || error?.data?.needs_reauth) {
         setAccount((current) => (current ? { ...current, needs_reauth: true } : current));
         showToast('error', 'Sua conexão com o Mercado Livre expirou. Reconecte a conta.');
@@ -1885,6 +1968,41 @@ export default function App() {
   }, [handleApiError]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const status = await request('/auth/painel');
+        if (cancelled) return;
+        if (!status?.protected) {
+          setDashboardUnlocked(true);
+          return;
+        }
+        const stored = sessionStorage.getItem(DASHBOARD_KEY_STORAGE);
+        if (!stored) return;
+        await request('/auth/painel', {
+          method: 'POST',
+          body: { password: stored },
+        });
+        if (!cancelled) setDashboardUnlocked(true);
+      } catch (error) {
+        if (cancelled) return;
+        sessionStorage.removeItem(DASHBOARD_KEY_STORAGE);
+        setDashboardUnlocked(false);
+        setDashboardError(error?.message || 'Informe a senha do painel.');
+      } finally {
+        if (!cancelled) setDashboardChecking(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (dashboardChecking || !dashboardUnlocked) return undefined;
+
     const params = new URLSearchParams(window.location.search);
     const connected = params.get('ml_connected');
     const error = params.get('ml_error');
@@ -1918,16 +2036,77 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [handleApiError, loadListings, loadMonthly, loadOrders, loadSession, showToast]);
+  }, [
+    dashboardChecking,
+    dashboardUnlocked,
+    handleApiError,
+    loadListings,
+    loadMonthly,
+    loadOrders,
+    loadSession,
+    showToast,
+  ]);
 
   useEffect(() => {
-    if (view === 'pedidos' && orders.length === 0 && account && !loadingOrders) {
+    if (
+      dashboardUnlocked &&
+      view === 'pedidos' &&
+      orders.length === 0 &&
+      account &&
+      !loadingOrders
+    ) {
       loadOrders();
     }
-  }, [view, orders.length, account, loadingOrders, loadOrders]);
+  }, [dashboardUnlocked, view, orders.length, account, loadingOrders, loadOrders]);
 
-  const login = () => {
-    window.location.href = `${API}/auth/login`;
+  const unlockDashboard = async (password) => {
+    setUnlocking(true);
+    setDashboardError('');
+    try {
+      const data = await request('/auth/painel', {
+        method: 'POST',
+        body: { password },
+      });
+      if (!data?.ok) {
+        throw new Error('Não foi possível liberar o painel.');
+      }
+      if (data.protected === false) {
+        sessionStorage.removeItem(DASHBOARD_KEY_STORAGE);
+      } else {
+        sessionStorage.setItem(DASHBOARD_KEY_STORAGE, password);
+      }
+      setAuthLoading(true);
+      setDashboardUnlocked(true);
+    } catch (error) {
+      setDashboardError(error?.message || 'Senha inválida.');
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const lockDashboard = () => {
+    sessionStorage.removeItem(DASHBOARD_KEY_STORAGE);
+    setDashboardError('');
+    setDashboardUnlocked(false);
+    setAccount(null);
+    setListings([]);
+    setOrders([]);
+    setProdutos([]);
+    setFornecedores([]);
+    setSelectedNicho('');
+    setAuthError('');
+    setView('dashboard');
+  };
+
+  const login = async () => {
+    try {
+      const data = await request('/auth/ml/url');
+      if (data?.url) {
+        window.location.href = data.url;
+      }
+    } catch (error) {
+      handleApiError(error);
+    }
   };
 
   const logout = async () => {
@@ -2098,6 +2277,21 @@ export default function App() {
     [listings.length, orders.length]
   );
 
+  if (dashboardChecking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
+        <div className="flex flex-col items-center gap-4">
+          <Spinner className="h-8 w-8 text-brand-400" />
+          <p className="text-sm text-slate-400">Verificando acesso...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!dashboardUnlocked) {
+    return <PasswordScreen onSubmit={unlockDashboard} error={dashboardError} loading={unlocking} />;
+  }
+
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
@@ -2187,9 +2381,17 @@ export default function App() {
               </button>
               <button type="button" onClick={logout} className="btn-ghost flex-1 px-2 py-1.5 text-xs">
                 <Icon name="logout" className="h-3.5 w-3.5" />
-                Sair
+                Desconectar
               </button>
             </div>
+            <button
+              type="button"
+              onClick={lockDashboard}
+              className="btn-ghost mt-2 w-full px-2 py-1.5 text-xs"
+            >
+              <Icon name="shield" className="h-3.5 w-3.5" />
+              Bloquear painel
+            </button>
           </div>
         </div>
       </aside>

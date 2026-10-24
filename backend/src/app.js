@@ -13,6 +13,7 @@ import ordersRoutes from './routes/orders.js';
 import labelsRoutes from './routes/labels.js';
 import scrapingRoutes from './routes/scraping.js';
 import healthRoutes from './routes/health.js';
+import { dashboardAuth } from './middleware/dashboard-auth.js';
 import { errorHandler } from './middleware/error.js';
 
 const app = express();
@@ -57,6 +58,7 @@ app.use('/api', async (req, res, next) => {
   }
 });
 
+app.use('/api', dashboardAuth);
 app.use('/api', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productsRoutes);

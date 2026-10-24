@@ -1,15 +1,61 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import fetch from 'node-fetch';
+import rateLimit from 'express-rate-limit';
 import { query } from '../lib/db.js';
 import { getAccount } from '../lib/ml.js';
 import { FRONTEND_URL, REDIRECT_URI, frontendUrl } from '../lib/config.js';
+import {
+  dashboardProtectionEnabled,
+  verifyDashboardKey,
+} from '../middleware/dashboard-auth.js';
 
 const router = express.Router();
 
 const ML_APP_ID = process.env.ML_APP_ID;
 const ML_CLIENT_SECRET = process.env.ML_CLIENT_SECRET;
 const STATE_TTL_MS = 10 * 60 * 1000;
+
+const painelLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas tentativas de senha. Aguarde 15 minutos.' },
+});
+
+router.get('/painel', (req, res) => {
+  res.json({ protected: dashboardProtectionEnabled() });
+});
+
+router.post('/painel', painelLimiter, (req, res) => {
+  if (!dashboardProtectionEnabled()) {
+    return res.json({ ok: true, protected: false });
+  }
+  const { password } = req.body || {};
+  if (!verifyDashboardKey(password)) {
+    return res.status(401).json({
+      error: 'Senha do painel inválida.',
+      code: 'DASHBOARD_LOCKED',
+    });
+  }
+  return res.json({ ok: true, protected: true });
+});
+
+function buildAuthUrl() {
+  if (!ML_APP_ID || !ML_CLIENT_SECRET) {
+    throw new Error('ML_APP_ID/ML_CLIENT_SECRET nao configurados no backend.');
+  }
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: ML_APP_ID,
+    redirect_uri: REDIRECT_URI,
+    scope: 'offline_access read write',
+    state: signState(),
+  });
+  return `https://auth.mercadolivre.com.br/authorization?${params.toString()}`;
+}
 
 function signState() {
   const payload = `${Date.now()}.${crypto.randomBytes(16).toString('hex')}`;
@@ -65,23 +111,22 @@ async function exchangeCode(code) {
   return data;
 }
 
-router.get(['/login', '/ml/login'], (req, res) => {
-  if (!ML_APP_ID || !ML_CLIENT_SECRET) {
-    return res.status(500).json({
-      error: 'ML_APP_ID/ML_CLIENT_SECRET nao configurados no backend.',
-    });
+router.get(['/login', '/ml/login'], (req, res, next) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.redirect(buildAuthUrl());
+  } catch (err) {
+    next(err);
   }
+});
 
-  const params = new URLSearchParams({
-    response_type: 'code',
-    client_id: ML_APP_ID,
-    redirect_uri: REDIRECT_URI,
-    scope: 'offline_access read write',
-    state: signState(),
-  });
-
-  res.set('Cache-Control', 'no-store');
-  res.redirect(`https://auth.mercadolivre.com.br/authorization?${params.toString()}`);
+router.get(['/ml/url', '/login-url'], (req, res, next) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json({ url: buildAuthUrl() });
+  } catch (err) {
+    next(err);
+  }
 });
 
 const callbackHandler = async (req, res) => {
