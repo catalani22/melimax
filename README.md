@@ -32,6 +32,9 @@ npm install
 npm run dev
 ```
 
+## Acesso ao painel
+Defina `DASHBOARD_PASSWORD` no backend para exigir senha. Com a variável preenchida, todas as rotas `/api` ficam protegidas, exceto `health`, `auth/painel` e o callback OAuth do Mercado Livre. A senha fica apenas na sessão do navegador e é enviada no header `x-dashboard-key`.
+
 ## Funcionalidades
 - Conexão OAuth real com Mercado Livre (MLB)
 - Catálogo dos 20 melhores nichos com ticket médio
