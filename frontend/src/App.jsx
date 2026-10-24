@@ -57,6 +57,7 @@ function imageUrl(url) {
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Visão geral', icon: 'grid' },
+  { id: 'catalogo', label: 'Catálogo', icon: 'layers' },
   { id: 'produtos', label: 'Produtos', icon: 'box' },
   { id: 'fornecedores', label: 'Fornecedores', icon: 'store' },
   { id: 'anuncios', label: 'Anúncios', icon: 'tag' },
@@ -65,6 +66,7 @@ const NAV_ITEMS = [
 
 const VIEW_TITLES = {
   dashboard: { title: 'Visão geral', subtitle: 'Resumo da sua operação no Mercado Livre.' },
+  catalogo: { title: 'Catálogo de fornecedores', subtitle: 'Importe custos, estoque, peso e acompanhe a atualização.' },
   produtos: { title: 'Produtos', subtitle: 'Encontre produtos reais por nicho e crie anúncios.' },
   fornecedores: { title: 'Fornecedores', subtitle: 'Vendedores reais encontrados no Mercado Livre.' },
   anuncios: { title: 'Anúncios', subtitle: 'Seus anúncios publicados e qualificação.' },
@@ -86,6 +88,13 @@ function Icon({ name, className = 'h-5 w-5' }) {
         <path d="M21 8l-9-5-9 5 9 5 9-5z" />
         <path d="M3 8v8l9 5 9-5V8" />
         <path d="M12 13v8" />
+      </>
+    ),
+    layers: (
+      <>
+        <path d="M12 2l9 5-9 5-9-5 9-5z" />
+        <path d="M3 12l9 5 9-5" />
+        <path d="M3 17l9 5 9-5" />
       </>
     ),
     store: (
@@ -308,6 +317,7 @@ function StatCard({ label, value, hint, accent = 'slate' }) {
     brand: 'bg-brand-400 text-slate-900',
     emerald: 'bg-emerald-500 text-white',
     sky: 'bg-sky-500 text-white',
+    amber: 'bg-amber-500 text-white',
   };
 
   return (
@@ -318,7 +328,18 @@ function StatCard({ label, value, hint, accent = 'slate' }) {
           <p className="mt-2 text-2xl font-extrabold tracking-tight">{value}</p>
         </div>
         <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${accents[accent] || accents.slate}`}>
-          <Icon name={accent === 'emerald' ? 'cart' : accent === 'brand' ? 'tag' : 'grid'} className="h-5 w-5" />
+          <Icon
+            name={
+              accent === 'emerald'
+                ? 'cart'
+                : accent === 'brand'
+                  ? 'tag'
+                  : accent === 'amber'
+                    ? 'alert'
+                    : 'grid'
+            }
+            className="h-5 w-5"
+          />
         </span>
       </div>
       {hint ? <p className="mt-3 text-xs text-slate-500">{hint}</p> : null}
@@ -326,12 +347,21 @@ function StatCard({ label, value, hint, accent = 'slate' }) {
   );
 }
 
-function DashboardView({ account, listings, orders, onNavigate }) {
+function DashboardView({ account, listings, orders, monthly, monthlyLoading, onNavigate }) {
   const activeListings = listings.filter((item) => item.status === 'active').length;
   const revenue = orders.reduce((sum, order) => sum + (Number(order.total_amount) || 0), 0);
   const avgMargin = listings.length
     ? listings.reduce((sum, item) => sum + (Number(item.margin) || 0), 0) / listings.length
     : 0;
+  const goalRevenue = 100000;
+  const goalProfit = 20000;
+  const monthRevenue = Number(monthly?.faturamento) || 0;
+  const monthOrders = Number(monthly?.pedidos) || 0;
+  const monthTicket = Number(monthly?.ticket_medio) || 0;
+  const marginBase = avgMargin > 0 ? avgMargin : 0.2;
+  const projectedProfit = monthRevenue * marginBase;
+  const revenueProgress = Math.min((monthRevenue / goalRevenue) * 100, 100);
+  const profitProgress = Math.min((projectedProfit / goalProfit) * 100, 100);
 
   return (
     <div className="space-y-6">
@@ -344,6 +374,46 @@ function DashboardView({ account, listings, orders, onNavigate }) {
           value={`${Math.round(avgMargin * 100)}%`}
           hint="Configurada nos seus anúncios"
         />
+      </div>
+
+      <div className="card p-5">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="label">Meta do mês</p>
+            <h3 className="mt-1 text-2xl font-extrabold tracking-tight">
+              {brl(monthRevenue)}
+              <span className="ml-2 text-sm font-semibold text-slate-400">/ {brl(goalRevenue)}</span>
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">
+              {monthlyLoading
+                ? 'Carregando resumo do mês...'
+                : `${monthOrders} pedido(s) no mês · ticket médio ${brl(monthTicket)} · lucro projetado ${brl(projectedProfit)} / ${brl(goalProfit)}`}
+            </p>
+          </div>
+          <div className="w-full max-w-md space-y-3">
+            <div>
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+                <span>Faturamento</span>
+                <span>{Math.round(revenueProgress)}%</span>
+              </div>
+              <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
+                <div className="h-2 rounded-full bg-brand-400" style={{ width: `${revenueProgress}%` }} />
+              </div>
+            </div>
+            <div>
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+                <span>Lucro projetado ({Math.round(marginBase * 100)}% de margem)</span>
+                <span>{Math.round(profitProgress)}%</span>
+              </div>
+              <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
+                <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${profitProgress}%` }} />
+              </div>
+            </div>
+          </div>
+        </div>
+        <p className="mt-4 text-[11px] text-slate-400">
+          Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, mantenha margem líquida acima de 20%.
+        </p>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
@@ -753,6 +823,11 @@ function OrdersView({ orders, loading, onRefresh, onLabel }) {
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-bold">Pedido #{order.id}</p>
                       <span className={`badge ${status.className}`}>{status.label}</span>
+                      {order.multi_supplier ? (
+                        <span className="badge bg-amber-50 text-amber-800">
+                          Multi-fornecedor · {order.supplier_count} envios
+                        </span>
+                      ) : null}
                     </div>
                     <p className="mt-1 text-xs text-slate-500">
                       {formatDate(order.date_created)} · {order.buyer?.nickname || 'Comprador'} · {itemCount} item(ns)
@@ -760,6 +835,11 @@ function OrdersView({ orders, loading, onRefresh, onLabel }) {
                     <p className="mt-2 line-clamp-1 text-sm text-slate-600">
                       {order.items.map((item) => item.title).filter(Boolean).join(' · ') || 'Sem itens'}
                     </p>
+                    {order.multi_supplier ? (
+                      <p className="mt-1 text-xs font-medium text-amber-700">
+                        Itens de fornecedores diferentes: confirme se serão necessários dois envios/etiquetas.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 
@@ -796,6 +876,502 @@ function OrdersView({ orders, loading, onRefresh, onLabel }) {
   );
 }
 
+function CatalogoView({ onToast }) {
+  const [registry, setRegistry] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [stale, setStale] = useState({ total: 0, produtos: [] });
+  const [produtos, setProdutos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [supplierFilter, setSupplierFilter] = useState('');
+  const [csvSupplier, setCsvSupplier] = useState('');
+  const [csvText, setCsvText] = useState('');
+  const [csvFileName, setCsvFileName] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [lastImport, setLastImport] = useState(null);
+
+  const loadBase = useCallback(async () => {
+    const [registryResult, summaryResult, staleResult] = await Promise.allSettled([
+      request('/suppliers/registro'),
+      request('/suppliers/custos/resumo'),
+      request('/suppliers/custos/desatualizados?horas=24&limite=8'),
+    ]);
+
+    if (registryResult.status === 'fulfilled') {
+      const list = Array.isArray(registryResult.value) ? registryResult.value : [];
+      setRegistry(list);
+      setCsvSupplier((current) => current || list[0]?.slug || '');
+    }
+    if (summaryResult.status === 'fulfilled') {
+      setSummary(summaryResult.value || null);
+    }
+    if (staleResult.status === 'fulfilled') {
+      setStale({
+        total: staleResult.value?.total || 0,
+        produtos: Array.isArray(staleResult.value?.produtos)
+          ? staleResult.value.produtos
+          : [],
+      });
+    }
+  }, []);
+
+  const loadProducts = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ limite: '100' });
+      if (search.trim()) params.set('q', search.trim());
+      if (supplierFilter) params.set('fornecedor_id', supplierFilter);
+      const data = await request(`/suppliers/custos?${params.toString()}`);
+      setProdutos(Array.isArray(data) ? data : []);
+    } catch (error) {
+      onToast('error', error?.message || 'Não foi possível carregar o catálogo.');
+      setProdutos([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [search, supplierFilter, onToast]);
+
+  useEffect(() => {
+    loadBase();
+  }, [loadBase]);
+
+  useEffect(() => {
+    const timer = setTimeout(loadProducts, 400);
+    return () => clearTimeout(timer);
+  }, [loadProducts]);
+
+  const refresh = async () => {
+    await Promise.allSettled([loadBase(), loadProducts()]);
+  };
+
+  const handleFile = async (event) => {
+    const input = event.target;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 3.5 * 1024 * 1024) {
+      onToast('error', 'Arquivo muito grande. Use um CSV de até 3,5 MB por importação.');
+      input.value = '';
+      return;
+    }
+    try {
+      const text = await file.text();
+      setCsvText(text);
+      setCsvFileName(file.name);
+      setLastImport(null);
+    } catch {
+      onToast('error', 'Não foi possível ler o arquivo CSV.');
+    } finally {
+      input.value = '';
+    }
+  };
+
+  const downloadTemplate = () => {
+    const headers = [
+      'sku',
+      'gtin',
+      'titulo',
+      'custo',
+      'estoque',
+      'peso_kg',
+      'altura_cm',
+      'largura_cm',
+      'comprimento_cm',
+      'catalogo_id',
+      'item_id',
+      'ativo',
+    ];
+    const example = [
+      'SKU-001',
+      '7891234567890',
+      'Produto exemplo',
+      '99.90',
+      '10',
+      '0.3',
+      '10',
+      '15',
+      '20',
+      '',
+      '',
+      '1',
+    ];
+    const csv = [headers.join(';'), example.join(';')].join('\n');
+    const blob = new Blob([`\uFEFF${csv}`], {
+      type: 'text/csv;charset=utf-8;',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'modelo-catalogo-melimax.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importCsv = async () => {
+    if (!csvSupplier) {
+      onToast('error', 'Selecione o fornecedor.');
+      return;
+    }
+    if (!csvText.trim()) {
+      onToast('error', 'Selecione um arquivo CSV.');
+      return;
+    }
+    const fornecedor = registry.find((item) => item.slug === csvSupplier);
+    setImporting(true);
+    try {
+      const result = await request('/suppliers/custos/importar-csv', {
+        method: 'POST',
+        body: {
+          fornecedor_id: csvSupplier,
+          fornecedor_nome: fornecedor?.nome || csvSupplier,
+          csv: csvText,
+        },
+      });
+      setLastImport(result);
+      onToast(
+        'success',
+        `${result.importados || 0} produto(s) importado(s); ${result.ignorados || 0} ignorado(s).`
+      );
+      setCsvText('');
+      setCsvFileName('');
+      await refresh();
+    } catch (error) {
+      onToast('error', error?.message || 'Falha ao importar CSV.');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const summaryFor = (slug) =>
+    summary?.fornecedores?.find((item) => item.fornecedor_id === slug) || null;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Produtos no catálogo"
+          value={number.format(summary?.total || 0)}
+          hint={`${number.format(summary?.ativos || 0)} ativos`}
+          accent="brand"
+        />
+        <StatCard
+          label="Fornecedores"
+          value={number.format(summary?.fornecedores?.length || 0)}
+          hint="Com custo importado"
+          accent="sky"
+        />
+        <StatCard
+          label="Estoque desatualizado"
+          value={number.format(summary?.desatualizados || 0)}
+          hint="Mais de 24h sem reimportar"
+          accent={summary?.desatualizados ? 'amber' : 'emerald'}
+        />
+        <StatCard
+          label="Produtos ativos"
+          value={number.format(summary?.ativos || 0)}
+          hint="Disponíveis para anúncio"
+          accent="emerald"
+        />
+      </div>
+
+      {stale.total > 0 ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="flex items-start gap-3">
+            <Icon name="alert" className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-semibold">
+                {stale.total} produto(s) com estoque sem atualização há mais de 24h.
+              </p>
+              <p className="mt-1 text-xs">
+                Reimporte o CSV do fornecedor antes de publicar. Estoque velho gera cancelamento e prejudica a reputação.
+              </p>
+              {stale.produtos.length ? (
+                <p className="mt-2 text-xs">
+                  Exemplos: {stale.produtos.slice(0, 4).map((item) => item.sku).join(', ')}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="card p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-bold">Importar custos e estoque</h3>
+            <p className="text-sm text-slate-500">
+              CSV com SKU, custo, estoque, peso (kg ou g) e dimensões (cm). Até 2.000 linhas e 3,5 MB. Mantenha o EAN como texto para não perder dígitos.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={downloadTemplate} className="btn-ghost px-3 py-2 text-xs">
+              <Icon name="download" className="h-3.5 w-3.5" />
+              Baixar modelo
+            </button>
+            <span className="badge bg-brand-50 text-brand-800">CSV</span>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+          <div>
+            <label htmlFor="csv-supplier" className="label">
+              Fornecedor
+            </label>
+            <select
+              id="csv-supplier"
+              className="input mt-1"
+              value={csvSupplier}
+              onChange={(event) => setCsvSupplier(event.target.value)}
+            >
+              <option value="">Selecione</option>
+              {registry.map((item) => (
+                <option key={item.slug} value={item.slug}>
+                  {item.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="csv-file" className="label">
+              Arquivo CSV
+            </label>
+            <input
+              id="csv-file"
+              type="file"
+              accept=".csv,text/csv"
+              onChange={handleFile}
+              className="input mt-1 file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white"
+            />
+          </div>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={importCsv}
+            disabled={importing || !csvText}
+          >
+            {importing ? <Spinner className="h-4 w-4" /> : <Icon name="download" className="h-4 w-4" />}
+            {importing ? 'Importando...' : 'Importar CSV'}
+          </button>
+        </div>
+
+        <p className="mt-2 text-xs text-slate-500">
+          {csvFileName ? `Arquivo selecionado: ${csvFileName}` : 'Nenhum arquivo selecionado.'}
+        </p>
+
+        {lastImport ? (
+          <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">
+            <p className="font-semibold">
+              Última importação: {lastImport.importados || 0} importados ·{' '}
+              {lastImport.ignorados || 0} ignorados · {lastImport.recebidos || 0} recebidos.
+            </p>
+            {lastImport.erros?.length ? (
+              <ul className="mt-2 list-disc space-y-1 pl-4">
+                {lastImport.erros.slice(0, 5).map((item, index) => (
+                  <li key={`${item.sku || 'erro'}-${index}`}>
+                    {item.sku ? `${item.sku}: ` : ''}
+                    {item.erro}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      <div>
+        <div className="mb-3 flex items-end justify-between gap-3">
+          <div>
+            <h3 className="font-bold">Fornecedores cadastrados</h3>
+            <p className="text-sm text-slate-500">Regra atual: grátis, sem mensalidade e sem pedido mínimo.</p>
+          </div>
+          <button type="button" onClick={refresh} className="btn-ghost" disabled={loading}>
+            {loading ? <Spinner className="h-4 w-4" /> : <Icon name="refresh" className="h-4 w-4" />}
+            Atualizar
+          </button>
+        </div>
+
+        {registry.length === 0 ? (
+          <div className="card px-6 py-12 text-center text-sm text-slate-500">
+            Nenhum fornecedor cadastrado ainda.
+          </div>
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+            {registry.map((item) => {
+              const stats = summaryFor(item.slug);
+              return (
+                <article key={item.slug} className="card p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate font-bold">{item.nome}</h3>
+                      <p className="truncate text-xs text-slate-500">{item.site || 'Sem site'}</p>
+                    </div>
+                    <span
+                      className={`badge ${
+                        item.dropshipping
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      {item.dropshipping ? 'Dropshipping' : 'Atacado'}
+                    </span>
+                  </div>
+                  <p className="mt-2 line-clamp-2 min-h-[2rem] text-xs text-slate-500">
+                    {item.descricao || 'Sem descrição.'}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="badge bg-slate-100 text-slate-600">
+                      {item.integracao || 'manual'}
+                    </span>
+                    {item.pedido_minimo ? (
+                      <span className="badge bg-amber-50 text-amber-800">
+                        Mín. {brl(item.pedido_minimo)}
+                      </span>
+                    ) : (
+                      <span className="badge bg-emerald-50 text-emerald-700">Sem mínimo</span>
+                    )}
+                  </div>
+                  <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-lg bg-slate-50 p-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Produtos
+                      </p>
+                      <p className="mt-1 font-bold">{number.format(stats?.total || 0)}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 p-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Ativos
+                      </p>
+                      <p className="mt-1 font-bold">{number.format(stats?.ativos || 0)}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 p-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Atraso
+                      </p>
+                      <p className={`mt-1 font-bold ${stats?.desatualizados ? 'text-amber-700' : ''}`}>
+                        {number.format(stats?.desatualizados || 0)}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-ghost mt-3 w-full"
+                    onClick={() => setSupplierFilter(item.slug)}
+                  >
+                    Ver produtos
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="card overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-slate-100 p-5 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="font-bold">Produtos importados</h3>
+            <p className="text-sm text-slate-500">
+              {loading ? 'Carregando...' : `${number.format(produtos.length)} produto(s) exibidos.`}
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="relative">
+              <Icon
+                name="search"
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+              />
+              <input
+                className="input pl-9"
+                placeholder="SKU, EAN ou título"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </div>
+            <select
+              className="input"
+              value={supplierFilter}
+              onChange={(event) => setSupplierFilter(event.target.value)}
+            >
+              <option value="">Todos os fornecedores</option>
+              {registry.map((item) => (
+                <option key={item.slug} value={item.slug}>
+                  {item.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {loading && produtos.length === 0 ? (
+          <div className="flex items-center justify-center gap-3 py-16 text-sm font-medium text-slate-500">
+            <Spinner />
+            Carregando catálogo...
+          </div>
+        ) : null}
+
+        {!loading && produtos.length === 0 ? (
+          <div className="px-6 py-16 text-center text-sm text-slate-500">
+            Nenhum produto encontrado. Importe um CSV ou ajuste a busca.
+          </div>
+        ) : null}
+
+        {produtos.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Produto</th>
+                  <th className="px-4 py-3 font-semibold">SKU</th>
+                  <th className="px-4 py-3 font-semibold">Fornecedor</th>
+                  <th className="px-4 py-3 font-semibold">Custo</th>
+                  <th className="px-4 py-3 font-semibold">Estoque</th>
+                  <th className="px-4 py-3 font-semibold">Peso</th>
+                  <th className="px-4 py-3 font-semibold">Atualização</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {produtos.map((item) => (
+                  <tr key={item.id} className="align-top">
+                    <td className="max-w-[22rem] px-4 py-3">
+                      <p className="line-clamp-1 font-semibold">{item.titulo || item.sku}</p>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {item.gtin ? `EAN ${item.gtin}` : 'Sem EAN'}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs">{item.sku}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {item.fornecedor_nome || item.fornecedor_id}
+                    </td>
+                    <td className="px-4 py-3 font-semibold">{brl(item.custo)}</td>
+                    <td className="px-4 py-3">
+                      {item.estoque == null ? '—' : number.format(item.estoque)}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {item.peso_kg ? `${item.peso_kg} kg` : '—'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`badge ${
+                          item.desatualizado
+                            ? 'bg-amber-50 text-amber-800'
+                            : 'bg-emerald-50 text-emerald-700'
+                        }`}
+                      >
+                        {item.desatualizado
+                          ? `há ${Math.round(Number(item.horas_desde_atualizacao) || 0)}h`
+                          : 'em dia'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function CreateListingModal({
   produto,
   margin,
@@ -804,6 +1380,8 @@ function CreateListingModal({
   setFreeShipping,
   cost,
   setCost,
+  shippingCost,
+  setShippingCost,
   pricing,
   validation,
   validating,
@@ -829,6 +1407,13 @@ function CreateListingModal({
     }
     if (pricing.cost_source === 'ml_offer') {
       warnings.push('Custo vindo da oferta do Mercado Livre. Informe o custo real do fornecedor para calcular o lucro.');
+    }
+    if (pricing.supplier?.stock_stale) {
+      const hours = Math.round(Number(pricing.supplier.stock_age_hours) || 0);
+      warnings.push(`Estoque/custo do fornecedor atualizado há ${hours}h. Reimporte o CSV antes de publicar.`);
+    }
+    if (pricing.shipping_source === 'default') {
+      warnings.push('Sem peso/dimensões do fornecedor. Usando frete padrão conservador; ajuste manualmente ou importe o CSV completo.');
     }
   }
 
@@ -878,6 +1463,35 @@ function CreateListingModal({
             </div>
             <p className="mt-1 text-xs text-slate-500">
               Preço de compra no fornecedor/hub. O preço do anúncio é calculado com taxa do ML, frete, impostos e margem líquida.
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="shipping-cost" className="text-sm font-semibold">
+              Frete estimado
+            </label>
+            <div className="mt-2 flex items-center rounded-lg border border-slate-200 bg-white px-3">
+              <span className="text-sm text-slate-400">R$</span>
+              <input
+                id="shipping-cost"
+                type="number"
+                min="0"
+                step="0.01"
+                value={shippingCost}
+                placeholder={
+                  pricing?.shipping_cost != null
+                    ? `Automático: ${brl(pricing.shipping_cost)}`
+                    : 'Automático pelo peso'
+                }
+                onChange={(event) => setShippingCost(event.target.value)}
+                className="w-full border-0 bg-transparent px-2 py-2 text-sm outline-none"
+              />
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Deixe vazio para calcular pelo peso/dimensões do fornecedor. Ajuste se tiver uma cotação real.
+              {pricing?.shipping_source === 'weight' && pricing?.shipping_weight_kg
+                ? ` Peso considerado: ${pricing.shipping_weight_kg} kg.`
+                : ''}
             </p>
           </div>
 
@@ -962,7 +1576,13 @@ function CreateListingModal({
                 {pricing.viable ? 'Anúncio validado e viável.' : 'Anúncio bloqueado para proteger sua margem.'}
               </p>
               <p className="mt-1">
-                Custo {brl(pricing.cost)} · Taxa ML {brl(pricing.sale_fee)} · Frete {brl(pricing.shipping_cost)} · Impostos {brl(pricing.taxes)}
+                Custo {brl(pricing.cost)} · Taxa ML {brl(pricing.sale_fee)} · Frete {brl(pricing.shipping_cost)}
+                {pricing.shipping_source === 'weight'
+                  ? ' (peso)'
+                  : pricing.shipping_source === 'manual'
+                    ? ' (manual)'
+                    : ' (padrão)'}
+                {' '}· Impostos {brl(pricing.taxes)}
               </p>
               {pricing.supplier ? (
                 <p className="mt-1">
@@ -1004,14 +1624,18 @@ export default function App() {
   const [loadingListings, setLoadingListings] = useState(false);
   const [orders, setOrders] = useState([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [monthly, setMonthly] = useState(null);
+  const [loadingMonthly, setLoadingMonthly] = useState(false);
 
   const [toast, setToast] = useState(null);
+  const [catalogVersion, setCatalogVersion] = useState(0);
   const [authError, setAuthError] = useState('');
   const [modalProduct, setModalProduct] = useState(null);
   const [margin, setMargin] = useState(18);
   const [freeShipping, setFreeShipping] = useState(false);
   const [creating, setCreating] = useState(false);
   const [supplierCost, setSupplierCost] = useState(0);
+  const [shippingCost, setShippingCost] = useState('');
   const [pricing, setPricing] = useState(null);
   const [validation, setValidation] = useState(null);
   const [validating, setValidating] = useState(false);
@@ -1035,7 +1659,7 @@ export default function App() {
   );
 
   const validateListing = useCallback(
-    async (produto, costValue, marginValue, freeShippingValue) => {
+    async (produto, costValue, marginValue, freeShippingValue, shippingValue) => {
       if (!produto) return;
       const costNumber = Number(costValue);
       if (!Number.isFinite(costNumber) || costNumber <= 0) {
@@ -1043,7 +1667,10 @@ export default function App() {
         setValidation(null);
         return;
       }
-      const key = `${produto.catalogo_id || produto.id}|${produto.item_id || ''}|${costNumber}|${marginValue}|${freeShippingValue}|${produto.seller?.id || ''}`;
+      const shippingNumber =
+        shippingValue === '' || shippingValue == null ? null : Number(shippingValue);
+      const shippingKey = Number.isFinite(shippingNumber) ? shippingNumber : 'auto';
+      const key = `${produto.catalogo_id || produto.id}|${produto.item_id || ''}|${costNumber}|${marginValue}|${freeShippingValue}|${shippingKey}|${produto.seller?.id || ''}`;
       if (lastValidationRef.current.key === key && lastValidationRef.current.data) {
         setPricing(lastValidationRef.current.data?.pricing || null);
         setValidation(lastValidationRef.current.data);
@@ -1062,6 +1689,7 @@ export default function App() {
             custo: costNumber,
             margem: marginValue / 100,
             free_shipping: freeShippingValue,
+            frete: Number.isFinite(shippingNumber) ? shippingNumber : null,
             fornecedor_id: produto.seller?.id || null,
           },
         });
@@ -1083,10 +1711,10 @@ export default function App() {
   useEffect(() => {
     if (!modalProduct) return undefined;
     const timer = setTimeout(() => {
-      validateListing(modalProduct, supplierCost, margin, freeShipping);
+      validateListing(modalProduct, supplierCost, margin, freeShipping, shippingCost);
     }, 1000);
     return () => clearTimeout(timer);
-  }, [modalProduct, supplierCost, margin, freeShipping, validateListing]);
+  }, [modalProduct, supplierCost, margin, freeShipping, shippingCost, validateListing]);
 
   const loadListings = useCallback(async () => {
     setLoadingListings(true);
@@ -1111,6 +1739,18 @@ export default function App() {
       setLoadingOrders(false);
     }
   }, [handleApiError]);
+
+  const loadMonthly = useCallback(async () => {
+    setLoadingMonthly(true);
+    try {
+      const data = await request('/orders/resumo-mensal');
+      setMonthly(data || null);
+    } catch {
+      setMonthly(null);
+    } finally {
+      setLoadingMonthly(false);
+    }
+  }, []);
 
   const loadSession = useCallback(async () => {
     try {
@@ -1162,14 +1802,14 @@ export default function App() {
 
       if (authenticated) {
         if (connected) showToast('success', 'Conta Mercado Livre conectada com sucesso.');
-        await Promise.allSettled([loadListings(), loadOrders()]);
+        await Promise.allSettled([loadListings(), loadOrders(), loadMonthly()]);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [handleApiError, loadListings, loadOrders, loadSession, showToast]);
+  }, [handleApiError, loadListings, loadMonthly, loadOrders, loadSession, showToast]);
 
   useEffect(() => {
     if (view === 'pedidos' && orders.length === 0 && account && !loadingOrders) {
@@ -1221,6 +1861,7 @@ export default function App() {
     setMargin(18);
     setFreeShipping(false);
     setSupplierCost(Number(produto.price) || 0);
+    setShippingCost('');
     setPricing(null);
     setValidation(null);
     setAuthError('');
@@ -1242,6 +1883,10 @@ export default function App() {
           custo: supplierCost,
           margem: margin / 100,
           free_shipping: freeShipping,
+          frete:
+            shippingCost === '' || !Number.isFinite(Number(shippingCost))
+              ? null
+              : Number(shippingCost),
           fornecedor: modalProduct.seller?.nickname || null,
           fornecedor_id: modalProduct.seller?.id || null,
         },
@@ -1290,11 +1935,15 @@ export default function App() {
   const currentTitle = VIEW_TITLES[view] || VIEW_TITLES.dashboard;
 
   const refreshCurrent = () => {
+    if (view === 'catalogo') {
+      setCatalogVersion((current) => current + 1);
+      return undefined;
+    }
     if (view === 'anuncios') return loadListings();
     if (view === 'pedidos') return loadOrders();
     if (view === 'produtos' && selectedNicho) return selectNicho(selectedNicho);
     if (view === 'fornecedores' && selectedNicho) return selectNicho(selectedNicho);
-    return Promise.allSettled([loadListings(), loadOrders()]);
+    return Promise.allSettled([loadListings(), loadOrders(), loadMonthly()]);
   };
 
   const stats = useMemo(
@@ -1449,8 +2098,13 @@ export default function App() {
               account={account}
               listings={listings}
               orders={orders}
+              monthly={monthly}
+              monthlyLoading={loadingMonthly}
               onNavigate={setView}
             />
+          ) : null}
+          {view === 'catalogo' ? (
+            <CatalogoView key={catalogVersion} onToast={showToast} />
           ) : null}
           {view === 'produtos' ? (
             <ProductsView
@@ -1499,6 +2153,8 @@ export default function App() {
           setFreeShipping={setFreeShipping}
           cost={supplierCost}
           setCost={setSupplierCost}
+          shippingCost={shippingCost}
+          setShippingCost={setShippingCost}
           pricing={pricing}
           validation={validation}
           validating={validating}

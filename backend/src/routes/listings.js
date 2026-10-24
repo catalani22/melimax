@@ -11,6 +11,17 @@ const DEFAULT_SHIPPING_COST = Number(process.env.ML_SHIPPING_COST || 25);
 const TAX_RATE = Number(process.env.ML_TAX_RATE || 0.06);
 const MIN_NET_MARGIN = Number(process.env.ML_MIN_NET_MARGIN || 0.15);
 const MARKET_TOLERANCE = Number(process.env.ML_MARKET_TOLERANCE || 1.05);
+const STOCK_STALE_HOURS = Number(process.env.ML_STOCK_STALE_HOURS || 24);
+const SHIPPING_TABLE = [
+  { maxKg: 0.3, cost: 21.9 },
+  { maxKg: 0.5, cost: 23.9 },
+  { maxKg: 1, cost: 26.9 },
+  { maxKg: 2, cost: 31.9 },
+  { maxKg: 5, cost: 42.9 },
+  { maxKg: 10, cost: 58.9 },
+  { maxKg: 20, cost: 79.9 },
+  { maxKg: Infinity, cost: 99.9 },
+];
 const feeCache = new Map();
 const FEE_CACHE_TTL = 30 * 60 * 1000;
 const sourceCache = new Map();
@@ -179,6 +190,65 @@ function marketSummary(offers) {
   };
 }
 
+function positiveNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+function volumetricWeight(item) {
+  const peso = positiveNumber(item?.peso_kg);
+  const altura = positiveNumber(item?.altura_cm);
+  const largura = positiveNumber(item?.largura_cm);
+  const comprimento = positiveNumber(item?.comprimento_cm);
+  const cubico =
+    altura && largura && comprimento
+      ? (altura * largura * comprimento) / 6000
+      : null;
+  const pesoConsiderado = Math.max(peso || 0, cubico || 0);
+  return {
+    peso_kg: peso,
+    cubico_kg: cubico,
+    peso_considerado: pesoConsiderado || null,
+  };
+}
+
+function estimateShipping(supplierCost) {
+  const weight = volumetricWeight(supplierCost);
+  if (!weight.peso_considerado) {
+    return {
+      cost: DEFAULT_SHIPPING_COST,
+      source: 'default',
+      peso_kg: null,
+      cubico_kg: null,
+      peso_considerado: null,
+    };
+  }
+  const row =
+    SHIPPING_TABLE.find((item) => weight.peso_considerado <= item.maxKg) ||
+    SHIPPING_TABLE[SHIPPING_TABLE.length - 1];
+  return {
+    cost: row.cost,
+    source: 'weight',
+    ...weight,
+  };
+}
+
+function supplierStockInfo(supplierCost) {
+  if (!supplierCost?.atualizado_em) {
+    return { stock_updated_at: null, stock_age_hours: null, stock_stale: false };
+  }
+  const updatedAt = new Date(supplierCost.atualizado_em);
+  if (Number.isNaN(updatedAt.getTime())) {
+    return { stock_updated_at: null, stock_age_hours: null, stock_stale: false };
+  }
+  const ageHours = (Date.now() - updatedAt.getTime()) / (60 * 60 * 1000);
+  return {
+    stock_updated_at: updatedAt.toISOString(),
+    stock_age_hours: Number(ageHours.toFixed(1)),
+    stock_stale: ageHours > STOCK_STALE_HOURS,
+  };
+}
+
 async function getSaleFee(categoryId, listingTypeId, referencePrice) {
   const priceBucket = Math.round((Number(referencePrice) || 0) / 50) * 50;
   const key = `${categoryId}:${listingTypeId}:${priceBucket}`;
@@ -231,8 +301,23 @@ async function priceListing(source, body, margin) {
       : supplierCost
         ? 'supplier'
         : 'ml_offer';
-  const shippingCost =
-    Number(body.frete ?? body.shipping_cost ?? DEFAULT_SHIPPING_COST) || 0;
+  const rawShipping = body.frete ?? body.shipping_cost;
+  const explicitShipping =
+    rawShipping == null || rawShipping === '' ? null : Number(rawShipping);
+  const shipping =
+    explicitShipping != null &&
+    Number.isFinite(explicitShipping) &&
+    explicitShipping >= 0
+      ? {
+          cost: explicitShipping,
+          source: 'manual',
+          peso_kg: null,
+          cubico_kg: null,
+          peso_considerado: null,
+        }
+      : estimateShipping(supplierCost);
+  const shippingCost = shipping.cost;
+  const stock = supplierStockInfo(supplierCost);
   const taxRate = Number(body.taxa ?? body.tax_rate ?? TAX_RATE) || 0;
   const desiredMargin = clampMargin(body.margem ?? margin);
   const listingType = body.listing_type_id || LISTING_TYPE;
@@ -278,11 +363,16 @@ async function priceListing(source, body, margin) {
           id: supplierCost.fornecedor_id,
           nome: supplierCost.fornecedor_nome,
           sku: supplierCost.sku,
+          ...stock,
         }
       : null,
     price,
     computed_price: computedPrice,
     shipping_cost: shippingCost,
+    shipping_source: shipping.source,
+    shipping_weight_kg: shipping.peso_considerado,
+    shipping_actual_weight_kg: shipping.peso_kg,
+    shipping_volumetric_kg: shipping.cubico_kg,
     sale_fee: saleFee,
     taxes,
     net_profit: netProfit,
