@@ -796,9 +796,41 @@ function OrdersView({ orders, loading, onRefresh, onLabel }) {
   );
 }
 
-function CreateListingModal({ produto, margin, setMargin, freeShipping, setFreeShipping, creating, onClose, onConfirm }) {
-  const salePrice = Math.round((Number(produto.price) || 0) / (1 - margin / 100));
-  const profit = salePrice - (Number(produto.price) || 0);
+function CreateListingModal({
+  produto,
+  margin,
+  setMargin,
+  freeShipping,
+  setFreeShipping,
+  cost,
+  setCost,
+  pricing,
+  validation,
+  validating,
+  creating,
+  onClose,
+  onConfirm,
+}) {
+  const salePrice = pricing?.price ?? Math.round((Number(cost) || 0) / (1 - margin / 100));
+  const profit = pricing?.net_profit ?? null;
+  const netMargin = pricing?.net_margin != null ? Math.round(pricing.net_margin * 1000) / 10 : null;
+  const score = validation?.score ?? null;
+  const viable = pricing?.viable;
+  const canPublish = !creating && !validating && Boolean(pricing) && Boolean(viable);
+  const market = pricing?.market;
+  const warnings = [];
+
+  if (pricing) {
+    if (pricing.competitive === false) {
+      warnings.push('Preço acima da referência de mercado. Reduza o custo ou a margem.');
+    }
+    if (pricing.net_margin < 0.15) {
+      warnings.push('Margem líquida abaixo de 15%. A publicação fica bloqueada.');
+    }
+    if (pricing.cost_source === 'ml_offer') {
+      warnings.push('Custo vindo da oferta do Mercado Livre. Informe o custo real do fornecedor para calcular o lucro.');
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-4 sm:items-center">
@@ -813,7 +845,7 @@ function CreateListingModal({ produto, margin, setMargin, freeShipping, setFreeS
           </button>
         </div>
 
-        <div className="space-y-5 p-5">
+        <div className="max-h-[70vh] space-y-5 overflow-y-auto p-5">
           <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-white">
               <img src={imageUrl(produto.thumbnail)} alt="" className="h-full w-full object-contain p-1" />
@@ -821,15 +853,38 @@ function CreateListingModal({ produto, margin, setMargin, freeShipping, setFreeS
             <div className="min-w-0">
               <p className="line-clamp-2 text-sm font-semibold">{produto.title}</p>
               <p className="mt-1 text-xs text-slate-500">
-                Custo {brl(produto.price)} · {produto.seller?.nickname || 'Mercado Livre'}
+                {produto.listing_strategy === 'catalog_required' || produto.catalog_required
+                  ? 'Anúncio de catálogo · imagens oficiais'
+                  : 'Anúncio normal · imagens oficiais'}
               </p>
             </div>
           </div>
 
           <div>
+            <label htmlFor="supplier-cost" className="text-sm font-semibold">
+              Custo do fornecedor
+            </label>
+            <div className="mt-2 flex items-center rounded-lg border border-slate-200 bg-white px-3">
+              <span className="text-sm text-slate-400">R$</span>
+              <input
+                id="supplier-cost"
+                type="number"
+                min="0"
+                step="0.01"
+                value={cost}
+                onChange={(event) => setCost(Number(event.target.value))}
+                className="w-full border-0 bg-transparent px-2 py-2 text-sm outline-none"
+              />
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Preço de compra no fornecedor/hub. O preço do anúncio é calculado com taxa do ML, frete, impostos e margem líquida.
+            </p>
+          </div>
+
+          <div>
             <div className="flex items-center justify-between">
               <label htmlFor="margin" className="text-sm font-semibold">
-                Margem de lucro
+                Margem líquida desejada
               </label>
               <span className="text-sm font-bold text-brand-700">{margin}%</span>
             </div>
@@ -849,8 +904,24 @@ function CreateListingModal({ produto, margin, setMargin, freeShipping, setFreeS
                 <p className="mt-1 text-lg font-extrabold">{brl(salePrice)}</p>
               </div>
               <div className="rounded-lg bg-emerald-50 p-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">Lucro bruto</p>
-                <p className="mt-1 text-lg font-extrabold text-emerald-700">{brl(profit)}</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">Lucro líquido</p>
+                <p className="mt-1 text-lg font-extrabold text-emerald-700">
+                  {profit == null ? '—' : brl(profit)}
+                </p>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg border border-slate-200 p-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Margem</p>
+                <p className="mt-1 text-sm font-bold">{netMargin == null ? '—' : `${netMargin}%`}</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Score</p>
+                <p className="mt-1 text-sm font-bold">{score == null ? '—' : `${score}%`}</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Mercado</p>
+                <p className="mt-1 text-sm font-bold">{market?.median ? brl(market.median) : '—'}</p>
               </div>
             </div>
           </div>
@@ -865,19 +936,50 @@ function CreateListingModal({ produto, margin, setMargin, freeShipping, setFreeS
             <span>
               <span className="block text-sm font-semibold">Oferecer frete grátis</span>
               <span className="text-xs text-slate-500">
-                O custo do frete sai do seu lucro. Deixe desmarcado para proteger a margem.
+                Em anúncios de catálogo o frete grátis pode ser obrigatório. O custo entra no cálculo.
               </span>
             </span>
           </label>
+
+          {validating ? (
+            <div className="flex items-center gap-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+              <Spinner className="h-4 w-4" />
+              Validando anúncio, atributos e precificação...
+            </div>
+          ) : null}
+
+          {warnings.length ? (
+            <div className="space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              {warnings.map((warning) => (
+                <p key={warning}>{warning}</p>
+              ))}
+            </div>
+          ) : null}
+
+          {pricing ? (
+            <div className={`rounded-xl border p-3 text-xs ${pricing.viable ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>
+              <p className="font-semibold">
+                {pricing.viable ? 'Anúncio validado e viável.' : 'Anúncio bloqueado para proteger sua margem.'}
+              </p>
+              <p className="mt-1">
+                Custo {brl(pricing.cost)} · Taxa ML {brl(pricing.sale_fee)} · Frete {brl(pricing.shipping_cost)} · Impostos {brl(pricing.taxes)}
+              </p>
+              {pricing.supplier ? (
+                <p className="mt-1">
+                  Fornecedor: {pricing.supplier.nome || pricing.supplier.id} · SKU {pricing.supplier.sku}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
           <button type="button" onClick={onClose} className="btn-ghost" disabled={creating}>
             Cancelar
           </button>
-          <button type="button" onClick={onConfirm} className="btn-primary" disabled={creating}>
+          <button type="button" onClick={onConfirm} className="btn-primary" disabled={!canPublish}>
             {creating ? <Spinner className="h-4 w-4" /> : <Icon name="tag" className="h-4 w-4" />}
-            {creating ? 'Publicando...' : 'Publicar anúncio'}
+            {creating ? 'Publicando...' : validating ? 'Validando...' : pricing && !pricing.viable ? 'Ajuste custo/margem' : 'Publicar anúncio'}
           </button>
         </div>
       </div>
@@ -909,6 +1011,10 @@ export default function App() {
   const [margin, setMargin] = useState(18);
   const [freeShipping, setFreeShipping] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [supplierCost, setSupplierCost] = useState(0);
+  const [pricing, setPricing] = useState(null);
+  const [validation, setValidation] = useState(null);
+  const [validating, setValidating] = useState(false);
 
   const showToast = useCallback((type, message) => {
     setToast({ type, message, id: Date.now() });
@@ -925,6 +1031,48 @@ export default function App() {
     },
     [showToast]
   );
+
+  const validateListing = useCallback(
+    async (produto, costValue, marginValue, freeShippingValue) => {
+      if (!produto) return;
+      const costNumber = Number(costValue);
+      if (!Number.isFinite(costNumber) || costNumber <= 0) {
+        setPricing(null);
+        setValidation(null);
+        return;
+      }
+      setValidating(true);
+      try {
+        const data = await request('/listings/validar', {
+          method: 'POST',
+          body: {
+            catalogo_id: produto.catalogo_id || produto.id,
+            item_id: produto.item_id || null,
+            custo: costNumber,
+            margem: marginValue / 100,
+            free_shipping: freeShippingValue,
+            fornecedor_id: produto.seller?.id || null,
+          },
+        });
+        setPricing(data?.pricing || null);
+        setValidation(data || null);
+      } catch {
+        setPricing(null);
+        setValidation(null);
+      } finally {
+        setValidating(false);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!modalProduct) return undefined;
+    const timer = setTimeout(() => {
+      validateListing(modalProduct, supplierCost, margin, freeShipping);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [modalProduct, supplierCost, margin, freeShipping, validateListing]);
 
   const loadListings = useCallback(async () => {
     setLoadingListings(true);
@@ -1056,11 +1204,18 @@ export default function App() {
     setModalProduct(produto);
     setMargin(18);
     setFreeShipping(false);
+    setSupplierCost(Number(produto.price) || 0);
+    setPricing(null);
+    setValidation(null);
     setAuthError('');
   };
 
   const createListing = async () => {
     if (!modalProduct) return;
+    if (!pricing?.viable) {
+      showToast('error', 'Ajuste o custo ou a margem para o anúncio ficar viável.');
+      return;
+    }
     setCreating(true);
     try {
       const created = await request('/listings', {
@@ -1068,6 +1223,7 @@ export default function App() {
         body: {
           catalogo_id: modalProduct.catalogo_id || modalProduct.id,
           item_id: modalProduct.item_id || null,
+          custo: supplierCost,
           margem: margin / 100,
           free_shipping: freeShipping,
           fornecedor: modalProduct.seller?.nickname || null,
@@ -1077,6 +1233,8 @@ export default function App() {
 
       showToast('success', `Anúncio publicado com sucesso (${created.id}).`);
       setModalProduct(null);
+      setPricing(null);
+      setValidation(null);
       await loadListings();
     } catch (error) {
       handleApiError(error);
@@ -1323,6 +1481,11 @@ export default function App() {
           setMargin={setMargin}
           freeShipping={freeShipping}
           setFreeShipping={setFreeShipping}
+          cost={supplierCost}
+          setCost={setSupplierCost}
+          pricing={pricing}
+          validation={validation}
+          validating={validating}
           creating={creating}
           onClose={() => setModalProduct(null)}
           onConfirm={createListing}
