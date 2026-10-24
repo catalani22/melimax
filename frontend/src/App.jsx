@@ -347,8 +347,19 @@ function StatCard({ label, value, hint, accent = 'slate' }) {
   );
 }
 
-function DashboardView({ account, listings, orders, monthly, monthlyLoading, onNavigate }) {
+function DashboardView({
+  account,
+  listings,
+  orders,
+  monthly,
+  monthlyLoading,
+  onPauseAll,
+  onReactivateAll,
+  pausing,
+  onNavigate,
+}) {
   const activeListings = listings.filter((item) => item.status === 'active').length;
+  const pausedListings = listings.filter((item) => item.status === 'paused').length;
   const revenue = orders.reduce((sum, order) => sum + (Number(order.total_amount) || 0), 0);
   const avgMargin = listings.length
     ? listings.reduce((sum, item) => sum + (Number(item.margin) || 0), 0) / listings.length
@@ -362,6 +373,24 @@ function DashboardView({ account, listings, orders, monthly, monthlyLoading, onN
   const projectedProfit = monthRevenue * marginBase;
   const revenueProgress = Math.min((monthRevenue / goalRevenue) * 100, 100);
   const profitProgress = Math.min((projectedProfit / goalProfit) * 100, 100);
+  const today = new Date();
+  const todaySales = orders.filter((order) => {
+    if (['cancelled', 'invalid', 'pending_cancel'].includes(order.status)) {
+      return false;
+    }
+    const date = new Date(order.date_created);
+    return (
+      date.getFullYear() === today.getFullYear() &&
+      date.getMonth() === today.getMonth() &&
+      date.getDate() === today.getDate()
+    );
+  }).length;
+  const dailyTarget = 3;
+  const warmupListings = listings.filter(
+    (item) => Number(item.price) >= 80 && Number(item.price) <= 100
+  ).length;
+  const warmupProgress = Math.min((todaySales / dailyTarget) * 100, 100);
+  const capitalNeeded = dailyTarget * 45 * 12;
 
   return (
     <div className="space-y-6">
@@ -414,6 +443,57 @@ function DashboardView({ account, listings, orders, monthly, monthlyLoading, onN
         <p className="mt-4 text-[11px] text-slate-400">
           Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, mantenha margem líquida acima de 20%.
         </p>
+      </div>
+
+      <div className="card p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+              <Icon name="shield" className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="label">Aquecimento · primeiros 5 dias</p>
+              <h3 className="mt-1 font-bold">
+                Vendas hoje: {todaySales}/{dailyTarget}
+                {todaySales >= dailyTarget ? ' · cota batida, pause os anúncios' : ''}
+              </h3>
+              <p className="mt-1 text-xs text-slate-500">
+                Anúncios entre R$ 80 e R$ 100: {warmupListings}/50 · capital de giro recomendado {brl(capitalNeeded)} a {brl(2000)} · exposição clássica · estoque de 1 unidade por anúncio.
+              </p>
+              <div className="mt-2 h-2 w-full max-w-md overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className={`h-2 rounded-full ${todaySales >= dailyTarget ? 'bg-rose-500' : 'bg-amber-400'}`}
+                  style={{ width: `${warmupProgress}%` }}
+                />
+              </div>
+              <p className="mt-2 text-[11px] text-slate-400">
+                Regra: 2 a 3 vendas por dia, 10 vendas em 5 dias, pausar ao bater a cota e reativar só depois de liberar o caixa.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onPauseAll}
+              className="btn-danger"
+              disabled={pausing || activeListings === 0}
+            >
+              {pausing ? <Spinner className="h-4 w-4" /> : <Icon name="alert" className="h-4 w-4" />}
+              Freio de mão
+            </button>
+            {pausedListings > 0 ? (
+              <button
+                type="button"
+                onClick={onReactivateAll}
+                className="btn-primary"
+                disabled={pausing}
+              >
+                {pausing ? <Spinner className="h-4 w-4" /> : <Icon name="tag" className="h-4 w-4" />}
+                Reativar pausados
+              </button>
+            ) : null}
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
@@ -675,17 +755,42 @@ function SuppliersView({ fornecedores, loading, selectedNicho }) {
   );
 }
 
-function ListingsView({ listings, loading, onRefresh, onClose }) {
+function ListingsView({
+  listings,
+  loading,
+  onRefresh,
+  onClose,
+  onPauseAll,
+  onReactivateAll,
+  pausing,
+}) {
+  const activeCount = listings.filter((item) => item.status === 'active').length;
+  const pausedCount = listings.filter((item) => item.status === 'paused').length;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-slate-500">
-          {listings.length} anúncio{listings.length === 1 ? '' : 's'} no total.
+          {listings.length} anúncio{listings.length === 1 ? '' : 's'} no total · {activeCount} ativo(s) · {pausedCount} pausado(s).
         </p>
-        <button type="button" onClick={onRefresh} className="btn-ghost" disabled={loading}>
-          {loading ? <Spinner className="h-4 w-4" /> : <Icon name="refresh" className="h-4 w-4" />}
-          Atualizar
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={onRefresh} className="btn-ghost" disabled={loading || pausing}>
+            {loading ? <Spinner className="h-4 w-4" /> : <Icon name="refresh" className="h-4 w-4" />}
+            Atualizar
+          </button>
+          {activeCount > 0 ? (
+            <button type="button" onClick={onPauseAll} className="btn-danger" disabled={pausing}>
+              {pausing ? <Spinner className="h-4 w-4" /> : <Icon name="alert" className="h-4 w-4" />}
+              Pausar todos
+            </button>
+          ) : null}
+          {pausedCount > 0 ? (
+            <button type="button" onClick={onReactivateAll} className="btn-primary" disabled={pausing}>
+              {pausing ? <Spinner className="h-4 w-4" /> : <Icon name="tag" className="h-4 w-4" />}
+              Reativar pausados
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {listings.length === 0 ? (
@@ -1634,6 +1739,7 @@ export default function App() {
   const [margin, setMargin] = useState(18);
   const [freeShipping, setFreeShipping] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [pausing, setPausing] = useState(false);
   const [supplierCost, setSupplierCost] = useState(0);
   const [shippingCost, setShippingCost] = useState('');
   const [pricing, setPricing] = useState(null);
@@ -1916,6 +2022,44 @@ export default function App() {
     }
   };
 
+  const pauseAllListings = async () => {
+    const ok = window.confirm(
+      'Freio de mão: pausar todos os anúncios ativos agora? Use quando bater a cota diária para proteger o caixa e a reputação.'
+    );
+    if (!ok) return;
+    setPausing(true);
+    try {
+      const result = await request('/listings/pausar-todos', { method: 'POST' });
+      showToast(
+        'success',
+        `${result.atualizados || 0} anúncio(s) pausado(s).${result.falhas?.length ? ` ${result.falhas.length} falha(s).` : ''}`
+      );
+      await loadListings();
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setPausing(false);
+    }
+  };
+
+  const reactivateAllListings = async () => {
+    const ok = window.confirm('Reativar todos os anúncios pausados?');
+    if (!ok) return;
+    setPausing(true);
+    try {
+      const result = await request('/listings/reativar-todos', { method: 'POST' });
+      showToast(
+        'success',
+        `${result.atualizados || 0} anúncio(s) reativado(s).${result.falhas?.length ? ` ${result.falhas.length} falha(s).` : ''}`
+      );
+      await loadListings();
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setPausing(false);
+    }
+  };
+
   const downloadLabel = async (order) => {
     try {
       const info = await request(`/labels/order/${order.id}/info`);
@@ -2100,6 +2244,9 @@ export default function App() {
               orders={orders}
               monthly={monthly}
               monthlyLoading={loadingMonthly}
+              onPauseAll={pauseAllListings}
+              onReactivateAll={reactivateAllListings}
+              pausing={pausing}
               onNavigate={setView}
             />
           ) : null}
@@ -2129,6 +2276,9 @@ export default function App() {
               loading={loadingListings}
               onRefresh={loadListings}
               onClose={closeListing}
+              onPauseAll={pauseAllListings}
+              onReactivateAll={reactivateAllListings}
+              pausing={pausing}
             />
           ) : null}
           {view === 'pedidos' ? (
