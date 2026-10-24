@@ -136,7 +136,7 @@ function sellerMetrics(user) {
 async function searchProducts({ queries, limit, minPrice }) {
   const list = (Array.isArray(queries) ? queries : [queries]).filter(Boolean);
   const key = `catalog:${list.join('|')}:${limit}:${minPrice}`;
-  return cached(key, 2 * 60 * 1000, async () => {
+  return cached(key, 10 * 60 * 1000, async () => {
     const perQuery = Math.min(
       Math.max(Math.ceil(limit / Math.max(list.length, 1)) + 2, 5),
       10

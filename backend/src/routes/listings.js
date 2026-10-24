@@ -12,6 +12,10 @@ const TAX_RATE = Number(process.env.ML_TAX_RATE || 0.06);
 const MIN_NET_MARGIN = Number(process.env.ML_MIN_NET_MARGIN || 0.15);
 const MARKET_TOLERANCE = Number(process.env.ML_MARKET_TOLERANCE || 1.05);
 const feeCache = new Map();
+const FEE_CACHE_TTL = 30 * 60 * 1000;
+const sourceCache = new Map();
+const SOURCE_CACHE_TTL = 5 * 60 * 1000;
+const SOURCE_CACHE_MAX = 200;
 const SKIP_ATTRIBUTES = new Set([
   'ITEM_CONDITION',
   'SELLER_SKU',
@@ -176,8 +180,10 @@ function marketSummary(offers) {
 }
 
 async function getSaleFee(categoryId, listingTypeId, referencePrice) {
-  const key = `${categoryId}:${listingTypeId}`;
-  if (feeCache.has(key)) return feeCache.get(key);
+  const priceBucket = Math.round((Number(referencePrice) || 0) / 50) * 50;
+  const key = `${categoryId}:${listingTypeId}:${priceBucket}`;
+  const hit = feeCache.get(key);
+  if (hit && Date.now() - hit.createdAt < FEE_CACHE_TTL) return hit.value;
 
   try {
     const data = await mlFetch(
@@ -191,7 +197,13 @@ async function getSaleFee(categoryId, listingTypeId, referencePrice) {
       Number(data.sale_fee_details?.percentage_fee || 0) / 100;
     const fixed = Number(data.sale_fee_details?.fixed_fee || 0);
     const fee = { percentage, fixed };
-    feeCache.set(key, fee);
+    feeCache.set(key, { value: fee, createdAt: Date.now() });
+    if (feeCache.size > 500) {
+      const oldest = [...feeCache.entries()].sort(
+        (a, b) => a[1].createdAt - b[1].createdAt
+      )[0];
+      if (oldest) feeCache.delete(oldest[0]);
+    }
     return fee;
   } catch {
     return { percentage: 0.12, fixed: 0 };
@@ -294,7 +306,7 @@ function normalizeText(value) {
   return '';
 }
 
-async function resolveSource(body) {
+async function resolveSourceUncached(body) {
   const catalogoId =
     body.catalogo_id || body.catalog_product_id || body.catalogoId;
   const itemId = body.item_id || body.itemId;
@@ -372,6 +384,31 @@ async function resolveSource(body) {
     offers: [item],
     market: marketSummary([item]),
   };
+}
+
+function sourceCacheKey(body) {
+  const catalogoId =
+    body.catalogo_id || body.catalog_product_id || body.catalogoId;
+  const itemId = body.item_id || body.itemId;
+  return catalogoId
+    ? `catalog:${catalogoId}:${itemId || ''}`
+    : `item:${itemId || ''}`;
+}
+
+async function resolveSource(body) {
+  const key = sourceCacheKey(body);
+  const hit = sourceCache.get(key);
+  if (hit && Date.now() - hit.createdAt < SOURCE_CACHE_TTL) return hit.value;
+
+  const value = await resolveSourceUncached(body);
+  sourceCache.set(key, { value, createdAt: Date.now() });
+  if (sourceCache.size > SOURCE_CACHE_MAX) {
+    const oldest = [...sourceCache.entries()].sort(
+      (a, b) => a[1].createdAt - b[1].createdAt
+    )[0];
+    if (oldest) sourceCache.delete(oldest[0]);
+  }
+  return value;
 }
 
 function buildDescription(source, title) {

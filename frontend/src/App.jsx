@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const API = (import.meta.env.VITE_API_URL || 'https://melimax-backend.vercel.app/api').replace(/\/+$/, '');
 
@@ -1015,6 +1015,8 @@ export default function App() {
   const [pricing, setPricing] = useState(null);
   const [validation, setValidation] = useState(null);
   const [validating, setValidating] = useState(false);
+  const lastValidationRef = useRef({ key: null, data: null });
+  const validationInFlightRef = useRef(null);
 
   const showToast = useCallback((type, message) => {
     setToast({ type, message, id: Date.now() });
@@ -1041,6 +1043,15 @@ export default function App() {
         setValidation(null);
         return;
       }
+      const key = `${produto.catalogo_id || produto.id}|${produto.item_id || ''}|${costNumber}|${marginValue}|${freeShippingValue}|${produto.seller?.id || ''}`;
+      if (lastValidationRef.current.key === key && lastValidationRef.current.data) {
+        setPricing(lastValidationRef.current.data?.pricing || null);
+        setValidation(lastValidationRef.current.data);
+        return;
+      }
+      if (validationInFlightRef.current === key) return;
+
+      validationInFlightRef.current = key;
       setValidating(true);
       try {
         const data = await request('/listings/validar', {
@@ -1054,12 +1065,15 @@ export default function App() {
             fornecedor_id: produto.seller?.id || null,
           },
         });
+        lastValidationRef.current = { key, data };
         setPricing(data?.pricing || null);
         setValidation(data || null);
       } catch {
+        lastValidationRef.current = { key: null, data: null };
         setPricing(null);
         setValidation(null);
       } finally {
+        if (validationInFlightRef.current === key) validationInFlightRef.current = null;
         setValidating(false);
       }
     },
@@ -1070,7 +1084,7 @@ export default function App() {
     if (!modalProduct) return undefined;
     const timer = setTimeout(() => {
       validateListing(modalProduct, supplierCost, margin, freeShipping);
-    }, 600);
+    }, 1000);
     return () => clearTimeout(timer);
   }, [modalProduct, supplierCost, margin, freeShipping, validateListing]);
 
@@ -1201,6 +1215,8 @@ export default function App() {
   };
 
   const openCreateModal = (produto) => {
+    lastValidationRef.current = { key: null, data: null };
+    validationInFlightRef.current = null;
     setModalProduct(produto);
     setMargin(18);
     setFreeShipping(false);
