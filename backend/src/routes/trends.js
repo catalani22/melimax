@@ -5,6 +5,26 @@ import { query } from '../lib/db.js';
 const router = express.Router();
 
 const KEYWORD_CACHE_MS = 30 * 60 * 1000;
+const DEFAULT_KEYWORDS = [
+  'organizador',
+  'cozinha',
+  'pet',
+  'fone bluetooth',
+  'smartwatch',
+  'led',
+  'carregador',
+  'suporte celular',
+  'mochila',
+  'garrafa termica',
+  'luminaria',
+  'ferramentas',
+  'brinquedo educativo',
+  'semijoias',
+  'perfume',
+  'cama pet',
+  'aspirador portatil',
+  'tapete',
+];
 let keywordCache = { at: 0, data: [] };
 let collecting = null;
 
@@ -41,16 +61,34 @@ function searchRanking(items) {
     .filter((price) => Number.isFinite(price) && price > 0);
 }
 
+function keywordUrl(keyword) {
+  return `https://lista.mercadolivre.com.br/${encodeURIComponent(keyword)
+    .replace(/%20/g, '-')
+    .toLowerCase()}`;
+}
+
+function mergeKeywords(list) {
+  const seen = new Set();
+  const merged = [];
+  for (const item of [...(list || []), ...DEFAULT_KEYWORDS.map((keyword) => ({ keyword }))]) {
+    const keyword = String(item?.keyword || '').trim().toLowerCase();
+    if (!keyword || seen.has(keyword)) continue;
+    seen.add(keyword);
+    merged.push({ keyword, url: item.url || keywordUrl(keyword) });
+  }
+  return merged;
+}
+
 async function trendingKeywords() {
   if (Date.now() - keywordCache.at < KEYWORD_CACHE_MS) {
-    return keywordCache.data;
+    return mergeKeywords(keywordCache.data);
   }
   const data = await mlFetch('/trends/MLB');
   keywordCache = {
     at: Date.now(),
     data: Array.isArray(data) ? data.filter((item) => item.keyword) : [],
   };
-  return keywordCache.data;
+  return mergeKeywords(keywordCache.data);
 }
 
 async function mapLimit(items, limit, worker) {
