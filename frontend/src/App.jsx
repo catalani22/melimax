@@ -845,6 +845,9 @@ function RadarView({ version = 0, onFindSupplier, onAnalyze, onToast }) {
   const [loading, setLoading] = useState(true);
   const [collecting, setCollecting] = useState(false);
   const [windowDays, setWindowDays] = useState(10);
+  const [minPrice, setMinPrice] = useState(0);
+  const [maxSellers, setMaxSellers] = useState(0);
+  const [onlyWithCost, setOnlyWithCost] = useState(false);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
@@ -889,9 +892,25 @@ function RadarView({ version = 0, onFindSupplier, onAnalyze, onToast }) {
 
   const keywords = Array.isArray(data?.keywords) ? data.keywords : [];
   const products = Array.isArray(data?.produtos) ? data.produtos : [];
-  const opportunities = products.filter((item) => item.score >= 70).length;
+  const hasFilters = minPrice > 0 || maxSellers > 0 || onlyWithCost;
+  const visibleProducts = useMemo(
+    () =>
+      products.filter((item) => {
+        if (minPrice > 0 && Number(item.preco || 0) < minPrice) return false;
+        if (maxSellers > 0 && Number(item.vendedores || 0) > maxSellers) return false;
+        if (onlyWithCost && !item.fornecedor_id) return false;
+        return true;
+      }),
+    [products, minPrice, maxSellers, onlyWithCost]
+  );
+  const opportunities = visibleProducts.filter((item) => item.score >= 70).length;
   const withSupplier = products.filter((item) => item.fornecedor_id).length;
   const climbing = keywords.filter((item) => (item.posicao_delta || 0) > 0).length;
+  const clearFilters = () => {
+    setMinPrice(0);
+    setMaxSellers(0);
+    setOnlyWithCost(false);
+  };
 
   return (
     <div className="space-y-5">
@@ -1053,7 +1072,63 @@ function RadarView({ version = 0, onFindSupplier, onAnalyze, onToast }) {
                   Quanto menor a concorrência e maior a subida, melhor o score.
                 </p>
               </div>
-              <span className="badge bg-slate-100 text-slate-500">{products.length} produto(s)</span>
+              <span className="badge bg-slate-100 text-slate-500">
+                {hasFilters ? `${visibleProducts.length} de ${products.length}` : `${products.length} produto(s)`}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/60 px-5 py-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Faixa
+              </span>
+              {[0, 80, 100, 120].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setMinPrice(value)}
+                  aria-pressed={minPrice === value}
+                  className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                    minPrice === value
+                      ? 'border-brand-500 bg-brand-50 text-brand-700'
+                      : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                  }`}
+                >
+                  {value === 0 ? 'Todos' : `≥ ${brl(value)}`}
+                </button>
+              ))}
+              <span className="mx-1 hidden h-4 w-px bg-slate-200 sm:block" />
+              <button
+                type="button"
+                onClick={() => setMaxSellers(maxSellers ? 0 : 3)}
+                aria-pressed={maxSellers > 0}
+                className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                  maxSellers > 0
+                    ? 'border-brand-500 bg-brand-50 text-brand-700'
+                    : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                }`}
+              >
+                Até 3 vendedores
+              </button>
+              <button
+                type="button"
+                onClick={() => setOnlyWithCost((current) => !current)}
+                aria-pressed={onlyWithCost}
+                className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                  onlyWithCost
+                    ? 'border-brand-500 bg-brand-50 text-brand-700'
+                    : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                }`}
+              >
+                Só com custo
+              </button>
+              {hasFilters ? (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="ml-auto text-[11px] font-semibold text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
+                >
+                  Limpar filtros
+                </button>
+              ) : null}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1080px] text-left">
@@ -1070,7 +1145,8 @@ function RadarView({ version = 0, onFindSupplier, onAnalyze, onToast }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {products.map((item) => (
+                  {visibleProducts.length ? (
+                    visibleProducts.map((item) => (
                     <tr key={`${item.keyword}-${item.product_id}`} className="hover:bg-slate-50/60">
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
@@ -1199,7 +1275,20 @@ function RadarView({ version = 0, onFindSupplier, onAnalyze, onToast }) {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={8} className="px-5 py-12 text-center">
+                        <p className="text-sm font-semibold">Nenhum produto nesta faixa.</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Limpe os filtros ou atualize o radar para buscar novas oportunidades.
+                        </p>
+                        <button type="button" onClick={clearFilters} className="btn-ghost mt-3 text-xs">
+                          Limpar filtros
+                        </button>
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
