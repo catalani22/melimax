@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { hashPassword } from './password.js';
 
 const { Pool } = pg;
 
@@ -151,6 +152,22 @@ CREATE INDEX IF NOT EXISTS idx_trend_products_date
 CREATE INDEX IF NOT EXISTS idx_trend_products_product
   ON trend_product_snapshots (product_id, captured_on DESC);
 
+CREATE TABLE IF NOT EXISTS dashboard_users (
+  id SERIAL PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  name TEXT,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'operator',
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  token_version INTEGER NOT NULL DEFAULT 0,
+  last_login_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_users_username
+  ON dashboard_users (username);
+
 CREATE TABLE IF NOT EXISTS suppliers (
   id SERIAL PRIMARY KEY,
   slug TEXT UNIQUE NOT NULL,
@@ -188,18 +205,38 @@ VALUES
 ON CONFLICT (slug) DO NOTHING;
 `;
 
+async function seedAdminUser() {
+  const password = process.env.DASHBOARD_PASSWORD;
+  if (!password) return;
+  await pool.query(
+    `INSERT INTO dashboard_users (username, name, password_hash, role, active)
+     VALUES ('admin', 'Administrador', $1, 'admin', TRUE)
+     ON CONFLICT (username) DO NOTHING`,
+    [hashPassword(password)]
+  );
+}
+
 export async function ensureSchema() {
   if (!pool) return false;
   if (!schemaPromise) {
     schemaPromise = pool
       .query(SCHEMA)
-      .then(() => true)
+      .then(async () => {
+        await seedAdminUser();
+        return true;
+      })
       .catch((err) => {
         schemaPromise = null;
         throw err;
       });
   }
   return schemaPromise;
+}
+
+export async function dashboardUserCount() {
+  if (!pool) return 0;
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS count FROM dashboard_users');
+  return Number(rows[0]?.count) || 0;
 }
 
 export async function dbStatus() {

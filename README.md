@@ -33,7 +33,7 @@ npm run dev
 ```
 
 ## Acesso ao painel
-Defina `DASHBOARD_PASSWORD` no backend para exigir senha. Com a variável preenchida, todas as rotas `/api` ficam protegidas, exceto `health`, `auth/painel` e o callback OAuth do Mercado Livre. A senha fica apenas na sessão do navegador e é enviada no header `x-dashboard-key`.
+Defina `DASHBOARD_PASSWORD` no backend para criar o usuário `admin` inicial. Com a variável preenchida, todas as rotas `/api` ficam protegidas, exceto `health`, `auth/painel` e o callback OAuth do Mercado Livre. O login devolve um token de sessão de 7 dias, enviado no header `x-dashboard-key`. Usuários e senhas podem ser gerenciados em **Administração** por um perfil administrador.
 
 ## Funcionalidades
 - Conexão OAuth real com Mercado Livre (MLB)

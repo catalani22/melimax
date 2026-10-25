@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import { ensureSchema } from './lib/db.js';
 import { CORS_ORIGINS } from './lib/config.js';
 import authRoutes from './routes/auth.js';
+import adminRoutes from './routes/admin.js';
 import productsRoutes from './routes/products.js';
 import suppliersRoutes from './routes/suppliers.js';
 import listingsRoutes from './routes/listings.js';
@@ -62,6 +63,7 @@ app.use('/api', async (req, res, next) => {
 app.use('/api', dashboardAuth);
 app.use('/api', healthRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/suppliers', suppliersRoutes);
 app.use('/api/listings', listingsRoutes);

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const API = (import.meta.env.VITE_API_URL || 'https://melimax-backend.vercel.app/api').replace(/\/+$/, '');
-const DASHBOARD_KEY_STORAGE = 'melimax_dashboard_key';
+const DASHBOARD_TOKEN_STORAGE = 'melimax_dashboard_token';
+const LEGACY_DASHBOARD_KEY_STORAGE = 'melimax_dashboard_key';
 
 async function request(path, options = {}) {
   const { body, headers, ...rest } = options;
-  const dashboardKey = sessionStorage.getItem(DASHBOARD_KEY_STORAGE) || '';
+  const dashboardKey = sessionStorage.getItem(DASHBOARD_TOKEN_STORAGE) || '';
   const res = await fetch(`${API}${path}`, {
     ...rest,
     headers: {
@@ -66,6 +67,7 @@ const NAV_ITEMS = [
   { id: 'fornecedores', label: 'Fornecedores', icon: 'store' },
   { id: 'anuncios', label: 'Anúncios', icon: 'tag' },
   { id: 'pedidos', label: 'Pedidos', icon: 'cart' },
+  { id: 'admin', label: 'Administração', icon: 'shield' },
 ];
 
 const VIEW_TITLES = {
@@ -76,6 +78,7 @@ const VIEW_TITLES = {
   fornecedores: { title: 'Fornecedores', subtitle: 'Vendedores reais encontrados no Mercado Livre.' },
   anuncios: { title: 'Anúncios', subtitle: 'Seus anúncios publicados e qualificação.' },
   pedidos: { title: 'Pedidos', subtitle: 'Vendas, envios e etiquetas do Mercado Envios.' },
+  admin: { title: 'Administração', subtitle: 'Usuários, permissões e senha de acesso ao painel.' },
 };
 
 function Icon({ name, className = 'h-5 w-5' }) {
@@ -248,7 +251,9 @@ function Toast({ toast, onClose }) {
 }
 
 function PasswordScreen({ onSubmit, error, loading }) {
+  const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
@@ -274,25 +279,42 @@ function PasswordScreen({ onSubmit, error, loading }) {
             Painel protegido
           </div>
           <p className="mt-2 text-sm text-slate-300">
-            Informe a senha do painel para liberar anúncios, pedidos e integrações.
+            Informe usuário e senha para liberar anúncios, pedidos, integrações e a administração.
           </p>
 
           <form
             className="mt-5 space-y-3"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!loading && password) onSubmit(password);
+              if (!loading && password) onSubmit(username.trim() || 'admin', password);
             }}
           >
             <input
-              type="password"
-              autoFocus
-              autoComplete="current-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Senha do painel"
+              type="text"
+              autoComplete="username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              placeholder="Usuário"
               className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-400/20"
             />
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                autoFocus
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Senha do painel"
+                className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2.5 pr-16 text-sm text-white placeholder-slate-500 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-400/20"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((current) => !current)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-white/10"
+              >
+                {showPassword ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </div>
             {error ? (
               <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">
                 {error}
@@ -309,7 +331,7 @@ function PasswordScreen({ onSubmit, error, loading }) {
           </form>
 
           <p className="mt-4 text-center text-xs text-slate-400">
-            A senha fica apenas nesta sessão do navegador e é validada no servidor.
+            A sessão fica apenas neste navegador. O usuário padrão é <strong>admin</strong>.
           </p>
         </div>
       </div>
@@ -1303,6 +1325,434 @@ function RadarView({ version = 0, onFindSupplier, onAnalyze, onToast }) {
   );
 }
 
+function AdminView({ currentUser, onToast, onSession }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ username: '', name: '', password: '', role: 'operator' });
+  const [creating, setCreating] = useState(false);
+  const [savingId, setSavingId] = useState(null);
+  const [resetUser, setResetUser] = useState(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetting, setResetting] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changing, setChanging] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await request('/admin/usuarios');
+      setUsers(Array.isArray(data) ? data : []);
+    } catch (error) {
+      onToast('error', error?.message || 'Não foi possível carregar os usuários.');
+    } finally {
+      setLoading(false);
+    }
+  }, [onToast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const applySession = (data) => {
+    if (data?.token) sessionStorage.setItem(DASHBOARD_TOKEN_STORAGE, data.token);
+    if (data?.user) onSession?.(data.user);
+  };
+
+  const createUser = async (event) => {
+    event.preventDefault();
+    if (creating) return;
+    if (!form.username.trim() || form.password.length < 6) {
+      onToast('alert', 'Informe usuário e uma senha com pelo menos 6 caracteres.');
+      return;
+    }
+    setCreating(true);
+    try {
+      const user = await request('/admin/usuarios', {
+        method: 'POST',
+        body: {
+          username: form.username.trim(),
+          name: form.name.trim(),
+          password: form.password,
+          role: form.role,
+        },
+      });
+      setForm({ username: '', name: '', password: '', role: 'operator' });
+      onToast('success', `Usuário ${user.username} criado.`);
+      await load();
+    } catch (error) {
+      onToast('error', error?.message || 'Não foi possível criar o usuário.');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const updateUser = async (user, patch) => {
+    if (savingId) return;
+    setSavingId(user.id);
+    try {
+      const updated = await request(`/admin/usuarios/${user.id}`, {
+        method: 'PATCH',
+        body: patch,
+      });
+      setUsers((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      if (updated.id === currentUser?.id) onSession?.(updated);
+      onToast('success', 'Usuário atualizado.');
+    } catch (error) {
+      onToast('error', error?.message || 'Não foi possível atualizar o usuário.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const removeUser = async (user) => {
+    if (savingId) return;
+    if (!window.confirm(`Excluir o usuário ${user.username}?`)) return;
+    setSavingId(user.id);
+    try {
+      await request(`/admin/usuarios/${user.id}`, { method: 'DELETE' });
+      setUsers((current) => current.filter((item) => item.id !== user.id));
+      onToast('success', 'Usuário excluído.');
+    } catch (error) {
+      onToast('error', error?.message || 'Não foi possível excluir o usuário.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const submitReset = async (event) => {
+    event.preventDefault();
+    if (!resetUser || resetting) return;
+    if (resetPassword.length < 6) {
+      onToast('alert', 'A nova senha precisa ter pelo menos 6 caracteres.');
+      return;
+    }
+    setResetting(true);
+    try {
+      const data = await request(`/admin/usuarios/${resetUser.id}/senha`, {
+        method: 'POST',
+        body: { new_password: resetPassword },
+      });
+      if (data?.token) applySession(data);
+      onToast('success', `Senha de ${resetUser.username} alterada.`);
+      setResetUser(null);
+      setResetPassword('');
+    } catch (error) {
+      onToast('error', error?.message || 'Não foi possível alterar a senha.');
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const changeOwnPassword = async (event) => {
+    event.preventDefault();
+    if (changing) return;
+    if (newPassword.length < 6) {
+      onToast('alert', 'A nova senha precisa ter pelo menos 6 caracteres.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      onToast('alert', 'A confirmação da nova senha não confere.');
+      return;
+    }
+    setChanging(true);
+    try {
+      const data = await request('/admin/senha', {
+        method: 'POST',
+        body: { current_password: currentPassword, new_password: newPassword },
+      });
+      applySession(data);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      onToast('success', 'Sua senha foi alterada. Use a nova senha no próximo acesso.');
+    } catch (error) {
+      onToast('error', error?.message || 'Não foi possível alterar a sua senha.');
+    } finally {
+      setChanging(false);
+    }
+  };
+
+  const isSelf = (user) => user.id === currentUser?.id;
+  const activeAdmins = users.filter((user) => user.role === 'admin' && user.active).length;
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="card p-5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
+              <Icon name="shield" className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="label">Sua sessão</p>
+              <h3 className="mt-1 font-bold">{currentUser?.name || currentUser?.username || 'Administrador'}</h3>
+              <p className="mt-1 text-xs text-slate-500">
+                Usuário <strong>{currentUser?.username || 'admin'}</strong> · perfil{' '}
+                <strong>{currentUser?.role === 'admin' ? 'administrador' : 'operador'}</strong>
+              </p>
+            </div>
+          </div>
+
+          <form className="mt-5 grid gap-3 sm:grid-cols-2" onSubmit={changeOwnPassword}>
+            <label className="sm:col-span-2">
+              <span className="label">Senha atual</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+                className="input mt-1"
+                placeholder="Senha atual"
+              />
+            </label>
+            <label>
+              <span className="label">Nova senha</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                className="input mt-1"
+                placeholder="Mínimo 6 caracteres"
+              />
+            </label>
+            <label>
+              <span className="label">Confirmar nova senha</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                className="input mt-1"
+                placeholder="Repita a nova senha"
+              />
+            </label>
+            <div className="sm:col-span-2">
+              <button type="submit" className="btn-primary" disabled={changing}>
+                {changing ? <Spinner className="h-4 w-4" /> : <Icon name="check" className="h-4 w-4" />}
+                {changing ? 'Alterando...' : 'Alterar minha senha'}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div className="card p-5">
+          <p className="label">Novo usuário</p>
+          <h3 className="mt-1 font-bold">Criar acesso ao painel</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Operadores usam anúncios, pedidos e radar. Administradores também gerenciam usuários e senhas.
+          </p>
+          <form className="mt-4 space-y-3" onSubmit={createUser}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label>
+                <span className="label">Usuário</span>
+                <input
+                  value={form.username}
+                  onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))}
+                  className="input mt-1"
+                  placeholder="ex.: joao"
+                  autoComplete="off"
+                />
+              </label>
+              <label>
+                <span className="label">Nome</span>
+                <input
+                  value={form.name}
+                  onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                  className="input mt-1"
+                  placeholder="Nome de exibição"
+                  autoComplete="off"
+                />
+              </label>
+              <label>
+                <span className="label">Senha</span>
+                <input
+                  type="password"
+                  value={form.password}
+                  onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
+                  className="input mt-1"
+                  placeholder="Mínimo 6 caracteres"
+                  autoComplete="new-password"
+                />
+              </label>
+              <label>
+                <span className="label">Perfil</span>
+                <select
+                  value={form.role}
+                  onChange={(event) => setForm((current) => ({ ...current, role: event.target.value }))}
+                  className="input mt-1"
+                >
+                  <option value="operator">Operador</option>
+                  <option value="admin">Administrador</option>
+                </select>
+              </label>
+            </div>
+            <button type="submit" className="btn-primary" disabled={creating}>
+              {creating ? <Spinner className="h-4 w-4" /> : <Icon name="check" className="h-4 w-4" />}
+              {creating ? 'Criando...' : 'Criar usuário'}
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <div className="card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <div>
+            <p className="font-bold">Usuários do painel</p>
+            <p className="text-xs text-slate-500">
+              {users.length} usuário(s) · {activeAdmins} administrador(es) ativo(s)
+            </p>
+          </div>
+          <button type="button" onClick={load} className="btn-ghost" disabled={loading}>
+            {loading ? <Spinner className="h-4 w-4" /> : <Icon name="refresh" className="h-4 w-4" />}
+            Atualizar
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-500">
+            <Spinner /> Carregando usuários...
+          </div>
+        ) : users.length === 0 ? (
+          <div className="px-5 py-12 text-center text-sm text-slate-500">
+            Nenhum usuário cadastrado. Crie o primeiro administrador acima.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[820px] text-left">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Usuário</th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Perfil</th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Status</th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Último acesso</th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {users.map((user) => (
+                  <tr key={user.id} className="hover:bg-slate-50/60">
+                    <td className="px-5 py-3">
+                      <p className="text-sm font-semibold">
+                        {user.name || user.username}
+                        {isSelf(user) ? <span className="ml-2 text-[11px] font-medium text-sky-600">você</span> : null}
+                      </p>
+                      <p className="text-xs text-slate-500">@{user.username}</p>
+                    </td>
+                    <td className="px-5 py-3">
+                      <select
+                        value={user.role}
+                        onChange={(event) => updateUser(user, { role: event.target.value })}
+                        disabled={savingId === user.id || isSelf(user)}
+                        className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                      >
+                        <option value="operator">Operador</option>
+                        <option value="admin">Administrador</option>
+                      </select>
+                    </td>
+                    <td className="px-5 py-3">
+                      <span
+                        className={`badge ${
+                          user.active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                        }`}
+                      >
+                        {user.active ? 'Ativo' : 'Inativo'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-xs text-slate-500">
+                      {user.last_login_at ? formatDate(user.last_login_at) : 'Nunca entrou'}
+                    </td>
+                    <td className="px-5 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetUser(user);
+                            setResetPassword('');
+                          }}
+                          className="btn-ghost px-2 py-1 text-xs"
+                        >
+                          Redefinir senha
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateUser(user, { active: !user.active })}
+                          disabled={savingId === user.id || isSelf(user)}
+                          className="btn-ghost px-2 py-1 text-xs disabled:opacity-50"
+                        >
+                          {user.active ? 'Desativar' : 'Ativar'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeUser(user)}
+                          disabled={savingId === user.id || isSelf(user)}
+                          className="btn-ghost px-2 py-1 text-xs text-rose-600 disabled:opacity-50"
+                        >
+                          Excluir
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="border-t border-slate-100 px-5 py-3 text-[11px] text-slate-400">
+          Ao redefinir uma senha, as sessões antigas daquele usuário são encerradas. Você não pode
+          desativar, rebaixar ou excluir o seu próprio acesso.
+        </p>
+      </div>
+
+      {resetUser ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="label">Redefinir senha</p>
+                <h3 className="mt-1 font-bold">@{resetUser.username}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setResetUser(null)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"
+                aria-label="Fechar"
+              >
+                <Icon name="close" className="h-4 w-4" />
+              </button>
+            </div>
+            <form className="mt-4 space-y-3" onSubmit={submitReset}>
+              <label>
+                <span className="label">Nova senha</span>
+                <input
+                  type="password"
+                  autoFocus
+                  value={resetPassword}
+                  onChange={(event) => setResetPassword(event.target.value)}
+                  className="input mt-1"
+                  placeholder="Mínimo 6 caracteres"
+                  autoComplete="new-password"
+                />
+              </label>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setResetUser(null)} className="btn-ghost">
+                  Cancelar
+                </button>
+                <button type="submit" className="btn-primary" disabled={resetting}>
+                  {resetting ? <Spinner className="h-4 w-4" /> : <Icon name="check" className="h-4 w-4" />}
+                  {resetting ? 'Salvando...' : 'Salvar senha'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ListingsView({
   listings,
   loading,
@@ -2268,6 +2718,7 @@ export default function App() {
   const [account, setAccount] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [dashboardUnlocked, setDashboardUnlocked] = useState(false);
+  const [dashboardUser, setDashboardUser] = useState(null);
   const [dashboardChecking, setDashboardChecking] = useState(true);
   const [dashboardError, setDashboardError] = useState('');
   const [unlocking, setUnlocking] = useState(false);
@@ -2313,9 +2764,11 @@ export default function App() {
   const handleApiError = useCallback(
     (error) => {
       if (error?.data?.code === 'DASHBOARD_LOCKED') {
-        sessionStorage.removeItem(DASHBOARD_KEY_STORAGE);
+        sessionStorage.removeItem(DASHBOARD_TOKEN_STORAGE);
+        sessionStorage.removeItem(LEGACY_DASHBOARD_KEY_STORAGE);
+        setDashboardUser(null);
         setDashboardUnlocked(false);
-        setDashboardError('Sessão bloqueada. Informe a senha novamente.');
+        setDashboardError('Sessão bloqueada. Informe usuário e senha novamente.');
         return;
       }
       if (error?.status === 401 || error?.data?.needs_reauth) {
@@ -2447,6 +2900,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    sessionStorage.removeItem(LEGACY_DASHBOARD_KEY_STORAGE);
 
     (async () => {
       try {
@@ -2454,20 +2908,23 @@ export default function App() {
         if (cancelled) return;
         if (!status?.protected) {
           setDashboardUnlocked(true);
+          setDashboardChecking(false);
           return;
         }
-        const stored = sessionStorage.getItem(DASHBOARD_KEY_STORAGE);
+        const stored = sessionStorage.getItem(DASHBOARD_TOKEN_STORAGE);
         if (!stored) return;
-        await request('/auth/painel', {
-          method: 'POST',
-          body: { password: stored },
-        });
-        if (!cancelled) setDashboardUnlocked(true);
+        const session = await request('/auth/sessao');
+        if (!cancelled) {
+          setDashboardUser(session?.user || null);
+          setDashboardUnlocked(true);
+        }
       } catch (error) {
         if (cancelled) return;
-        sessionStorage.removeItem(DASHBOARD_KEY_STORAGE);
+        sessionStorage.removeItem(DASHBOARD_TOKEN_STORAGE);
+        sessionStorage.removeItem(LEGACY_DASHBOARD_KEY_STORAGE);
+        setDashboardUser(null);
         setDashboardUnlocked(false);
-        setDashboardError(error?.message || 'Informe a senha do painel.');
+        setDashboardError(error?.message || 'Informe usuário e senha do painel.');
       } finally {
         if (!cancelled) setDashboardChecking(false);
       }
@@ -2537,21 +2994,24 @@ export default function App() {
     }
   }, [dashboardUnlocked, view, orders.length, account, loadingOrders, loadOrders]);
 
-  const unlockDashboard = async (password) => {
+  const unlockDashboard = async (username, password) => {
     setUnlocking(true);
     setDashboardError('');
     try {
       const data = await request('/auth/painel', {
         method: 'POST',
-        body: { password },
+        body: { username, password },
       });
       if (!data?.ok) {
         throw new Error('Não foi possível liberar o painel.');
       }
       if (data.protected === false) {
-        sessionStorage.removeItem(DASHBOARD_KEY_STORAGE);
+        sessionStorage.removeItem(DASHBOARD_TOKEN_STORAGE);
+        setDashboardUser(null);
       } else {
-        sessionStorage.setItem(DASHBOARD_KEY_STORAGE, password);
+        if (!data.token) throw new Error('Sessão inválida. Tente novamente.');
+        sessionStorage.setItem(DASHBOARD_TOKEN_STORAGE, data.token);
+        setDashboardUser(data.user || null);
       }
       setAuthLoading(true);
       setDashboardUnlocked(true);
@@ -2563,8 +3023,10 @@ export default function App() {
   };
 
   const lockDashboard = () => {
-    sessionStorage.removeItem(DASHBOARD_KEY_STORAGE);
+    sessionStorage.removeItem(DASHBOARD_TOKEN_STORAGE);
+    sessionStorage.removeItem(LEGACY_DASHBOARD_KEY_STORAGE);
     setDashboardError('');
+    setDashboardUser(null);
     setDashboardUnlocked(false);
     setAccount(null);
     setListings([]);
@@ -2869,7 +3331,7 @@ export default function App() {
         </div>
 
         <nav className="flex-1 space-y-1 px-3 py-2">
-          {NAV_ITEMS.map((item) => {
+          {NAV_ITEMS.filter((item) => item.id !== 'admin' || dashboardUser?.role === 'admin').map((item) => {
             const active = view === item.id;
             return (
               <button
@@ -3026,6 +3488,13 @@ export default function App() {
               loading={loadingOrders}
               onRefresh={loadOrders}
               onLabel={downloadLabel}
+            />
+          ) : null}
+          {view === 'admin' ? (
+            <AdminView
+              currentUser={dashboardUser}
+              onToast={showToast}
+              onSession={setDashboardUser}
             />
           ) : null}
         </main>
