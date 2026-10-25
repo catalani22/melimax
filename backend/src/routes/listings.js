@@ -9,7 +9,8 @@ const LISTING_TYPE = process.env.ML_LISTING_TYPE || 'gold_special';
 const EMPTY_GTIN_REASON = process.env.ML_EMPTY_GTIN_REASON || '17055160';
 const DEFAULT_SHIPPING_COST = Number(process.env.ML_SHIPPING_COST || 25);
 const TAX_RATE = Number(process.env.ML_TAX_RATE || 0.06);
-const MIN_NET_MARGIN = Number(process.env.ML_MIN_NET_MARGIN || 0.15);
+const MIN_NET_MARGIN = Number(process.env.ML_MIN_NET_MARGIN || 0.45);
+const MIN_PRICE_MULTIPLE = Number(process.env.ML_MIN_PRICE_MULTIPLE || 3);
 const MARKET_TOLERANCE = Number(process.env.ML_MARKET_TOLERANCE || 1.05);
 const STOCK_STALE_HOURS = Number(process.env.ML_STOCK_STALE_HOURS || 24);
 const SHIPPING_TABLE = [
@@ -38,8 +39,8 @@ const SKIP_ATTRIBUTES = new Set([
 
 function clampMargin(value) {
   const margin = Number(value);
-  if (!Number.isFinite(margin)) return 0.18;
-  return Math.min(Math.max(margin, 0.05), 0.6);
+  if (!Number.isFinite(margin)) return 0.5;
+  return Math.min(Math.max(margin, 0.05), 0.75);
 }
 
 function normalizeAttribute(attr) {
@@ -351,6 +352,8 @@ async function priceListing(source, body, margin) {
   const taxes = Math.round(price * taxRate);
   const netProfit = Math.round(price - cost - shippingCost - saleFee - taxes);
   const netMargin = price > 0 ? netProfit / price : 0;
+  const priceMultiple = cost > 0 ? price / cost : 0;
+  const profitOverCost = cost > 0 ? netProfit / cost : 0;
   const market = source.market || marketSummary(source.offers);
   const competitive =
     market?.median != null ? price <= market.median * MARKET_TOLERANCE : null;
@@ -377,11 +380,15 @@ async function priceListing(source, body, margin) {
     taxes,
     net_profit: netProfit,
     net_margin: Number(netMargin.toFixed(4)),
+    price_multiple: Number(priceMultiple.toFixed(2)),
+    profit_over_cost: Number(profitOverCost.toFixed(4)),
     fee_percentage: Number((fee.percentage * 100).toFixed(2)),
     market,
     competitive,
     viable:
-      netMargin >= MIN_NET_MARGIN && (competitive === null || competitive),
+      netMargin >= MIN_NET_MARGIN &&
+      priceMultiple >= MIN_PRICE_MULTIPLE &&
+      (competitive === null || competitive),
   };
 }
 
@@ -727,7 +734,7 @@ router.post('/', async (req, res, next) => {
     if (!pricing.viable && !req.body.force) {
       return res.status(422).json({
         error:
-          'Anuncio inviavel: margem liquida abaixo do minimo ou preco acima da referencia de mercado.',
+          'Anuncio inviavel: margem/multiplicador abaixo do minimo ou preco acima da referencia de mercado.',
         pricing,
       });
     }

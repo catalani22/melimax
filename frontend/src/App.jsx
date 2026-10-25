@@ -472,7 +472,7 @@ function DashboardView({
   const monthRevenue = Number(monthly?.faturamento) || 0;
   const monthOrders = Number(monthly?.pedidos) || 0;
   const monthTicket = Number(monthly?.ticket_medio) || 0;
-  const marginBase = avgMargin > 0 ? avgMargin : 0.2;
+  const marginBase = avgMargin > 0 ? avgMargin : 0.5;
   const projectedProfit = monthRevenue * marginBase;
   const revenueProgress = Math.min((monthRevenue / goalRevenue) * 100, 100);
   const profitProgress = Math.min((projectedProfit / goalProfit) * 100, 100);
@@ -547,7 +547,7 @@ function DashboardView({
           </div>
         </div>
         <p className="mt-4 text-[11px] text-slate-400">
-          Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, mantenha margem líquida acima de 20%.
+          Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, mantenha margem líquida acima de 45% e multiplicador de pelo menos 3x.
         </p>
       </div>
 
@@ -1239,7 +1239,7 @@ function RadarView({ version = 0, onFindSupplier, onAnalyze, onToast }) {
                         {item.margem_bruta_pct != null ? (
                           <span
                             className={`badge ${
-                              item.margem_bruta_pct >= 40
+                              item.margem_bruta_pct >= 45
                                 ? 'bg-emerald-50 text-emerald-700'
                                 : 'bg-amber-50 text-amber-700'
                             }`}
@@ -2509,8 +2509,11 @@ function CreateListingModal({
     if (pricing.competitive === false) {
       warnings.push('Preço acima da referência de mercado. Reduza o custo ou a margem.');
     }
-    if (pricing.net_margin < 0.15) {
-      warnings.push('Margem líquida abaixo de 15%. A publicação fica bloqueada.');
+    if (pricing.net_margin < 0.45) {
+      warnings.push('Margem líquida abaixo de 45%. A publicação fica bloqueada.');
+    }
+    if (pricing.price_multiple != null && pricing.price_multiple < 3) {
+      warnings.push('Multiplicador abaixo de 3x o custo. A publicação fica bloqueada.');
     }
     if (pricing.cost_source === 'ml_offer') {
       warnings.push('Custo vindo da oferta do Mercado Livre. Informe o custo real do fornecedor para calcular o lucro.');
@@ -2612,8 +2615,8 @@ function CreateListingModal({
             <input
               id="margin"
               type="range"
-              min="5"
-              max="60"
+              min="40"
+              max="70"
               step="1"
               value={margin}
               onChange={(event) => setMargin(Number(event.target.value))}
@@ -2691,6 +2694,10 @@ function CreateListingModal({
                     : ' (padrão)'}
                 {' '}· Impostos {brl(pricing.taxes)}
               </p>
+              <p className="mt-1">
+                Multiplicador {pricing.price_multiple != null ? `${pricing.price_multiple.toFixed(1)}x` : '—'}
+                {' '}· Lucro sobre o custo {pricing.profit_over_cost != null ? `${Math.round(pricing.profit_over_cost * 100)}%` : '—'}
+              </p>
               {pricing.supplier ? (
                 <p className="mt-1">
                   Fornecedor: {pricing.supplier.nome || pricing.supplier.id} · SKU {pricing.supplier.sku}
@@ -2745,7 +2752,7 @@ export default function App() {
   const [radarVersion, setRadarVersion] = useState(0);
   const [authError, setAuthError] = useState('');
   const [modalProduct, setModalProduct] = useState(null);
-  const [margin, setMargin] = useState(18);
+  const [margin, setMargin] = useState(50);
   const [freeShipping, setFreeShipping] = useState(false);
   const [creating, setCreating] = useState(false);
   const [pausing, setPausing] = useState(false);

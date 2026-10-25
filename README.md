@@ -41,7 +41,7 @@ Defina `DASHBOARD_PASSWORD` no backend para criar o usuário `admin` inicial. Co
 - Produtos reais da API Mercado Livre (acima de R$ 80)
 - Fornecedores validados de renome
 - Criação de anúncios com qualificação acima de 85%
-- Margem configurável (15-20%)
+- Margem configurável (padrão 50%, piso 45%) e multiplicador mínimo de 3x sobre o custo
 - Etiquetas de remessa enviadas aos fornecedores
 - Radar Viral: tendências do Mercado Livre com snapshots diários, concorrência, preço e margem bruta
 - Simulador de margem líquida antes de publicar, com taxa real do ML e frete por peso
