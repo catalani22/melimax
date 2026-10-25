@@ -507,7 +507,7 @@ function DashboardView({
         <StatCard
           label="Margem média"
           value={`${Math.round(avgMargin * 100)}%`}
-          hint="Configurada nos seus anúncios"
+          hint="Sobre a venda, configurada nos anúncios"
         />
       </div>
 
@@ -547,7 +547,7 @@ function DashboardView({
           </div>
         </div>
         <p className="mt-4 text-[11px] text-slate-400">
-          Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, mantenha margem líquida acima de 45% e multiplicador de pelo menos 3x.
+          Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, mantenha lucro sobre o custo acima de 100% (ideal 150–200%), margem líquida sobre a venda acima de 30% e multiplicador de pelo menos 3x.
         </p>
       </div>
 
@@ -2509,8 +2509,11 @@ function CreateListingModal({
     if (pricing.competitive === false) {
       warnings.push('Preço acima da referência de mercado. Reduza o custo ou a margem.');
     }
-    if (pricing.net_margin < 0.45) {
-      warnings.push('Margem líquida abaixo de 45%. A publicação fica bloqueada.');
+    if (pricing.net_margin < 0.3) {
+      warnings.push('Margem líquida sobre a venda abaixo de 30%. A publicação fica bloqueada.');
+    }
+    if (pricing.profit_over_cost != null && pricing.profit_over_cost < 1) {
+      warnings.push('Lucro sobre o custo abaixo de 100%. A publicação fica bloqueada.');
     }
     if (pricing.price_multiple != null && pricing.price_multiple < 3) {
       warnings.push('Multiplicador abaixo de 3x o custo. A publicação fica bloqueada.');
@@ -2608,7 +2611,7 @@ function CreateListingModal({
           <div>
             <div className="flex items-center justify-between">
               <label htmlFor="margin" className="text-sm font-semibold">
-                Margem líquida desejada
+                Margem líquida desejada (sobre a venda)
               </label>
               <span className="text-sm font-bold text-brand-700">{margin}%</span>
             </div>

@@ -9,8 +9,11 @@ const LISTING_TYPE = process.env.ML_LISTING_TYPE || 'gold_special';
 const EMPTY_GTIN_REASON = process.env.ML_EMPTY_GTIN_REASON || '17055160';
 const DEFAULT_SHIPPING_COST = Number(process.env.ML_SHIPPING_COST || 25);
 const TAX_RATE = Number(process.env.ML_TAX_RATE || 0.06);
-const MIN_NET_MARGIN = Number(process.env.ML_MIN_NET_MARGIN || 0.45);
+const MIN_NET_MARGIN = Number(process.env.ML_MIN_NET_MARGIN || 0.3);
 const MIN_PRICE_MULTIPLE = Number(process.env.ML_MIN_PRICE_MULTIPLE || 3);
+const MIN_PROFIT_OVER_COST = Number(
+  process.env.ML_MIN_PROFIT_OVER_COST || 1
+);
 const MARKET_TOLERANCE = Number(process.env.ML_MARKET_TOLERANCE || 1.05);
 const STOCK_STALE_HOURS = Number(process.env.ML_STOCK_STALE_HOURS || 24);
 const SHIPPING_TABLE = [
@@ -388,6 +391,7 @@ async function priceListing(source, body, margin) {
     viable:
       netMargin >= MIN_NET_MARGIN &&
       priceMultiple >= MIN_PRICE_MULTIPLE &&
+      profitOverCost >= MIN_PROFIT_OVER_COST &&
       (competitive === null || competitive),
   };
 }
