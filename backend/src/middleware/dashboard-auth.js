@@ -20,7 +20,12 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(hashA, hashB);
 }
 
+function authDisabled() {
+  return String(process.env.DASHBOARD_AUTH_DISABLED || '').toLowerCase() === 'true';
+}
+
 export async function dashboardProtectionEnabled() {
+  if (authDisabled()) return false;
   if (dashboardPassword()) return true;
   return (await dashboardUserCount()) > 0;
 }
@@ -43,6 +48,7 @@ let warnedOpen = false;
 
 export async function dashboardAuth(req, res, next) {
   if (PUBLIC_PATHS.has(req.path)) return next();
+  if (authDisabled()) return next();
 
   try {
     const enabled = await dashboardProtectionEnabled();
