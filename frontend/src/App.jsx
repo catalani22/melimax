@@ -140,7 +140,8 @@ function catalogPricing(item, supplier, listing) {
     (1 - feeRate - taxRate);
   const target = Math.max(priceForMargin, priceForProfit);
   const ceiling = market ? market * CATALOG_MARKET_TOLERANCE : null;
-  const suggested = ceiling ? Math.min(target, ceiling) : target;
+  const capped = Boolean(ceiling && target > ceiling);
+  const suggested = capped ? ceiling : target;
   const listedPrice = safeNumber(listing?.price);
   const price = listedPrice && listedPrice > 0 ? listedPrice : suggested;
   const shipping = safeNumber(listing?.shipping_cost) ?? shippingInfo.cost;
@@ -164,6 +165,7 @@ function catalogPricing(item, supplier, listing) {
     ceiling,
     target,
     suggested,
+    capped,
     price,
     saleFee,
     taxes,
@@ -3021,7 +3023,7 @@ function ProductDetailModal({ produto, fornecedor, listing, onClose }) {
             <DetailField
               label={pricing.listed ? 'Preço de venda no anúncio' : 'Preço de venda sugerido'}
               value={brl(pricing.price)}
-              hint={pricing.listed ? 'Valor praticado hoje' : 'Calculado com margem mínima de 30%'}
+              hint={pricing.listed ? 'Valor praticado hoje' : pricing.capped ? 'Limitado pelo teto de mercado; margem mínima não atingida' : 'Calculado com margem mínima de 30%'}
             />
             <DetailField
               label="Lucro líquido"
