@@ -110,3 +110,9 @@ Operação de dropshipping nacional no Mercado Livre com produtos de estoque fí
 - `POST /api/listings/sync-prices` recalcula preço e, quando aplicado, dispara o alerta de venda.
 - A tela de Catálogo mostra faixa de custo, venda, lucro, margem, estoque, fornecedor, CEP, composição do preço e detalhes completos.
 - A tela de Anúncios permite simular e aplicar reajuste em lote, com tabela de preço atual, novo preço, margem e lucro.
+
+## URLs
+
+- Frontend de produção: `https://melimax-two.vercel.app`.
+- Backend de produção: `https://melimax-backend.vercel.app/api`.
+- `melimax.vercel.app` não é este projeto.
