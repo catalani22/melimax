@@ -130,6 +130,8 @@ function catalogPricing(item, supplier, listing) {
   const packaging = safeNumber(listing?.packaging_cost) ??
     safeNumber(supplier?.custo_embalagem) ?? 0;
   const market = safeNumber(item?.preco_mercado);
+  const marketConfidence = safeNumber(item?.mercado_confianca);
+  const marketReliable = Boolean(market && market > 0 && marketConfidence != null && marketConfidence >= 0.8);
   const feeRate = CATALOG_FEE_RATE;
   const taxRate = CATALOG_TAX_RATE;
   const denominator = 1 - feeRate - taxRate - CATALOG_MIN_MARGIN;
@@ -151,17 +153,21 @@ function catalogPricing(item, supplier, listing) {
   const margin = price > 0 ? profit / price : 0;
   const multiple = cost > 0 ? price / cost : 0;
   const profitOverCost = cost > 0 ? profit / cost : 0;
-  const viable =
+  const economic =
     cost > 0 &&
     margin >= CATALOG_MIN_MARGIN &&
-    profitOverCost >= CATALOG_MIN_PROFIT_COST &&
-    (!ceiling || price <= ceiling);
+    profitOverCost >= CATALOG_MIN_PROFIT_COST;
+  const competitive = !ceiling || price <= ceiling;
+  const viable = economic && competitive && marketReliable;
+  const state = viable ? 'viavel' : !marketReliable ? 'sem_referencia' : 'ajustar';
   return {
     cost,
     shipping,
     shippingInfo,
     packaging,
     market,
+    marketConfidence,
+    marketReliable,
     ceiling,
     target,
     suggested,
@@ -173,7 +179,10 @@ function catalogPricing(item, supplier, listing) {
     margin,
     multiple,
     profitOverCost,
+    economic,
+    competitive,
     viable,
+    state,
     listed: Boolean(listedPrice),
     hasListing: Boolean(listing),
     status: listing?.status || null,
@@ -2914,7 +2923,9 @@ function CatalogoView({ onToast, externalSearch = '' }) {
                           {status === 'active' ? 'Ativo' : status === 'paused' ? 'Pausado' : 'Sem anúncio'}
                         </span>
                         {!pricing.viable ? (
-                          <p className="mt-1 text-xs text-rose-700">Ajustar preço</p>
+                          <p className={`mt-1 text-xs ${pricing.state === 'sem_referencia' ? 'text-slate-500' : 'text-rose-700'}`}>
+                            {pricing.state === 'sem_referencia' ? 'Sem referência de mercado' : 'Ajustar preço'}
+                          </p>
                         ) : null}
                       </td>
                       <td className="px-4 py-3">
@@ -2998,6 +3009,8 @@ function ProductDetailModal({ produto, fornecedor, listing, onClose }) {
               <span className={`badge ${statusClass}`}>{statusLabel}</span>
               {pricing.viable ? (
                 <span className="badge bg-emerald-50 text-emerald-700">Viável</span>
+              ) : pricing.state === 'sem_referencia' ? (
+                <span className="badge bg-slate-100 text-slate-600">Sem referência</span>
               ) : (
                 <span className="badge bg-rose-50 text-rose-700">Ajustar</span>
               )}
