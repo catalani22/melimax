@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS listings (
   permalink TEXT,
   margin NUMERIC,
   thumbnail TEXT,
+  catalogo_id TEXT,
+  listing_type_id TEXT,
+  last_price_sync_at TIMESTAMPTZ,
+  price_floor NUMERIC,
+  price_ceiling NUMERIC,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

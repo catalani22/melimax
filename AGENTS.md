@@ -84,3 +84,10 @@ Operação de dropshipping nacional no Mercado Livre com produtos de estoque fí
 - Gargalo: catálogo em estoque pequeno para chegar a centenas; ampliar fornecedores/estoque ou incluir itens sob consulta.
 - Token ML expira em ~6h; renovar chamando um endpoint do backend que use `mlFetch` (ex.: `/api/products`), que atualiza `ml_accounts` no Postgres remoto.
 - Cores da plataforma alinhadas ao Mercado Livre: azul `#3483FA`, azul escuro `#2968C8`, amarelo `#FFE600`, amarelo escuro `#F2C200`, ink `#2D3277`, fundo `#EBEBEB`.
+
+## Orquestração
+
+- Plano de lotes, publicação pausada e preço dinâmico em `PLANO_BESTSELLERS.md`.
+- `POST /api/listings/sync-prices`: recalcula preço por custo/mercado; `dry_run` padrão.
+- `POST /api/listings/publicar-lote`: ativa anúncios pausados em lote.
+- Novos anúncios usam `status: paused` por padrão; `status: active` só quando o CNPJ/CNAEs estiverem prontos.

@@ -579,6 +579,7 @@ function buildPayloads(source, body, pricing, descriptionText) {
     available_quantity: Math.max(Number(body.available_quantity) || 1, 1),
     buying_mode: 'buy_it_now',
     condition: source.condition,
+    status: body.status || process.env.ML_DEFAULT_LISTING_STATUS || 'paused',
     listing_type_id: body.listing_type_id || LISTING_TYPE,
     pictures,
     accepts_mercadopago: true,
@@ -788,13 +789,16 @@ router.post('/', async (req, res, next) => {
     await query(
       `INSERT INTO listings
          (ml_item_id, title, price, supplier, status, score, source_item_id,
-          source_price, supplier_id, permalink, margin, thumbnail, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+          source_price, supplier_id, permalink, margin, thumbnail, catalogo_id,
+          listing_type_id, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
        ON CONFLICT (ml_item_id) DO UPDATE SET
          title = EXCLUDED.title,
          price = EXCLUDED.price,
          status = EXCLUDED.status,
-         score = EXCLUDED.score`,
+         score = EXCLUDED.score,
+         catalogo_id = EXCLUDED.catalogo_id,
+         listing_type_id = EXCLUDED.listing_type_id`,
       [
         created.id,
         built.title,
@@ -808,6 +812,8 @@ router.post('/', async (req, res, next) => {
         permalink,
         built.margin,
         built.pictures[0]?.source || null,
+        source.product?.id || null,
+        req.body.listing_type_id || LISTING_TYPE,
       ]
     );
 
@@ -884,6 +890,234 @@ router.post('/reativar-todos', async (req, res, next) => {
   try {
     const result = await updateAllListingStatus('paused', 'active');
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+async function listingMarket(catalogoId, fallbackPrice) {
+  if (catalogoId) {
+    try {
+      const offers = await mlFetch(
+        `/products/${encodeURIComponent(catalogoId)}/items?limit=20`
+      );
+      const summary = marketSummary(offers.results);
+      if (summary.median) return summary;
+    } catch {}
+  }
+  const fallback = Number(fallbackPrice);
+  if (Number.isFinite(fallback) && fallback > 0) {
+    return { min: fallback, median: fallback, max: fallback, count: 0 };
+  }
+  return { min: null, median: null, max: null, count: 0 };
+}
+
+router.post('/sync-prices', async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.body.max_batch) || 20, 1), 50);
+    const dryRun = req.body.dry_run !== false;
+    const status = req.body.status ? String(req.body.status) : null;
+    const margin = clampMargin(req.body.margem ?? req.body.margin);
+    const taxRate = Number(req.body.taxa ?? req.body.tax_rate ?? TAX_RATE) || 0;
+
+    const params = [];
+    let where = "ml_item_id IS NOT NULL AND status <> 'closed'";
+    if (status) {
+      params.push(status);
+      where += ` AND status = $${params.length}`;
+    }
+    params.push(limit);
+    const { rows } = await query(
+      `SELECT * FROM listings
+       WHERE ${where}
+       ORDER BY last_price_sync_at ASC NULLS FIRST, created_at ASC
+       LIMIT $${params.length}`,
+      params
+    );
+
+    const results = [];
+    let updated = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    for (const row of rows) {
+      try {
+        const supplierCost = await findSupplierCost({
+          catalogoId: row.catalogo_id,
+          itemId: row.source_item_id,
+          fornecedorId: row.supplier_id,
+        });
+        if (!supplierCost) {
+          skipped += 1;
+          results.push({ id: row.ml_item_id, status: 'sem_custo' });
+          continue;
+        }
+
+        const item = await mlFetch(`/items/${encodeURIComponent(row.ml_item_id)}`);
+        const categoryId = item.category_id || null;
+        const listingType = item.listing_type_id || row.listing_type_id || LISTING_TYPE;
+        const cost = Number(supplierCost.custo);
+        const shipping = estimateShipping(supplierCost).cost;
+        const fee = await getSaleFee(categoryId, listingType, cost);
+        const denominator = 1 - fee.percentage - taxRate - margin;
+        if (denominator <= 0) {
+          skipped += 1;
+          results.push({ id: row.ml_item_id, status: 'margem_inviavel' });
+          continue;
+        }
+
+        const computed = Math.ceil(
+          (cost + shipping + fee.fixed) / denominator
+        );
+        const market = await listingMarket(
+          row.catalogo_id || item.catalog_product_id,
+          row.source_price
+        );
+        const ceiling =
+          market.median != null
+            ? Math.floor(market.median * MARKET_TOLERANCE)
+            : null;
+        const target = ceiling ? Math.min(computed, ceiling) : computed;
+        const saleFee = Math.round(target * fee.percentage + fee.fixed);
+        const taxes = Math.round(target * taxRate);
+        const profit = Math.round(target - cost - shipping - saleFee - taxes);
+        const netMargin = target > 0 ? profit / target : 0;
+        const profitOverCost = cost > 0 ? profit / cost : 0;
+        const viable =
+          netMargin >= MIN_NET_MARGIN &&
+          profitOverCost >= MIN_PROFIT_OVER_COST;
+        const current = Number(item.price) || Number(row.price) || 0;
+        const deltaPct = current > 0 ? (target - current) / current : 0;
+
+        if (!viable) {
+          skipped += 1;
+          results.push({
+            id: row.ml_item_id,
+            status: 'inviavel',
+            cost,
+            target,
+            profit,
+            net_margin: Number(netMargin.toFixed(4)),
+            profit_over_cost: Number(profitOverCost.toFixed(4)),
+            market_median: market.median,
+          });
+          continue;
+        }
+
+        if (Math.abs(deltaPct) < 0.01) {
+          skipped += 1;
+          results.push({
+            id: row.ml_item_id,
+            status: 'sem_alteracao',
+            price: current,
+            target,
+          });
+          continue;
+        }
+
+        if (!dryRun) {
+          await mlFetch(`/items/${encodeURIComponent(row.ml_item_id)}`, {
+            method: 'PUT',
+            body: { price: target },
+          });
+          await query(
+            `UPDATE listings
+             SET price = $1, margin = $2, last_price_sync_at = NOW(),
+                 price_floor = $3, price_ceiling = $4
+             WHERE id = $5`,
+            [
+              target,
+              Number((profit / target).toFixed(4)),
+              Math.round(
+                (cost + shipping + fee.fixed) /
+                  (1 - fee.percentage - taxRate - MIN_NET_MARGIN)
+              ),
+              ceiling,
+              row.id,
+            ]
+          );
+        }
+
+        updated += 1;
+        results.push({
+          id: row.ml_item_id,
+          status: dryRun ? 'planejado' : 'atualizado',
+          cost,
+          current_price: current,
+          target_price: target,
+          delta_pct: Number((deltaPct * 100).toFixed(2)),
+          profit,
+          net_margin: Number(netMargin.toFixed(4)),
+          profit_over_cost: Number(profitOverCost.toFixed(4)),
+          market_median: market.median,
+        });
+      } catch (err) {
+        errors += 1;
+        results.push({
+          id: row.ml_item_id,
+          status: 'erro',
+          error: formatMlError(err),
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    res.json({
+      dry_run: dryRun,
+      total: rows.length,
+      updated,
+      skipped,
+      errors,
+      results,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/publicar-lote', async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(String) : [];
+    const limit = Math.min(Math.max(Number(req.body.max_batch) || 20, 1), 50);
+    const params = [];
+    let where = "status = 'paused'";
+    if (ids.length) {
+      params.push(ids);
+      where += ` AND (id::text = ANY($${params.length}) OR ml_item_id = ANY($${params.length}))`;
+    }
+    params.push(limit);
+    const { rows } = await query(
+      `SELECT id, ml_item_id FROM listings
+       WHERE ${where}
+       ORDER BY created_at ASC
+       LIMIT $${params.length}`,
+      params
+    );
+
+    const falhas = [];
+    let atualizados = 0;
+    for (const listing of rows) {
+      try {
+        await mlFetch(`/items/${encodeURIComponent(listing.ml_item_id)}`, {
+          method: 'PUT',
+          body: { status: 'active' },
+        });
+        await query('UPDATE listings SET status = $1 WHERE id = $2', [
+          'active',
+          listing.id,
+        ]);
+        atualizados += 1;
+      } catch (err) {
+        falhas.push({
+          id: listing.ml_item_id,
+          error: formatMlError(err),
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    res.json({ total: rows.length, atualizados, falhas });
   } catch (err) {
     next(err);
   }
