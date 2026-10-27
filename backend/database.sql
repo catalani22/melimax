@@ -31,6 +31,13 @@ CREATE TABLE IF NOT EXISTS listings (
   last_price_sync_at TIMESTAMPTZ,
   price_floor NUMERIC,
   price_ceiling NUMERIC,
+  cost NUMERIC,
+  sale_fee NUMERIC,
+  taxes NUMERIC,
+  shipping_cost NUMERIC,
+  packaging_cost NUMERIC,
+  net_profit NUMERIC,
+  fee_percentage NUMERIC,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

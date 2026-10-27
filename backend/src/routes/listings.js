@@ -668,6 +668,57 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+router.get('/alertas', async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limite) || 30, 1), 200);
+    const unreadOnly = req.query.nao_lidas === 'true';
+    const params = [];
+    let where = '';
+    if (unreadOnly) where = 'WHERE lido = FALSE';
+    const { rows } = await query(
+      `SELECT pa.*, s.nome AS fornecedor_nome
+       FROM price_alerts pa
+       LEFT JOIN suppliers s ON s.slug = pa.fornecedor_id
+       ${where ? where.replace('lido', 'pa.lido') : ''}
+       ORDER BY pa.created_at DESC
+       LIMIT ${limit}`
+    );
+    const { rows: countRows } = await query(
+      `SELECT COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE lido = FALSE)::int AS nao_lidas
+       FROM price_alerts`
+    );
+    res.json({
+      total: countRows[0]?.total || 0,
+      nao_lidas: countRows[0]?.nao_lidas || 0,
+      alertas: rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/alertas/lidas', async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body.ids)
+      ? req.body.ids.map((id) => Number(id)).filter(Number.isFinite)
+      : [];
+    const params = [];
+    let where = 'lido = FALSE';
+    if (ids.length) {
+      params.push(ids);
+      where += ` AND id = ANY($${params.length})`;
+    }
+    const { rowCount } = await query(
+      `UPDATE price_alerts SET lido = TRUE WHERE ${where}`,
+      params
+    );
+    res.json({ atualizados: rowCount || 0 });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/validar', async (req, res, next) => {
   try {
     const margin = clampMargin(req.body.margem ?? req.body.margin);
@@ -790,15 +841,23 @@ router.post('/', async (req, res, next) => {
       `INSERT INTO listings
          (ml_item_id, title, price, supplier, status, score, source_item_id,
           source_price, supplier_id, permalink, margin, thumbnail, catalogo_id,
-          listing_type_id, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+          listing_type_id, cost, sale_fee, taxes, shipping_cost, packaging_cost,
+          net_profit, fee_percentage, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,NOW())
        ON CONFLICT (ml_item_id) DO UPDATE SET
          title = EXCLUDED.title,
          price = EXCLUDED.price,
          status = EXCLUDED.status,
          score = EXCLUDED.score,
          catalogo_id = EXCLUDED.catalogo_id,
-         listing_type_id = EXCLUDED.listing_type_id`,
+         listing_type_id = EXCLUDED.listing_type_id,
+         cost = EXCLUDED.cost,
+         sale_fee = EXCLUDED.sale_fee,
+         taxes = EXCLUDED.taxes,
+         shipping_cost = EXCLUDED.shipping_cost,
+         packaging_cost = EXCLUDED.packaging_cost,
+         net_profit = EXCLUDED.net_profit,
+         fee_percentage = EXCLUDED.fee_percentage`,
       [
         created.id,
         built.title,
@@ -814,6 +873,13 @@ router.post('/', async (req, res, next) => {
         built.pictures[0]?.source || null,
         source.product?.id || null,
         req.body.listing_type_id || LISTING_TYPE,
+        Number(pricing.cost) || null,
+        Number(pricing.sale_fee) || null,
+        Number(pricing.taxes) || null,
+        Number(pricing.shipping_cost) || null,
+        Number(req.body.embalagem ?? pricing.packaging_cost) || 0,
+        Number(pricing.net_profit) || null,
+        Number(pricing.fee_percentage) || null,
       ]
     );
 
@@ -1024,8 +1090,10 @@ router.post('/sync-prices', async (req, res, next) => {
           await query(
             `UPDATE listings
              SET price = $1, margin = $2, last_price_sync_at = NOW(),
-                 price_floor = $3, price_ceiling = $4
-             WHERE id = $5`,
+                 price_floor = $3, price_ceiling = $4, cost = $5,
+                 sale_fee = $6, taxes = $7, shipping_cost = $8,
+                 net_profit = $9, fee_percentage = $10
+             WHERE id = $11`,
             [
               target,
               Number((profit / target).toFixed(4)),
@@ -1034,6 +1102,12 @@ router.post('/sync-prices', async (req, res, next) => {
                   (1 - fee.percentage - taxRate - MIN_NET_MARGIN)
               ),
               ceiling,
+              cost,
+              saleFee,
+              taxes,
+              shipping,
+              profit,
+              Number((fee.percentage * 100).toFixed(2)),
               row.id,
             ]
           );

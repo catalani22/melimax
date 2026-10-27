@@ -313,6 +313,78 @@ router.post('/registro', async (req, res, next) => {
   }
 });
 
+router.get('/prontidao', async (req, res, next) => {
+  try {
+    const { rows } = await dbQuery(
+      `SELECT
+         sp.fornecedor_id,
+         COALESCE(s.nome, MAX(sp.fornecedor_nome), sp.fornecedor_id) AS fornecedor_nome,
+         s.cep, s.cidade, s.uf,
+         COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE sp.ativo AND COALESCE(sp.estoque, 0) > 0)::int AS ativos,
+         COUNT(*) FILTER (
+           WHERE sp.preco_mercado IS NOT NULL AND sp.mercado_confianca >= 0.8
+         )::int AS confiaveis,
+         COUNT(*) FILTER (
+           WHERE sp.preco_mercado >= sp.custo * 3 AND sp.mercado_confianca >= 0.8
+         )::int AS fortes
+       FROM supplier_products sp
+       LEFT JOIN suppliers s ON s.slug = sp.fornecedor_id
+       GROUP BY sp.fornecedor_id, s.nome, s.cep, s.cidade, s.uf
+       ORDER BY total DESC`
+    );
+    const total = rows.reduce((sum, row) => sum + Number(row.total || 0), 0);
+    const ativos = rows.reduce((sum, row) => sum + Number(row.ativos || 0), 0);
+    const confiaveis = rows.reduce((sum, row) => sum + Number(row.confiaveis || 0), 0);
+    const fortes = rows.reduce((sum, row) => sum + Number(row.fortes || 0), 0);
+    const cepMap = new Map();
+    for (const row of rows) {
+      if (!row.cep) continue;
+      const key = String(row.cep);
+      if (!cepMap.has(key)) cepMap.set(key, []);
+      cepMap.get(key).push(row);
+    }
+    const gruposCep = [...cepMap.entries()]
+      .map(([cep, fornecedores]) => ({
+        cep,
+        fornecedores: fornecedores.map((item) => item.fornecedor_nome),
+        total: fornecedores.reduce((sum, item) => sum + Number(item.total || 0), 0),
+      }))
+      .filter((grupo) => grupo.fornecedores.length >= 2);
+    const semCep = rows
+      .filter((row) => !row.cep)
+      .map((row) => row.fornecedor_nome);
+    const pendencias = [];
+    if (fortes < 350) {
+      pendencias.push(
+        `Faltam ${350 - fortes} SKU(s) fortes para a meta de 350; há ${fortes} com mercado ≥3x o custo e match confiável.`
+      );
+    }
+    if (!gruposCep.length) {
+      pendencias.push(
+        'Nenhum par de fornecedores compartilha o mesmo CEP de coleta. O Mercado Livre aceita um endereço de remetente por conta.'
+      );
+    }
+    if (semCep.length) {
+      pendencias.push(`Sem CEP informado: ${semCep.join(', ')}.`);
+    }
+    res.json({
+      total,
+      ativos,
+      confiaveis,
+      fortes,
+      meta: { min: 350, max: 500 },
+      fornecedores: rows,
+      grupos_cep: gruposCep,
+      atende_volume: fortes >= 350 && fortes <= 500,
+      atende_cep: gruposCep.length > 0,
+      pendencias,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/custos/resumo', async (req, res, next) => {
   try {
     const hours = Math.min(
@@ -422,7 +494,7 @@ router.get('/custos', async (req, res, next) => {
     }
 
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-    const limit = Math.min(Math.max(Number(req.query.limite) || 200, 1), 500);
+    const limit = Math.min(Math.max(Number(req.query.limite) || 200, 1), 2000);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
     const sort = {
       custo_asc: 'custo ASC',
@@ -478,6 +550,19 @@ const FIELD_ALIASES = {
   altura_cm: ['altura', 'altura_cm', 'height', 'package_height'],
   largura_cm: ['largura', 'largura_cm', 'width', 'package_width'],
   comprimento_cm: ['comprimento', 'comprimento_cm', 'length', 'package_length'],
+  tara_kg: ['tara_kg', 'tara', 'peso_embalagem', 'packaging_weight_kg'],
+  categoria: ['categoria', 'category', 'departamento'],
+  url: ['url', 'link', 'permalink', 'product_url'],
+  preco_mercado: ['preco_mercado', 'market_price', 'preco_referencia', 'market_price_calc'],
+  mercado_min: ['mercado_min', 'market_min', 'price_min'],
+  mercado_max: ['mercado_max', 'market_max', 'price_max'],
+  mercado_ofertas: ['mercado_ofertas', 'offers', 'ofertas'],
+  mercado_vendedores: ['mercado_vendedores', 'sellers', 'vendedores'],
+  mercado_confianca: ['mercado_confianca', 'confidence', 'confianca'],
+  mercado_multiplo: ['mercado_multiplo', 'market_multiple', 'multiplo'],
+  matched_id: ['matched_id', 'mlb_id', 'catalog_product_id'],
+  matched_name: ['matched_name', 'nome_mercado'],
+  categoria_ml: ['categoria_ml', 'category_path', 'ml_category'],
   ativo: ['ativo', 'status'],
 };
 
@@ -592,79 +677,48 @@ function normalizeSupplierItem(item, fornecedorId, fornecedorNome) {
     altura_cm: parseBrNumber(item.altura_cm ?? item.height_cm),
     largura_cm: parseBrNumber(item.largura_cm ?? item.width_cm),
     comprimento_cm: parseBrNumber(item.comprimento_cm ?? item.length_cm),
+    tara_kg: parseBrNumber(item.tara_kg ?? item.tara),
+    categoria: item.categoria ? String(item.categoria).trim() : null,
+    url: item.url ? String(item.url).trim() : null,
+    preco_mercado: parseBrNumber(item.preco_mercado),
+    mercado_min: parseBrNumber(item.mercado_min),
+    mercado_max: parseBrNumber(item.mercado_max),
+    mercado_ofertas: parseBrNumber(item.mercado_ofertas),
+    mercado_vendedores: parseBrNumber(item.mercado_vendedores),
+    mercado_confianca: parseBrNumber(item.mercado_confianca),
+    mercado_multiplo: parseBrNumber(item.mercado_multiplo),
+    matched_id: item.matched_id ? String(item.matched_id).trim() : null,
+    matched_name: item.matched_name ? String(item.matched_name).trim() : null,
+    categoria_ml: item.categoria_ml ? String(item.categoria_ml).trim() : null,
     ativo: parseActive(item.ativo),
   };
 }
 
-async function upsertSupplierProduct(item) {
-  await dbQuery(
-    `INSERT INTO supplier_products
-       (fornecedor_id, fornecedor_nome, catalogo_id, item_id, sku, gtin,
-        titulo, custo, estoque, peso_kg, altura_cm, largura_cm,
-        comprimento_cm, ativo, atualizado_em)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
-     ON CONFLICT (fornecedor_id, sku) DO UPDATE SET
-       fornecedor_nome = EXCLUDED.fornecedor_nome,
-       catalogo_id = EXCLUDED.catalogo_id,
-       item_id = EXCLUDED.item_id,
-       gtin = EXCLUDED.gtin,
-       titulo = EXCLUDED.titulo,
-       custo = EXCLUDED.custo,
-       estoque = EXCLUDED.estoque,
-       peso_kg = EXCLUDED.peso_kg,
-       altura_cm = EXCLUDED.altura_cm,
-       largura_cm = EXCLUDED.largura_cm,
-       comprimento_cm = EXCLUDED.comprimento_cm,
-       ativo = EXCLUDED.ativo,
-       atualizado_em = NOW()`,
-    [
-      item.fornecedor_id,
-      item.fornecedor_nome,
-      item.catalogo_id,
-      item.item_id,
-      item.sku,
-      item.gtin,
-      item.titulo,
-      item.custo,
-      item.estoque,
-      item.peso_kg,
-      item.altura_cm,
-      item.largura_cm,
-      item.comprimento_cm,
-      item.ativo,
-    ]
-  );
-}
-
 async function batchUpsertSupplierProducts(items) {
-  const columns = [
-    items.map((item) => item.fornecedor_id),
-    items.map((item) => item.fornecedor_nome),
-    items.map((item) => item.catalogo_id),
-    items.map((item) => item.item_id),
-    items.map((item) => item.sku),
-    items.map((item) => item.gtin),
-    items.map((item) => item.titulo),
-    items.map((item) => item.custo),
-    items.map((item) => item.estoque),
-    items.map((item) => item.peso_kg),
-    items.map((item) => item.altura_cm),
-    items.map((item) => item.largura_cm),
-    items.map((item) => item.comprimento_cm),
-    items.map((item) => item.ativo),
-  ];
-
+  const payload = JSON.stringify(items);
   await dbQuery(
     `INSERT INTO supplier_products
        (fornecedor_id, fornecedor_nome, catalogo_id, item_id, sku, gtin,
         titulo, custo, estoque, peso_kg, altura_cm, largura_cm,
-        comprimento_cm, ativo, atualizado_em)
-     SELECT *, NOW()
-     FROM UNNEST(
-       $1::text[], $2::text[], $3::text[], $4::text[], $5::text[],
-       $6::text[], $7::text[], $8::numeric[], $9::integer[],
-       $10::numeric[], $11::numeric[], $12::numeric[], $13::numeric[],
-       $14::boolean[]
+        comprimento_cm, tara_kg, categoria, url, preco_mercado, mercado_min,
+        mercado_max, mercado_ofertas, mercado_vendedores, mercado_confianca,
+        mercado_multiplo, matched_id, matched_name, categoria_ml, ativo,
+        atualizado_em)
+     SELECT fornecedor_id, fornecedor_nome, catalogo_id, item_id, sku, gtin,
+        titulo, custo, estoque, peso_kg, altura_cm, largura_cm,
+        comprimento_cm, tara_kg, categoria, url, preco_mercado, mercado_min,
+        mercado_max, mercado_ofertas, mercado_vendedores, mercado_confianca,
+        mercado_multiplo, matched_id, matched_name, categoria_ml, ativo, NOW()
+     FROM jsonb_to_recordset($1::jsonb) AS x(
+        fornecedor_id text, fornecedor_nome text, catalogo_id text,
+        item_id text, sku text, gtin text, titulo text, custo numeric,
+        estoque integer, peso_kg numeric, altura_cm numeric,
+        largura_cm numeric, comprimento_cm numeric, tara_kg numeric,
+        categoria text, url text, preco_mercado numeric, mercado_min numeric,
+        mercado_max numeric, mercado_ofertas integer,
+        mercado_vendedores integer, mercado_confianca numeric,
+        mercado_multiplo numeric, matched_id text, matched_name text,
+        categoria_ml text, ativo boolean
      )
      ON CONFLICT (fornecedor_id, sku) DO UPDATE SET
        fornecedor_nome = EXCLUDED.fornecedor_nome,
@@ -678,10 +732,27 @@ async function batchUpsertSupplierProducts(items) {
        altura_cm = EXCLUDED.altura_cm,
        largura_cm = EXCLUDED.largura_cm,
        comprimento_cm = EXCLUDED.comprimento_cm,
+       tara_kg = EXCLUDED.tara_kg,
+       categoria = EXCLUDED.categoria,
+       url = EXCLUDED.url,
+       preco_mercado = EXCLUDED.preco_mercado,
+       mercado_min = EXCLUDED.mercado_min,
+       mercado_max = EXCLUDED.mercado_max,
+       mercado_ofertas = EXCLUDED.mercado_ofertas,
+       mercado_vendedores = EXCLUDED.mercado_vendedores,
+       mercado_confianca = EXCLUDED.mercado_confianca,
+       mercado_multiplo = EXCLUDED.mercado_multiplo,
+       matched_id = EXCLUDED.matched_id,
+       matched_name = EXCLUDED.matched_name,
+       categoria_ml = EXCLUDED.categoria_ml,
        ativo = EXCLUDED.ativo,
        atualizado_em = NOW()`,
-    columns
+    [payload]
   );
+}
+
+async function upsertSupplierProduct(item) {
+  await batchUpsertSupplierProducts([item]);
 }
 
 async function upsertSupplierProducts(produtos, fornecedorId, fornecedorNome) {

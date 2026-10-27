@@ -91,3 +91,22 @@ Operação de dropshipping nacional no Mercado Livre com produtos de estoque fí
 - `POST /api/listings/sync-prices`: recalcula preço por custo/mercado; `dry_run` padrão.
 - `POST /api/listings/publicar-lote`: ativa anúncios pausados em lote.
 - Novos anúncios usam `status: paused` por padrão; `status: active` só quando o CNPJ/CNAEs estiverem prontos.
+
+
+## Dados operacionais importados
+
+- `supplier_products`: 742 SKUs reais importados do funil (OneDrop 392, C7 243, Mirão 73, Smarke 34).
+- Cada linha guarda custo, estoque, peso, tara, categoria, URL, preço mediano de mercado, ofertas, vendedores, confiança do match e IDs de catálogo.
+- `suppliers`: endereço/CEP/CNPJ/prazo/custo de embalagem quando conhecidos. C7 e Atacadum têm apenas CEP confirmado; Smarke tem endereço completo; OneDrop não informa CEP.
+- `scripts/importar-catalogo-avaliado.mjs`: importa `dados/produtos_avaliados.csv` para o Postgres usando `DATABASE_URL`.
+
+## Controle de preços e alertas
+
+- `price_alerts` registra alterações de custo do fornecedor e de preço de venda.
+- Triggers no Postgres gravam custo anterior/novo e preço anterior/novo, margem anterior/nova e lucro anterior/novo.
+- `GET /api/suppliers/prontidao` mede volume forte, SKUs confiáveis, grupos de CEP e pendências operacionais.
+- `GET /api/listings/alertas?limite=30` retorna os alertas com nome do fornecedor.
+- `POST /api/listings/alertas/lidas` marca alertas como lidos.
+- `POST /api/listings/sync-prices` recalcula preço e, quando aplicado, dispara o alerta de venda.
+- A tela de Catálogo mostra faixa de custo, venda, lucro, margem, estoque, fornecedor, CEP, composição do preço e detalhes completos.
+- A tela de Anúncios permite simular e aplicar reajuste em lote, com tabela de preço atual, novo preço, margem e lucro.

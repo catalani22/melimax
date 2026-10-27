@@ -79,6 +79,13 @@ ALTER TABLE listings ADD COLUMN IF NOT EXISTS listing_type_id TEXT;
 ALTER TABLE listings ADD COLUMN IF NOT EXISTS last_price_sync_at TIMESTAMPTZ;
 ALTER TABLE listings ADD COLUMN IF NOT EXISTS price_floor NUMERIC;
 ALTER TABLE listings ADD COLUMN IF NOT EXISTS price_ceiling NUMERIC;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS cost NUMERIC;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS sale_fee NUMERIC;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS taxes NUMERIC;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS packaging_cost NUMERIC;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS net_profit NUMERIC;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS fee_percentage NUMERIC;
 
 CREATE TABLE IF NOT EXISTS labels (
   id SERIAL PRIMARY KEY,
@@ -105,9 +112,36 @@ CREATE TABLE IF NOT EXISTS supplier_products (
   largura_cm NUMERIC,
   comprimento_cm NUMERIC,
   ativo BOOLEAN DEFAULT TRUE,
+  categoria TEXT,
+  url TEXT,
+  tara_kg NUMERIC,
+  preco_mercado NUMERIC,
+  mercado_min NUMERIC,
+  mercado_max NUMERIC,
+  mercado_ofertas INTEGER,
+  mercado_vendedores INTEGER,
+  mercado_confianca NUMERIC,
+  mercado_multiplo NUMERIC,
+  matched_id TEXT,
+  matched_name TEXT,
+  categoria_ml TEXT,
   atualizado_em TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (fornecedor_id, sku)
 );
+
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS categoria TEXT;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS url TEXT;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS tara_kg NUMERIC;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS preco_mercado NUMERIC;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS mercado_min NUMERIC;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS mercado_max NUMERIC;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS mercado_ofertas INTEGER;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS mercado_vendedores INTEGER;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS mercado_confianca NUMERIC;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS mercado_multiplo NUMERIC;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS matched_id TEXT;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS matched_name TEXT;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS categoria_ml TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_supplier_products_catalogo
   ON supplier_products (catalogo_id);
@@ -115,6 +149,80 @@ CREATE INDEX IF NOT EXISTS idx_supplier_products_gtin
   ON supplier_products (gtin);
 CREATE INDEX IF NOT EXISTS idx_supplier_products_item
   ON supplier_products (item_id);
+
+CREATE TABLE IF NOT EXISTS price_alerts (
+  id BIGSERIAL PRIMARY KEY,
+  tipo TEXT NOT NULL DEFAULT 'preco',
+  produto TEXT,
+  fornecedor_id TEXT,
+  sku TEXT,
+  listing_id INTEGER,
+  ml_item_id TEXT,
+  custo_anterior NUMERIC,
+  custo_novo NUMERIC,
+  preco_anterior NUMERIC,
+  preco_novo NUMERIC,
+  margem_anterior NUMERIC,
+  margem_nova NUMERIC,
+  lucro_anterior NUMERIC,
+  lucro_novo NUMERIC,
+  mensagem TEXT,
+  lido BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_alerts_created
+  ON price_alerts (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_price_alerts_unread
+  ON price_alerts (lido, created_at DESC);
+
+CREATE OR REPLACE FUNCTION log_supplier_cost_change() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.custo IS DISTINCT FROM OLD.custo THEN
+    INSERT INTO price_alerts
+      (tipo, produto, fornecedor_id, sku, custo_anterior, custo_novo, mensagem)
+    VALUES
+      ('custo', COALESCE(NEW.titulo, NEW.sku), NEW.fornecedor_id, NEW.sku,
+       OLD.custo, NEW.custo,
+       'Custo de ' || COALESCE(NEW.titulo, NEW.sku) || ' mudou de R$ ' ||
+       OLD.custo::text || ' para R$ ' || NEW.custo::text ||
+       '. Revise o preço de venda para preservar a margem.');
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_supplier_cost_change ON supplier_products;
+CREATE TRIGGER trg_supplier_cost_change
+  AFTER UPDATE OF custo ON supplier_products
+  FOR EACH ROW EXECUTE FUNCTION log_supplier_cost_change();
+
+CREATE OR REPLACE FUNCTION log_listing_price_change() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.price IS DISTINCT FROM OLD.price THEN
+    INSERT INTO price_alerts
+      (tipo, produto, fornecedor_id, sku, listing_id, ml_item_id,
+       custo_anterior, custo_novo, preco_anterior, preco_novo,
+       margem_anterior, margem_nova, lucro_anterior, lucro_novo, mensagem)
+    VALUES
+      ('preco', NEW.title, NEW.supplier, NULL, NEW.id, NEW.ml_item_id,
+       OLD.cost, NEW.cost, OLD.price, NEW.price, OLD.margin, NEW.margin,
+       OLD.net_profit, NEW.net_profit,
+       'Preço de ' || NEW.title || ' ajustado de R$ ' || OLD.price::text ||
+       ' para R$ ' || NEW.price::text || ', margem de ' ||
+       COALESCE(replace(round(OLD.margin * 100, 1)::text, '.', ','), '?') ||
+       '% para ' ||
+       COALESCE(replace(round(NEW.margin * 100, 1)::text, '.', ','), '?') ||
+       '%.');
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_listing_price_change ON listings;
+CREATE TRIGGER trg_listing_price_change
+  AFTER UPDATE OF price ON listings
+  FOR EACH ROW EXECUTE FUNCTION log_listing_price_change();
 
 CREATE TABLE IF NOT EXISTS trend_keyword_snapshots (
   id BIGSERIAL PRIMARY KEY,
@@ -184,8 +292,27 @@ CREATE TABLE IF NOT EXISTS suppliers (
   dropshipping BOOLEAN DEFAULT FALSE,
   integracao TEXT DEFAULT 'manual',
   ativo BOOLEAN DEFAULT TRUE,
+  cnpj TEXT,
+  endereco TEXT,
+  bairro TEXT,
+  cidade TEXT,
+  uf TEXT,
+  cep TEXT,
+  prazo_postagem TEXT,
+  custo_embalagem NUMERIC DEFAULT 0,
+  observacoes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS cnpj TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS endereco TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS bairro TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS cidade TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS uf TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS cep TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS prazo_postagem TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS custo_embalagem NUMERIC DEFAULT 0;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS observacoes TEXT;
 
 INSERT INTO suppliers (slug, nome, descricao, nichos, pedido_minimo, dropshipping, integracao)
 VALUES
@@ -206,8 +333,72 @@ VALUES
    ARRAY['relogios','eletronicos'], NULL, FALSE, 'manual'),
   ('fforder', 'FFOrder',
    'Catalogo global com dropshipping e fulfillment. Sem integracao nativa com Mercado Livre: importar CSV/API e validar prazo, estoque e nota fiscal por SKU.',
-   ARRAY['eletronicos','casa','moda','beleza','esportes','pet','ferramentas','brinquedos','automotivo'], NULL, TRUE, 'csv')
+   ARRAY['eletronicos','casa','moda','beleza','esportes','pet','ferramentas','brinquedos','automotivo'], NULL, TRUE, 'csv'),
+  ('c7-drop', 'C7 Drop (Cem Tecnologia)',
+   'Dropshipping nacional com estoque em Sao Paulo, sem mensalidade e com NF-e.',
+   ARRAY['casa','eletronicos','informatica','utilidades'], NULL, TRUE, 'manual'),
+  ('atacadum', 'Atacadum',
+   'Atacado com estoque em Sao Paulo e dropshipping sem mensalidade nem pedido minimo.',
+   ARRAY['casa','eletronicos','utilidades','ferramentas'], NULL, TRUE, 'manual'),
+  ('onedrop', 'OneDrop',
+   'Hub de dropshipping com multiplos fornecedores e catalogo nacional.',
+   ARRAY['eletronicos','casa','moda','beleza','esportes','pet'], NULL, TRUE, 'api'),
+  ('smarke', 'Smarke',
+   'Fornecedor de produtos de giro com estoque em Sao Paulo e dropshipping nacional.',
+   ARRAY['casa','eletronicos','utilidades'], NULL, TRUE, 'manual'),
+  ('mirao', 'Mirao Atacado',
+   'Atacado tradicional usado como referencia de preco e sortimento. Nao opera dropshipping.',
+   ARRAY['ferramentas','casa','eletronicos'], NULL, FALSE, 'manual')
 ON CONFLICT (slug) DO NOTHING;
+
+UPDATE suppliers SET
+  bairro = COALESCE(bairro, 'Centro'),
+  cidade = COALESCE(cidade, 'Sao Paulo'),
+  uf = COALESCE(uf, 'SP'),
+  cep = COALESCE(cep, '01022-050'),
+  prazo_postagem = COALESCE(prazo_postagem, 'Confirmar com o fornecedor'),
+  custo_embalagem = 2.50,
+  observacoes = COALESCE(observacoes, 'Endereco completo nao informado; confirmar antes da primeira coleta.')
+WHERE slug = 'c7-drop'
+  AND cep IS NULL;
+
+UPDATE suppliers SET
+  bairro = COALESCE(bairro, 'Centro'),
+  cidade = COALESCE(cidade, 'Sao Paulo'),
+  uf = COALESCE(uf, 'SP'),
+  cep = COALESCE(cep, '01012-001'),
+  prazo_postagem = COALESCE(prazo_postagem, 'Corte diario as 13h'),
+  custo_embalagem = COALESCE(custo_embalagem, 0),
+  observacoes = COALESCE(observacoes, 'Endereco completo nao informado; confirmar antes da primeira coleta.')
+WHERE slug = 'atacadum'
+  AND cep IS NULL;
+
+UPDATE suppliers SET
+  prazo_postagem = COALESCE(prazo_postagem, 'Confirmar com o fornecedor'),
+  custo_embalagem = COALESCE(custo_embalagem, 0),
+  observacoes = COALESCE(observacoes, 'CEP e endereco de coleta nao informados pela plataforma.')
+WHERE slug = 'onedrop'
+  AND cep IS NULL;
+
+UPDATE suppliers SET
+  cnpj = COALESCE(cnpj, '37.776.426/0001-41'),
+  endereco = COALESCE(endereco, 'Av. dos Metalurgicos, 1597, sala 1'),
+  bairro = COALESCE(bairro, 'Cidade Tiradentes'),
+  cidade = COALESCE(cidade, 'Sao Paulo'),
+  uf = COALESCE(uf, 'SP'),
+  cep = COALESCE(cep, '08471-000'),
+  prazo_postagem = COALESCE(prazo_postagem, 'Confirmar com o fornecedor'),
+  custo_embalagem = COALESCE(custo_embalagem, 0),
+  observacoes = COALESCE(observacoes, 'Estoque fisico em Sao Paulo; confirmar prazo de postagem.')
+WHERE slug = 'smarke'
+  AND cep IS NULL;
+
+UPDATE suppliers SET
+  prazo_postagem = COALESCE(prazo_postagem, 'Nao opera dropshipping'),
+  custo_embalagem = COALESCE(custo_embalagem, 0),
+  observacoes = COALESCE(observacoes, 'Usado como benchmark de preco; nao e fornecedor de dropshipping.')
+WHERE slug = 'mirao'
+  AND cidade IS NULL;
 `;
 
 async function seedAdminUser() {

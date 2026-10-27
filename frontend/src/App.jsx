@@ -59,6 +59,125 @@ function imageUrl(url) {
   return String(url).replace(/^http:/, 'https:');
 }
 
+const CATALOG_FEE_RATE = 0.14;
+const CATALOG_TAX_RATE = 0.06;
+const CATALOG_MIN_MARGIN = 0.3;
+const CATALOG_MIN_PROFIT_COST = 1;
+const CATALOG_MARKET_TOLERANCE = 1.05;
+const CATALOG_DEFAULT_SHIPPING = 25;
+const CATALOG_SHIPPING_TABLE = [
+  { maxKg: 0.3, cost: 21.9 },
+  { maxKg: 0.5, cost: 23.9 },
+  { maxKg: 1, cost: 26.9 },
+  { maxKg: 2, cost: 31.9 },
+  { maxKg: 5, cost: 42.9 },
+  { maxKg: 10, cost: 58.9 },
+  { maxKg: 20, cost: 79.9 },
+  { maxKg: Infinity, cost: 99.9 },
+];
+
+function safeNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function fmtPct(value) {
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  return `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+function catalogWeight(item) {
+  const peso = safeNumber(item?.peso_kg) || 0;
+  const tara = safeNumber(item?.tara_kg) || 0;
+  const altura = safeNumber(item?.altura_cm);
+  const largura = safeNumber(item?.largura_cm);
+  const comprimento = safeNumber(item?.comprimento_cm);
+  const cubico =
+    altura && largura && comprimento
+      ? (altura * largura * comprimento) / 6000
+      : null;
+  const considerado = Math.max(peso + tara, cubico || 0);
+  return {
+    peso_kg: peso || null,
+    tara_kg: safeNumber(item?.tara_kg),
+    cubico_kg: cubico,
+    peso_considerado: considerado || null,
+    altura_cm: altura,
+    largura_cm: largura,
+    comprimento_cm: comprimento,
+  };
+}
+
+function catalogShipping(item) {
+  const weight = catalogWeight(item);
+  if (!weight.peso_considerado) {
+    return {
+      cost: CATALOG_DEFAULT_SHIPPING,
+      source: 'default',
+      ...weight,
+    };
+  }
+  const row =
+    CATALOG_SHIPPING_TABLE.find(
+      (entry) => weight.peso_considerado <= entry.maxKg
+    ) || CATALOG_SHIPPING_TABLE[CATALOG_SHIPPING_TABLE.length - 1];
+  return { cost: row.cost, source: 'weight', ...weight };
+}
+
+function catalogPricing(item, supplier, listing) {
+  const cost = safeNumber(item?.custo) || 0;
+  const shippingInfo = catalogShipping(item);
+  const packaging = safeNumber(listing?.packaging_cost) ??
+    safeNumber(supplier?.custo_embalagem) ?? 0;
+  const market = safeNumber(item?.preco_mercado);
+  const feeRate = CATALOG_FEE_RATE;
+  const taxRate = CATALOG_TAX_RATE;
+  const denominator = 1 - feeRate - taxRate - CATALOG_MIN_MARGIN;
+  const priceForMargin = denominator > 0
+    ? (cost + shippingInfo.cost + packaging) / denominator
+    : 0;
+  const priceForProfit = (2 * cost + shippingInfo.cost + packaging) /
+    (1 - feeRate - taxRate);
+  const target = Math.max(priceForMargin, priceForProfit);
+  const ceiling = market ? market * CATALOG_MARKET_TOLERANCE : null;
+  const suggested = ceiling ? Math.min(target, ceiling) : target;
+  const listedPrice = safeNumber(listing?.price);
+  const price = listedPrice && listedPrice > 0 ? listedPrice : suggested;
+  const shipping = safeNumber(listing?.shipping_cost) ?? shippingInfo.cost;
+  const saleFee = safeNumber(listing?.sale_fee) ?? price * feeRate;
+  const taxes = safeNumber(listing?.taxes) ?? price * taxRate;
+  const profit = price - cost - shipping - packaging - saleFee - taxes;
+  const margin = price > 0 ? profit / price : 0;
+  const multiple = cost > 0 ? price / cost : 0;
+  const profitOverCost = cost > 0 ? profit / cost : 0;
+  const viable =
+    cost > 0 &&
+    margin >= CATALOG_MIN_MARGIN &&
+    profitOverCost >= CATALOG_MIN_PROFIT_COST &&
+    (!ceiling || price <= ceiling);
+  return {
+    cost,
+    shipping,
+    shippingInfo,
+    packaging,
+    market,
+    ceiling,
+    target,
+    suggested,
+    price,
+    saleFee,
+    taxes,
+    profit,
+    margin,
+    multiple,
+    profitOverCost,
+    viable,
+    listed: Boolean(listedPrice),
+    hasListing: Boolean(listing),
+    status: listing?.status || null,
+  };
+}
+
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Visão geral', icon: 'grid' },
   { id: 'radar', label: 'Radar viral', icon: 'trending' },
@@ -1761,9 +1880,36 @@ function ListingsView({
   onPauseAll,
   onReactivateAll,
   pausing,
+  onToast,
 }) {
+  const [syncing, setSyncing] = useState(false);
+  const [syncPreview, setSyncPreview] = useState(null);
   const activeCount = listings.filter((item) => item.status === 'active').length;
   const pausedCount = listings.filter((item) => item.status === 'paused').length;
+
+  const runPriceSync = async (dryRun) => {
+    if (!dryRun) {
+      const ok = window.confirm(
+        'Aplicar os reajustes no Mercado Livre agora? Cada alteração fica registrada nos alertas de preço.'
+      );
+      if (!ok) return;
+    }
+    setSyncing(true);
+    try {
+      const result = await request('/listings/sync-prices', {
+        method: 'POST',
+        body: { dry_run: dryRun, max_batch: 50, margem: 0.3 },
+      });
+      const message = `${result.updated || 0} reajuste(s) ${dryRun ? 'simulado(s)' : 'aplicado(s)'}, ${result.skipped || 0} ignorado(s), ${result.errors || 0} erro(s).`;
+      onToast(dryRun ? 'success' : 'success', message);
+      setSyncPreview(result);
+      if (!dryRun) await onRefresh();
+    } catch (error) {
+      onToast('error', error?.message || 'Não foi possível sincronizar os preços.');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -1772,10 +1918,22 @@ function ListingsView({
           {listings.length} anúncio{listings.length === 1 ? '' : 's'} no total · {activeCount} ativo(s) · {pausedCount} pausado(s).
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={onRefresh} className="btn-ghost" disabled={loading || pausing}>
+          <button type="button" onClick={onRefresh} className="btn-ghost" disabled={loading || pausing || syncing}>
             {loading ? <Spinner className="h-4 w-4" /> : <Icon name="refresh" className="h-4 w-4" />}
             Atualizar
           </button>
+          {listings.length > 0 ? (
+            <button type="button" onClick={() => runPriceSync(true)} className="btn-ghost" disabled={syncing || pausing}>
+              {syncing ? <Spinner className="h-4 w-4" /> : <Icon name="trending" className="h-4 w-4" />}
+              Simular reajuste
+            </button>
+          ) : null}
+          {syncPreview?.updated > 0 && syncPreview?.dry_run ? (
+            <button type="button" onClick={() => runPriceSync(false)} className="btn-primary" disabled={syncing || pausing}>
+              {syncing ? <Spinner className="h-4 w-4" /> : <Icon name="tag" className="h-4 w-4" />}
+              Aplicar {syncPreview.updated} reajuste(s)
+            </button>
+          ) : null}
           {activeCount > 0 ? (
             <button type="button" onClick={onPauseAll} className="btn-danger" disabled={pausing}>
               {pausing ? <Spinner className="h-4 w-4" /> : <Icon name="alert" className="h-4 w-4" />}
@@ -1791,6 +1949,61 @@ function ListingsView({
         </div>
       </div>
 
+      {syncPreview ? (
+        <div className="card p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="font-bold">
+                {syncPreview.dry_run ? 'Simulação de reajuste' : 'Reajuste aplicado'}
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">
+                {syncPreview.updated || 0} planejado(s) · {syncPreview.skipped || 0} ignorado(s) · {syncPreview.errors || 0} erro(s).
+                Cada mudança de preço gera um alerta com valor anterior, valor novo e margem.
+              </p>
+            </div>
+            <button type="button" onClick={() => setSyncPreview(null)} className="btn-ghost px-3 py-2 text-xs">
+              Fechar
+            </button>
+          </div>
+          {syncPreview.results?.filter((item) => item.status === 'planejado' || item.status === 'atualizado').length ? (
+            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="px-4 py-2 font-semibold">Anúncio</th>
+                    <th className="px-4 py-2 font-semibold">Custo</th>
+                    <th className="px-4 py-2 font-semibold">Preço atual</th>
+                    <th className="px-4 py-2 font-semibold">Novo preço</th>
+                    <th className="px-4 py-2 font-semibold">Margem</th>
+                    <th className="px-4 py-2 font-semibold">Lucro</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {syncPreview.results
+                    .filter((item) => item.status === 'planejado' || item.status === 'atualizado')
+                    .map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-4 py-2 font-mono text-xs">{item.id}</td>
+                        <td className="px-4 py-2">{brl(item.cost)}</td>
+                        <td className="px-4 py-2">{brl(item.current_price)}</td>
+                        <td className="px-4 py-2 font-semibold">{brl(item.target_price)}</td>
+                        <td className="px-4 py-2">{fmtPct(item.net_margin)}</td>
+                        <td className={`px-4 py-2 font-semibold ${item.profit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {brl(item.profit)}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="mt-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+              Nenhum anúncio precisa de reajuste neste lote.
+            </p>
+          )}
+        </div>
+      ) : null}
+
       {listings.length === 0 ? (
         <div className="card px-6 py-16 text-center text-sm text-slate-500">
           Nenhum anúncio criado ainda.
@@ -1802,7 +2015,9 @@ function ListingsView({
               <thead className="bg-slate-50">
                 <tr>
                   <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Produto</th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Custo</th>
                   <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Preço</th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Lucro</th>
                   <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Margem</th>
                   <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Fornecedor</th>
                   <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Score</th>
@@ -1825,8 +2040,12 @@ function ListingsView({
                         </div>
                       </div>
                     </td>
+                    <td className="px-5 py-3 text-sm">{brl(listing.cost)}</td>
                     <td className="px-5 py-3 text-sm font-bold">{brl(listing.price)}</td>
-                    <td className="px-5 py-3 text-sm">{Math.round((Number(listing.margin) || 0) * 100)}%</td>
+                    <td className={`px-5 py-3 text-sm font-semibold ${Number(listing.net_profit) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {listing.net_profit == null ? '—' : brl(listing.net_profit)}
+                    </td>
+                    <td className="px-5 py-3 text-sm">{fmtPct(listing.margin)}</td>
                     <td className="px-5 py-3 text-sm">{listing.supplier}</td>
                     <td className="px-5 py-3">
                       <span
@@ -1992,12 +2211,19 @@ function CatalogoView({ onToast, externalSearch = '' }) {
   const [csvFileName, setCsvFileName] = useState('');
   const [importing, setImporting] = useState(false);
   const [lastImport, setLastImport] = useState(null);
+  const [listings, setListings] = useState([]);
+  const [alerts, setAlerts] = useState({ total: 0, nao_lidas: 0, alertas: [] });
+  const [detailProduct, setDetailProduct] = useState(null);
+  const [readiness, setReadiness] = useState(null);
 
   const loadBase = useCallback(async () => {
-    const [registryResult, summaryResult, staleResult] = await Promise.allSettled([
+    const [registryResult, summaryResult, staleResult, listingsResult, alertsResult, readinessResult] = await Promise.allSettled([
       request('/suppliers/registro'),
       request('/suppliers/custos/resumo'),
       request('/suppliers/custos/desatualizados?horas=24&limite=8'),
+      request('/listings'),
+      request('/listings/alertas?limite=12'),
+      request('/suppliers/prontidao'),
     ]);
 
     if (registryResult.status === 'fulfilled') {
@@ -2016,12 +2242,25 @@ function CatalogoView({ onToast, externalSearch = '' }) {
           : [],
       });
     }
+    if (listingsResult.status === 'fulfilled') {
+      setListings(Array.isArray(listingsResult.value) ? listingsResult.value : []);
+    }
+    if (alertsResult.status === 'fulfilled') {
+      setAlerts({
+        total: alertsResult.value?.total || 0,
+        nao_lidas: alertsResult.value?.nao_lidas || 0,
+        alertas: Array.isArray(alertsResult.value?.alertas) ? alertsResult.value.alertas : [],
+      });
+    }
+    if (readinessResult.status === 'fulfilled') {
+      setReadiness(readinessResult.value || null);
+    }
   }, []);
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limite: '100' });
+      const params = new URLSearchParams({ limite: '1000' });
       if (search.trim()) params.set('q', search.trim());
       if (supplierFilter) params.set('fornecedor_id', supplierFilter);
       const data = await request(`/suppliers/custos?${params.toString()}`);
@@ -2080,9 +2319,22 @@ function CatalogoView({ onToast, externalSearch = '' }) {
       'custo',
       'estoque',
       'peso_kg',
+      'tara_kg',
       'altura_cm',
       'largura_cm',
       'comprimento_cm',
+      'categoria',
+      'url',
+      'preco_mercado',
+      'mercado_min',
+      'mercado_max',
+      'mercado_ofertas',
+      'mercado_vendedores',
+      'mercado_confianca',
+      'mercado_multiplo',
+      'matched_id',
+      'matched_name',
+      'categoria_ml',
       'catalogo_id',
       'item_id',
       'ativo',
@@ -2094,9 +2346,22 @@ function CatalogoView({ onToast, externalSearch = '' }) {
       '99.90',
       '10',
       '0.3',
+      '0.05',
       '10',
       '15',
       '20',
+      'Casa',
+      'https://fornecedor.com/produto',
+      '199.90',
+      '179.90',
+      '229.90',
+      '8',
+      '3',
+      '0.90',
+      '2.02',
+      'MLB123456',
+      'Produto exemplo no ML',
+      'Casa e Decoracao',
       '',
       '',
       '1',
@@ -2151,8 +2416,76 @@ function CatalogoView({ onToast, externalSearch = '' }) {
   const summaryFor = (slug) =>
     summary?.fornecedores?.find((item) => item.fornecedor_id === slug) || null;
 
+  const supplierFor = (item) =>
+    registry.find((supplier) => supplier.slug === item.fornecedor_id) || {
+      slug: item.fornecedor_id,
+      nome: item.fornecedor_nome || item.fornecedor_id,
+    };
+
+  const listingFor = (item) =>
+    listings.find(
+      (listing) =>
+        (item.catalogo_id && listing.catalogo_id === item.catalogo_id) ||
+        (item.item_id && listing.source_item_id === item.item_id) ||
+        (item.titulo && listing.title === item.titulo)
+    ) || null;
+
+  const markAlertsRead = async () => {
+    try {
+      await request('/listings/alertas/lidas', { method: 'POST', body: {} });
+      await loadBase();
+    } catch (error) {
+      onToast('error', error?.message || 'Não foi possível marcar os alertas.');
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {readiness ? (
+        <div className="card p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="font-bold">Prontidão da operação</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Critério de volume: 350 a 500 SKUs fortes, com match confiável e preço de mercado de pelo menos 3x o custo.
+              </p>
+            </div>
+            <span className={`badge ${readiness.atende_volume && readiness.atende_cep ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>
+              {readiness.atende_volume && readiness.atende_cep ? 'Pronto para operar' : 'Ainda em preparação'}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <DetailField
+              label="SKUs fortes"
+              value={`${number.format(readiness.fortes || 0)} / 350–500`}
+              hint={`${number.format(readiness.confiaveis || 0)} com match confiável`}
+            />
+            <DetailField
+              label="SKUs importados"
+              value={number.format(readiness.total || 0)}
+              hint={`${number.format(readiness.ativos || 0)} ativos com estoque`}
+            />
+            <DetailField
+              label="CEP compartilhado"
+              value={readiness.atende_cep ? 'Sim' : 'Não'}
+              hint={readiness.grupos_cep?.length ? readiness.grupos_cep.map((group) => `${group.cep}: ${group.fornecedores.join(' + ')}`).join(' · ') : 'Nenhum par de fornecedores no mesmo CEP'}
+            />
+            <DetailField
+              label="Fornecedores com CEP"
+              value={`${readiness.fornecedores?.filter((item) => item.cep).length || 0} de ${readiness.fornecedores?.length || 0}`}
+              hint="Sem CEP não entra na regra de um remetente por conta"
+            />
+          </div>
+          {readiness.pendencias?.length ? (
+            <ul className="mt-4 space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              {readiness.pendencias.map((item) => (
+                <li key={item}>• {item}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Produtos no catálogo"
@@ -2201,12 +2534,76 @@ function CatalogoView({ onToast, externalSearch = '' }) {
         </div>
       ) : null}
 
+      {alerts.total > 0 ? (
+        <div className="card p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 font-bold">
+                <Icon name="alert" className="h-4 w-4 text-amber-600" />
+                Alertas de preço
+                {alerts.nao_lidas > 0 ? (
+                  <span className="badge bg-amber-50 text-amber-800">{alerts.nao_lidas} novo(s)</span>
+                ) : null}
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Custo do fornecedor e preço de venda com data, valor anterior e valor novo. Nada é alterado sem registro.
+              </p>
+            </div>
+            {alerts.nao_lidas > 0 ? (
+              <button type="button" className="btn-ghost px-3 py-2 text-xs" onClick={markAlertsRead}>
+                Marcar como lidos
+              </button>
+            ) : null}
+          </div>
+          <div className="mt-4 space-y-2">
+            {alerts.alertas.slice(0, 6).map((alert) => (
+              <div
+                key={alert.id}
+                className={`rounded-xl border p-3 text-sm ${
+                  alert.lido ? 'border-slate-100 bg-white' : 'border-amber-200 bg-amber-50/60'
+                }`}
+              >
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="font-semibold">{alert.mensagem || alert.produto || 'Alteração de preço'}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {alert.tipo === 'custo' ? 'Custo do fornecedor' : 'Preço de venda'} · {formatDate(alert.created_at)}
+                      {alert.fornecedor_nome || alert.fornecedor_id ? ` · ${alert.fornecedor_nome || alert.fornecedor_id}` : ''}
+                      {alert.sku ? ` · SKU ${alert.sku}` : ''}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-xs text-slate-600">
+                    {alert.custo_anterior != null || alert.custo_novo != null ? (
+                      <p>
+                        Custo: {alert.custo_anterior != null ? brl(alert.custo_anterior) : '—'} →{' '}
+                        {alert.custo_novo != null ? brl(alert.custo_novo) : '—'}
+                      </p>
+                    ) : null}
+                    {alert.preco_anterior != null || alert.preco_novo != null ? (
+                      <p>
+                        Venda: {alert.preco_anterior != null ? brl(alert.preco_anterior) : '—'} →{' '}
+                        {alert.preco_novo != null ? brl(alert.preco_novo) : '—'}
+                      </p>
+                    ) : null}
+                    {alert.margem_anterior != null || alert.margem_nova != null ? (
+                      <p>
+                        Margem: {fmtPct(alert.margem_anterior)} → {fmtPct(alert.margem_nova)}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="card p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="font-bold">Importar custos e estoque</h3>
             <p className="text-sm text-slate-500">
-              CSV com SKU, custo, estoque, peso (kg ou g) e dimensões (cm). Até 2.000 linhas e 3,5 MB. Mantenha o EAN como texto para não perder dígitos.
+              CSV com SKU, custo, estoque, peso, tara, dimensões, categoria, URL, preço de mercado e dados do match. Até 2.000 linhas e 3,5 MB. Mantenha o EAN como texto para não perder dígitos.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -2324,6 +2721,20 @@ function CatalogoView({ onToast, externalSearch = '' }) {
                   <p className="mt-2 line-clamp-2 min-h-[2rem] text-xs text-slate-500">
                     {item.descricao || 'Sem descrição.'}
                   </p>
+                  <div className="mt-3 space-y-1 rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
+                    <p>
+                      <span className="font-semibold">Coleta:</span>{' '}
+                      {[item.endereco, item.bairro, item.cidade, item.uf].filter(Boolean).join(' · ') || 'Endereço não informado'}
+                      {item.cep ? ` · CEP ${item.cep}` : ' · CEP não informado'}
+                    </p>
+                    <p>
+                      <span className="font-semibold">CNPJ:</span> {item.cnpj || 'não informado'}
+                      {item.prazo_postagem ? ` · Postagem: ${item.prazo_postagem}` : ''}
+                    </p>
+                    <p>
+                      <span className="font-semibold">Embalagem:</span> {brl(item.custo_embalagem || 0)}
+                    </p>
+                  </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="badge bg-slate-100 text-slate-600">
                       {item.integracao || 'manual'}
@@ -2427,53 +2838,318 @@ function CatalogoView({ onToast, externalSearch = '' }) {
               <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500">
                 <tr>
                   <th className="px-4 py-3 font-semibold">Produto</th>
-                  <th className="px-4 py-3 font-semibold">SKU</th>
                   <th className="px-4 py-3 font-semibold">Fornecedor</th>
                   <th className="px-4 py-3 font-semibold">Custo</th>
+                  <th className="px-4 py-3 font-semibold">Venda</th>
+                  <th className="px-4 py-3 font-semibold">Lucro</th>
+                  <th className="px-4 py-3 font-semibold">Margem</th>
                   <th className="px-4 py-3 font-semibold">Estoque</th>
-                  <th className="px-4 py-3 font-semibold">Peso</th>
-                  <th className="px-4 py-3 font-semibold">Atualização</th>
+                  <th className="px-4 py-3 font-semibold">Anúncio</th>
+                  <th className="px-4 py-3 font-semibold"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {produtos.map((item) => (
-                  <tr key={item.id} className="align-top">
-                    <td className="max-w-[22rem] px-4 py-3">
-                      <p className="line-clamp-1 font-semibold">{item.titulo || item.sku}</p>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        {item.gtin ? `EAN ${item.gtin}` : 'Sem EAN'}
-                      </p>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs">{item.sku}</td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {item.fornecedor_nome || item.fornecedor_id}
-                    </td>
-                    <td className="px-4 py-3 font-semibold">{brl(item.custo)}</td>
-                    <td className="px-4 py-3">
-                      {item.estoque == null ? '—' : number.format(item.estoque)}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {item.peso_kg ? `${item.peso_kg} kg` : '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`badge ${
-                          item.desatualizado
-                            ? 'bg-amber-50 text-amber-800'
-                            : 'bg-emerald-50 text-emerald-700'
-                        }`}
-                      >
-                        {item.desatualizado
-                          ? `há ${Math.round(Number(item.horas_desde_atualizacao) || 0)}h`
-                          : 'em dia'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {produtos.map((item) => {
+                  const fornecedor = supplierFor(item);
+                  const listing = listingFor(item);
+                  const pricing = catalogPricing(item, fornecedor, listing);
+                  const status = listing?.status || 'sem_anuncio';
+                  return (
+                    <tr key={item.id} className="align-top hover:bg-slate-50/60">
+                      <td className="max-w-[22rem] px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() => setDetailProduct(item)}
+                          className="line-clamp-1 text-left font-semibold hover:text-brand-700"
+                        >
+                          {item.titulo || item.sku}
+                        </button>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {item.gtin ? `EAN ${item.gtin}` : 'Sem EAN'} · {item.categoria || 'Sem categoria'}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-slate-400">Atualizado {formatDate(item.atualizado_em)}</p>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        <p className="font-medium">{fornecedor.nome || item.fornecedor_nome || item.fornecedor_id}</p>
+                        <p className="text-xs text-slate-400">{fornecedor.cep ? `CEP ${fornecedor.cep}` : 'CEP não informado'}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-semibold">{brl(pricing.cost)}</p>
+                        <p className="text-xs text-slate-400">{number.format(Number(item.estoque) || 0)} un.</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-semibold">{brl(pricing.price)}</p>
+                        <p className="text-xs text-slate-400">{pricing.listed ? 'no anúncio' : 'sugerido'}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className={`font-semibold ${pricing.profit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {brl(pricing.profit)}
+                        </p>
+                        <p className="text-xs text-slate-400">{fmtPct(pricing.profitOverCost)} s/ custo</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className={`font-semibold ${pricing.viable ? 'text-emerald-700' : 'text-amber-700'}`}>
+                          {fmtPct(pricing.margin)}
+                        </p>
+                        <p className="text-xs text-slate-400">{pricing.multiple.toFixed(2)}x</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        {item.estoque == null ? '—' : number.format(item.estoque)}
+                        {item.desatualizado ? (
+                          <p className="text-xs text-amber-700">estoque há {Math.round(Number(item.horas_desde_atualizacao) || 0)}h</p>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`badge ${
+                            status === 'active'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : status === 'paused'
+                                ? 'bg-amber-50 text-amber-800'
+                                : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {status === 'active' ? 'Ativo' : status === 'paused' ? 'Pausado' : 'Sem anúncio'}
+                        </span>
+                        {!pricing.viable ? (
+                          <p className="mt-1 text-xs text-rose-700">Ajustar preço</p>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          className="btn-ghost px-3 py-1.5 text-xs"
+                          onClick={() => setDetailProduct(item)}
+                        >
+                          Detalhes
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         ) : null}
+      </div>
+      {detailProduct ? (
+        <ProductDetailModal
+          produto={detailProduct}
+          fornecedor={supplierFor(detailProduct)}
+          listing={listingFor(detailProduct)}
+          onClose={() => setDetailProduct(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DetailField({ label, value, hint }) {
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
+      <p className="mt-1 break-words text-sm font-semibold text-slate-800">{value || '—'}</p>
+      {hint ? <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{hint}</p> : null}
+    </div>
+  );
+}
+
+function ProductDetailModal({ produto, fornecedor, listing, onClose }) {
+  if (!produto) return null;
+  const pricing = catalogPricing(produto, fornecedor, listing);
+  const endereco = [fornecedor?.endereco, fornecedor?.bairro, fornecedor?.cidade, fornecedor?.uf]
+    .filter(Boolean)
+    .join(' · ');
+  const marketLink = produto.matched_id
+    ? `https://www.mercadolivre.com.br/p/${produto.matched_id}`
+    : null;
+  const totalCosts =
+    pricing.cost +
+    pricing.shipping +
+    pricing.packaging +
+    pricing.saleFee +
+    pricing.taxes;
+  const statusLabel = listing
+    ? listing.status === 'active'
+      ? 'Anúncio ativo'
+      : listing.status === 'paused'
+        ? 'Anúncio pausado'
+        : `Anúncio ${listing.status}`
+    : 'Sem anúncio';
+  const statusClass = listing
+    ? listing.status === 'active'
+      ? 'bg-emerald-50 text-emerald-700'
+      : listing.status === 'paused'
+        ? 'bg-amber-50 text-amber-800'
+        : 'bg-slate-100 text-slate-600'
+    : 'bg-slate-100 text-slate-600';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-3 sm:items-center">
+      <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="badge bg-brand-50 text-brand-800">
+                {fornecedor?.nome || produto.fornecedor_nome || produto.fornecedor_id}
+              </span>
+              <span className={`badge ${statusClass}`}>{statusLabel}</span>
+              {pricing.viable ? (
+                <span className="badge bg-emerald-50 text-emerald-700">Viável</span>
+              ) : (
+                <span className="badge bg-rose-50 text-rose-700">Ajustar</span>
+              )}
+            </div>
+            <h3 className="mt-2 line-clamp-2 text-lg font-extrabold">{produto.titulo || produto.sku}</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              SKU {produto.sku} · {produto.categoria || produto.categoria_ml || 'Categoria não informada'} · Atualizado em {formatDate(produto.atualizado_em)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+            aria-label="Fechar detalhes"
+          >
+            <Icon name="close" className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="max-h-[calc(92vh-7rem)] space-y-5 overflow-y-auto p-5">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <DetailField label="Preço de compra" value={brl(pricing.cost)} hint={`Estoque ${number.format(Number(produto.estoque) || 0)} un.`} />
+            <DetailField
+              label={pricing.listed ? 'Preço de venda no anúncio' : 'Preço de venda sugerido'}
+              value={brl(pricing.price)}
+              hint={pricing.listed ? 'Valor praticado hoje' : 'Calculado com margem mínima de 30%'}
+            />
+            <DetailField
+              label="Lucro líquido"
+              value={brl(pricing.profit)}
+              hint="Depois de custo, frete, embalagem, taxa ML e impostos"
+            />
+            <DetailField
+              label="Margem líquida"
+              value={fmtPct(pricing.margin)}
+              hint={`${fmtPct(pricing.profitOverCost)} sobre o custo · ${pricing.multiple.toFixed(2)}x`}
+            />
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <section className="rounded-xl border border-slate-200 p-4">
+              <h4 className="font-bold">Fornecedor e origem</h4>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <DetailField label="Fornecedor" value={fornecedor?.nome || produto.fornecedor_nome || produto.fornecedor_id} />
+                <DetailField label="CNPJ" value={fornecedor?.cnpj || 'Não informado'} />
+                <DetailField label="Endereço" value={endereco || 'Não informado'} />
+                <DetailField label="CEP de coleta" value={fornecedor?.cep || 'Não informado'} />
+                <DetailField label="Prazo de postagem" value={fornecedor?.prazo_postagem || 'Confirmar'} />
+                <DetailField label="Site" value={fornecedor?.site || 'Não informado'} />
+              </div>
+              {fornecedor?.observacoes ? (
+                <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">{fornecedor.observacoes}</p>
+              ) : null}
+              {fornecedor?.site ? (
+                <a href={fornecedor.site} target="_blank" rel="noreferrer" className="btn-ghost mt-3 w-full">
+                  Abrir site do fornecedor
+                  <Icon name="external" className="h-4 w-4" />
+                </a>
+              ) : null}
+            </section>
+
+            <section className="rounded-xl border border-slate-200 p-4">
+              <h4 className="font-bold">Produto e envio</h4>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <DetailField label="Peso do produto" value={pricing.shippingInfo.peso_kg ? `${pricing.shippingInfo.peso_kg} kg` : 'Não informado'} />
+                <DetailField label="Tara / embalagem" value={pricing.shippingInfo.tara_kg != null ? `${pricing.shippingInfo.tara_kg} kg` : 'Não informada'} hint={`Custo de embalagem ${brl(pricing.packaging)}`} />
+                <DetailField
+                  label="Dimensões (A × L × C)"
+                  value={
+                    pricing.shippingInfo.altura_cm && pricing.shippingInfo.largura_cm && pricing.shippingInfo.comprimento_cm
+                      ? `${pricing.shippingInfo.altura_cm} × ${pricing.shippingInfo.largura_cm} × ${pricing.shippingInfo.comprimento_cm} cm`
+                      : 'Não informadas'
+                  }
+                />
+                <DetailField label="Peso cubado" value={pricing.shippingInfo.cubico_kg ? `${pricing.shippingInfo.cubico_kg.toFixed(2)} kg` : 'Sem dimensões'} />
+                <DetailField label="Peso considerado" value={pricing.shippingInfo.peso_considerado ? `${pricing.shippingInfo.peso_considerado.toFixed(2)} kg` : 'Frete padrão'} />
+                <DetailField label="Frete estimado" value={brl(pricing.shipping)} hint={pricing.shippingInfo.source === 'weight' ? 'Pela tabela de peso' : 'Sem peso; valor conservador'} />
+                <DetailField label="EAN" value={produto.gtin || 'Sem EAN'} />
+                <DetailField label="Estoque" value={`${number.format(Number(produto.estoque) || 0)} un.`} />
+              </div>
+              {produto.url ? (
+                <a href={produto.url} target="_blank" rel="noreferrer" className="btn-ghost mt-3 w-full">
+                  Abrir produto no fornecedor
+                  <Icon name="external" className="h-4 w-4" />
+                </a>
+              ) : null}
+            </section>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <section className="rounded-xl border border-slate-200 p-4">
+              <h4 className="font-bold">Mercado Livre</h4>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <DetailField label="Preço mediano" value={pricing.market ? brl(pricing.market) : 'Sem referência'} />
+                <DetailField label="Teto pela mediana" value={pricing.ceiling ? brl(pricing.ceiling) : 'Sem teto'} hint="Mediana × 1,05" />
+                <DetailField label="Mínimo" value={produto.mercado_min ? brl(produto.mercado_min) : '—'} />
+                <DetailField label="Máximo" value={produto.mercado_max ? brl(produto.mercado_max) : '—'} />
+                <DetailField label="Ofertas" value={produto.mercado_ofertas ?? '—'} />
+                <DetailField label="Vendedores" value={produto.mercado_vendedores ?? '—'} />
+                <DetailField label="Confiança do match" value={produto.mercado_confianca != null ? fmtPct(produto.mercado_confianca) : '—'} />
+                <DetailField label="Produto casado" value={produto.matched_name || 'Sem match'} />
+              </div>
+              {marketLink ? (
+                <a href={marketLink} target="_blank" rel="noreferrer" className="btn-ghost mt-3 w-full">
+                  Abrir no Mercado Livre
+                  <Icon name="external" className="h-4 w-4" />
+                </a>
+              ) : null}
+            </section>
+
+            <section className="rounded-xl border border-slate-200 p-4">
+              <h4 className="font-bold">Composição do preço</h4>
+              <dl className="mt-3 space-y-2 text-sm">
+                {[
+                  ['Custo do fornecedor', brl(pricing.cost)],
+                  ['Frete estimado', brl(pricing.shipping)],
+                  ['Embalagem', brl(pricing.packaging)],
+                  ['Taxa Mercado Livre (14%)', brl(pricing.saleFee)],
+                  ['Impostos (6%)', brl(pricing.taxes)],
+                  ['Custo total', brl(totalCosts)],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2">
+                    <dt className="text-slate-500">{label}</dt>
+                    <dd className="font-semibold">{value}</dd>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between gap-3 pt-2 text-base">
+                  <dt className="font-bold">Lucro líquido</dt>
+                  <dd className={`font-extrabold ${pricing.profit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    {brl(pricing.profit)}
+                  </dd>
+                </div>
+              </dl>
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-lg bg-slate-50 p-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Margem</p>
+                  <p className="mt-1 font-bold">{fmtPct(pricing.margin)}</p>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Lucro/custo</p>
+                  <p className="mt-1 font-bold">{fmtPct(pricing.profitOverCost)}</p>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Preço/custo</p>
+                  <p className="mt-1 font-bold">{pricing.multiple.toFixed(2)}x</p>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+            Regra de leitura: a margem é sempre sobre o preço de venda. Quando o anúncio já existe, o preço e os custos salvos no anúncio prevalecem. Sem anúncio, o preço sugerido usa taxa ML de 14%, imposto de 6%, frete pela tabela de peso e margem mínima de 30%. Se a mediana de mercado impedir a margem, o produto fica marcado como “Ajustar” em vez de esconder o prejuízo.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -3490,6 +4166,7 @@ export default function App() {
               onPauseAll={pauseAllListings}
               onReactivateAll={reactivateAllListings}
               pausing={pausing}
+              onToast={showToast}
             />
           ) : null}
           {view === 'pedidos' ? (
