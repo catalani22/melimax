@@ -61,7 +61,9 @@ function imageUrl(url) {
 
 const CATALOG_FEE_RATE = 0.14;
 const CATALOG_TAX_RATE = 0.06;
-const CATALOG_MIN_MARGIN = 0.3;
+const CATALOG_MIN_MARGIN = 0.45;
+const CATALOG_TARGET_MARGIN = 0.5;
+const CATALOG_MIN_PRICE_MULTIPLE = 3;
 const CATALOG_MIN_PROFIT_COST = 1;
 const CATALOG_MARKET_TOLERANCE = 1.05;
 const CATALOG_DEFAULT_SHIPPING = 25;
@@ -134,13 +136,14 @@ function catalogPricing(item, supplier, listing) {
   const marketReliable = Boolean(market && market > 0 && marketConfidence != null && marketConfidence >= 0.8);
   const feeRate = CATALOG_FEE_RATE;
   const taxRate = CATALOG_TAX_RATE;
-  const denominator = 1 - feeRate - taxRate - CATALOG_MIN_MARGIN;
+  const denominator = 1 - feeRate - taxRate - CATALOG_TARGET_MARGIN;
   const priceForMargin = denominator > 0
     ? (cost + shippingInfo.cost + packaging) / denominator
     : 0;
   const priceForProfit = (2 * cost + shippingInfo.cost + packaging) /
     (1 - feeRate - taxRate);
-  const target = Math.max(priceForMargin, priceForProfit);
+  const priceForMultiple = cost * CATALOG_MIN_PRICE_MULTIPLE;
+  const target = Math.max(priceForMargin, priceForProfit, priceForMultiple);
   const ceiling = market ? market * CATALOG_MARKET_TOLERANCE : null;
   const capped = Boolean(ceiling && target > ceiling);
   const suggested = capped ? ceiling : target;
@@ -156,7 +159,8 @@ function catalogPricing(item, supplier, listing) {
   const economic =
     cost > 0 &&
     margin >= CATALOG_MIN_MARGIN &&
-    profitOverCost >= CATALOG_MIN_PROFIT_COST;
+    profitOverCost >= CATALOG_MIN_PROFIT_COST &&
+    multiple >= CATALOG_MIN_PRICE_MULTIPLE;
   const competitive = !ceiling || price <= ceiling;
   const viable = economic && competitive && marketReliable;
   const state = viable ? 'viavel' : !marketReliable ? 'sem_referencia' : 'ajustar';
@@ -677,7 +681,7 @@ function DashboardView({
           </div>
         </div>
         <p className="mt-4 text-[11px] text-slate-400">
-          Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, mantenha lucro sobre o custo acima de 100% (ideal 150–200%), margem líquida sobre a venda acima de 30% e multiplicador de pelo menos 3x.
+          Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, mantenha lucro sobre o custo acima de 100% (ideal 150–200%), margem líquida sobre a venda entre 45% e 50% e multiplicador de pelo menos 3x.
         </p>
       </div>
 
@@ -1909,7 +1913,7 @@ function ListingsView({
     try {
       const result = await request('/listings/sync-prices', {
         method: 'POST',
-        body: { dry_run: dryRun, max_batch: 50, margem: 0.3 },
+        body: { dry_run: dryRun, max_batch: 50, margem: 0.5 },
       });
       const message = `${result.updated || 0} reajuste(s) ${dryRun ? 'simulado(s)' : 'aplicado(s)'}, ${result.skipped || 0} ignorado(s), ${result.errors || 0} erro(s).`;
       onToast(dryRun ? 'success' : 'success', message);
@@ -2458,7 +2462,7 @@ function CatalogoView({ onToast, externalSearch = '' }) {
             <div>
               <h3 className="font-bold">Prontidão da operação</h3>
               <p className="mt-1 text-sm text-slate-500">
-                Critério de volume: 350 a 500 SKUs viáveis, com match confiável, frete estimado, taxas, impostos, margem mínima de 30%, lucro de pelo menos 100% do custo e preço dentro do teto de mercado.
+                Critério de volume: 350 a 500 SKUs viáveis, com match confiável, frete estimado, taxas, impostos, margem líquida de 45% a 50%, lucro de pelo menos 100% do custo e preço dentro do teto de mercado.
               </p>
             </div>
             <span className={`badge ${readiness.atende_volume && readiness.atende_cep ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>
@@ -3036,7 +3040,7 @@ function ProductDetailModal({ produto, fornecedor, listing, onClose }) {
             <DetailField
               label={pricing.listed ? 'Preço de venda no anúncio' : 'Preço de venda sugerido'}
               value={brl(pricing.price)}
-              hint={pricing.listed ? 'Valor praticado hoje' : pricing.capped ? 'Limitado pelo teto de mercado; margem mínima não atingida' : 'Calculado com margem mínima de 30%'}
+              hint={pricing.listed ? 'Valor praticado hoje' : pricing.capped ? 'Limitado pelo teto de mercado; margem mínima não atingida' : 'Calculado com margem alvo de 50%'}
             />
             <DetailField
               label="Lucro líquido"
@@ -3162,7 +3166,7 @@ function ProductDetailModal({ produto, fornecedor, listing, onClose }) {
           </div>
 
           <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
-            Regra de leitura: a margem é sempre sobre o preço de venda. Quando o anúncio já existe, o preço e os custos salvos no anúncio prevalecem. Sem anúncio, o preço sugerido usa taxa ML de 14%, imposto de 6%, frete pela tabela de peso e margem mínima de 30%. Se a mediana de mercado impedir a margem, o produto fica marcado como “Ajustar” em vez de esconder o prejuízo.
+            Regra de leitura: a margem é sempre sobre o preço de venda. Quando o anúncio já existe, o preço e os custos salvos no anúncio prevalecem. Sem anúncio, o preço sugerido usa taxa ML de 14%, imposto de 6%, frete pela tabela de peso, margem alvo de 50% e piso de 45%. Se a mediana de mercado impedir a margem, o produto fica marcado como “Ajustar” em vez de esconder o prejuízo.
           </p>
         </div>
       </div>
@@ -3200,8 +3204,8 @@ function CreateListingModal({
     if (pricing.competitive === false) {
       warnings.push('Preço acima da referência de mercado. Reduza o custo ou a margem.');
     }
-    if (pricing.net_margin < 0.3) {
-      warnings.push('Margem líquida sobre a venda abaixo de 30%. A publicação fica bloqueada.');
+    if (pricing.net_margin < 0.45) {
+      warnings.push('Margem líquida sobre a venda abaixo de 45%. A publicação fica bloqueada.');
     }
     if (pricing.profit_over_cost != null && pricing.profit_over_cost < 1) {
       warnings.push('Lucro sobre o custo abaixo de 100%. A publicação fica bloqueada.');
@@ -3309,7 +3313,7 @@ function CreateListingModal({
             <input
               id="margin"
               type="range"
-              min="40"
+              min="45"
               max="70"
               step="1"
               value={margin}

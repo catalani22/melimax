@@ -352,9 +352,15 @@ router.get('/prontidao', async (req, res, next) => {
        precos AS (
          SELECT *,
            GREATEST(
-             (custo + frete + embalagem) / 0.5,
-             (2 * custo + frete + embalagem) / 0.8
-           ) AS preco_alvo
+             (custo + frete + embalagem) / 0.3,
+             (2 * custo + frete + embalagem) / 0.8,
+             custo * 3
+           ) AS preco_alvo,
+           GREATEST(
+             (custo + frete + embalagem) / 0.35,
+             (2 * custo + frete + embalagem) / 0.8,
+             custo * 3
+           ) AS preco_piso
          FROM custos
        )
        SELECT
@@ -373,7 +379,7 @@ router.get('/prontidao', async (req, res, next) => {
            WHERE custo > 0
              AND preco_mercado > 0
              AND mercado_confianca >= 0.8
-             AND preco_alvo <= preco_mercado * 1.05
+             AND preco_piso <= preco_mercado * 1.05
          )::int AS viaveis
        FROM precos
        GROUP BY fornecedor_id, fornecedor_nome, cep, cidade, uf
@@ -404,7 +410,7 @@ router.get('/prontidao', async (req, res, next) => {
     const pendencias = [];
     if (viaveis < 350) {
       pendencias.push(
-        `Faltam ${350 - viaveis} SKU(s) viáveis para a meta de 350; há ${viaveis} com frete, taxas, impostos e margem de 30% dentro do teto de mercado.`
+        `Faltam ${350 - viaveis} SKU(s) viáveis para a meta de 350; há ${viaveis} com frete, taxas, impostos, margem de 45% a 50%, lucro de 100% sobre o custo e preço dentro do teto de mercado.`
       );
     } else if (viaveis > 500) {
       pendencias.push(

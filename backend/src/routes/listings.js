@@ -9,7 +9,7 @@ const LISTING_TYPE = process.env.ML_LISTING_TYPE || 'gold_special';
 const EMPTY_GTIN_REASON = process.env.ML_EMPTY_GTIN_REASON || '17055160';
 const DEFAULT_SHIPPING_COST = Number(process.env.ML_SHIPPING_COST || 25);
 const TAX_RATE = Number(process.env.ML_TAX_RATE || 0.06);
-const MIN_NET_MARGIN = Number(process.env.ML_MIN_NET_MARGIN || 0.3);
+const MIN_NET_MARGIN = Number(process.env.ML_MIN_NET_MARGIN || 0.45);
 const MIN_PRICE_MULTIPLE = Number(process.env.ML_MIN_PRICE_MULTIPLE || 3);
 const MIN_PROFIT_OVER_COST = Number(
   process.env.ML_MIN_PROFIT_OVER_COST || 1
