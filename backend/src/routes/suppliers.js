@@ -316,27 +316,71 @@ router.post('/registro', async (req, res, next) => {
 router.get('/prontidao', async (req, res, next) => {
   try {
     const { rows } = await dbQuery(
-      `SELECT
-         sp.fornecedor_id,
-         COALESCE(s.nome, MAX(sp.fornecedor_nome), sp.fornecedor_id) AS fornecedor_nome,
-         s.cep, s.cidade, s.uf,
+      `WITH base AS (
+         SELECT
+           sp.fornecedor_id,
+           sp.ativo,
+           sp.estoque,
+           sp.custo,
+           sp.preco_mercado,
+           sp.mercado_confianca,
+           COALESCE(s.nome, sp.fornecedor_nome, sp.fornecedor_id) AS fornecedor_nome,
+           s.cep, s.cidade, s.uf,
+           COALESCE(sp.peso_kg, 0) + COALESCE(sp.tara_kg, 0) AS peso_total,
+           COALESCE(s.custo_embalagem, 0) AS embalagem
+         FROM supplier_products sp
+         LEFT JOIN suppliers s ON s.slug = sp.fornecedor_id
+       ),
+       custos AS (
+         SELECT *,
+           CASE
+             WHEN peso_total <= 0 THEN 25
+             WHEN peso_total <= 0.3 THEN 21.9
+             WHEN peso_total <= 0.5 THEN 23.9
+             WHEN peso_total <= 1 THEN 26.9
+             WHEN peso_total <= 2 THEN 31.9
+             WHEN peso_total <= 5 THEN 42.9
+             WHEN peso_total <= 10 THEN 58.9
+             WHEN peso_total <= 20 THEN 79.9
+             ELSE 99.9
+           END AS frete
+         FROM base
+       ),
+       precos AS (
+         SELECT *,
+           GREATEST(
+             (custo + frete + embalagem) / 0.5,
+             (2 * custo + frete + embalagem) / 0.8
+           ) AS preco_alvo
+         FROM custos
+       )
+       SELECT
+         fornecedor_id,
+         fornecedor_nome,
+         cep, cidade, uf,
          COUNT(*)::int AS total,
-         COUNT(*) FILTER (WHERE sp.ativo AND COALESCE(sp.estoque, 0) > 0)::int AS ativos,
+         COUNT(*) FILTER (WHERE ativo AND COALESCE(estoque, 0) > 0)::int AS ativos,
          COUNT(*) FILTER (
-           WHERE sp.preco_mercado IS NOT NULL AND sp.mercado_confianca >= 0.8
+           WHERE preco_mercado IS NOT NULL AND mercado_confianca >= 0.8
          )::int AS confiaveis,
          COUNT(*) FILTER (
-           WHERE sp.preco_mercado >= sp.custo * 3 AND sp.mercado_confianca >= 0.8
-         )::int AS fortes
-       FROM supplier_products sp
-       LEFT JOIN suppliers s ON s.slug = sp.fornecedor_id
-       GROUP BY sp.fornecedor_id, s.nome, s.cep, s.cidade, s.uf
+           WHERE preco_mercado >= custo * 3 AND mercado_confianca >= 0.8
+         )::int AS fortes,
+         COUNT(*) FILTER (
+           WHERE custo > 0
+             AND preco_mercado > 0
+             AND mercado_confianca >= 0.8
+             AND preco_alvo <= preco_mercado * 1.05
+         )::int AS viaveis
+       FROM precos
+       GROUP BY fornecedor_id, fornecedor_nome, cep, cidade, uf
        ORDER BY total DESC`
     );
     const total = rows.reduce((sum, row) => sum + Number(row.total || 0), 0);
     const ativos = rows.reduce((sum, row) => sum + Number(row.ativos || 0), 0);
     const confiaveis = rows.reduce((sum, row) => sum + Number(row.confiaveis || 0), 0);
     const fortes = rows.reduce((sum, row) => sum + Number(row.fortes || 0), 0);
+    const viaveis = rows.reduce((sum, row) => sum + Number(row.viaveis || 0), 0);
     const cepMap = new Map();
     for (const row of rows) {
       if (!row.cep) continue;
@@ -355,9 +399,13 @@ router.get('/prontidao', async (req, res, next) => {
       .filter((row) => !row.cep)
       .map((row) => row.fornecedor_nome);
     const pendencias = [];
-    if (fortes < 350) {
+    if (viaveis < 350) {
       pendencias.push(
-        `Faltam ${350 - fortes} SKU(s) fortes para a meta de 350; há ${fortes} com mercado ≥3x o custo e match confiável.`
+        `Faltam ${350 - viaveis} SKU(s) viáveis para a meta de 350; há ${viaveis} com frete, taxas, impostos e margem de 30% dentro do teto de mercado.`
+      );
+    } else if (viaveis > 500) {
+      pendencias.push(
+        `Há ${viaveis} SKUs viáveis; a meta é operar entre 350 e 500 para manter o catálogo enxuto.`
       );
     }
     if (!gruposCep.length) {
@@ -373,10 +421,11 @@ router.get('/prontidao', async (req, res, next) => {
       ativos,
       confiaveis,
       fortes,
+      viaveis,
       meta: { min: 350, max: 500 },
       fornecedores: rows,
       grupos_cep: gruposCep,
-      atende_volume: fortes >= 350 && fortes <= 500,
+      atende_volume: viaveis >= 350 && viaveis <= 500,
       atende_cep: gruposCep.length > 0,
       pendencias,
     });

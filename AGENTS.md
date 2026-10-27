@@ -104,7 +104,8 @@ Operação de dropshipping nacional no Mercado Livre com produtos de estoque fí
 
 - `price_alerts` registra alterações de custo do fornecedor e de preço de venda.
 - Triggers no Postgres gravam custo anterior/novo e preço anterior/novo, margem anterior/nova e lucro anterior/novo.
-- `GET /api/suppliers/prontidao` mede volume forte, SKUs confiáveis, grupos de CEP e pendências operacionais.
+- `GET /api/suppliers/prontidao` mede volume viável (frete estimado + taxas + impostos + margem 30% + teto de mercado), SKUs confiáveis, grupos de CEP e pendências operacionais.
+- Estado de 2026-10-27: 742 importados, 222 confiáveis, 29 com mercado ≥3x custo, 18 realmente viáveis; nenhum grupo de CEP compartilhado.
 - `GET /api/listings/alertas?limite=30` retorna os alertas com nome do fornecedor.
 - `POST /api/listings/alertas/lidas` marca alertas como lidos.
 - `POST /api/listings/sync-prices` recalcula preço e, quando aplicado, dispara o alerta de venda.

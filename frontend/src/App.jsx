@@ -2447,7 +2447,7 @@ function CatalogoView({ onToast, externalSearch = '' }) {
             <div>
               <h3 className="font-bold">Prontidão da operação</h3>
               <p className="mt-1 text-sm text-slate-500">
-                Critério de volume: 350 a 500 SKUs fortes, com match confiável e preço de mercado de pelo menos 3x o custo.
+                Critério de volume: 350 a 500 SKUs viáveis, com match confiável, frete estimado, taxas, impostos, margem mínima de 30%, lucro de pelo menos 100% do custo e preço dentro do teto de mercado.
               </p>
             </div>
             <span className={`badge ${readiness.atende_volume && readiness.atende_cep ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>
@@ -2456,9 +2456,9 @@ function CatalogoView({ onToast, externalSearch = '' }) {
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <DetailField
-              label="SKUs fortes"
-              value={`${number.format(readiness.fortes || 0)} / 350–500`}
-              hint={`${number.format(readiness.confiaveis || 0)} com match confiável`}
+              label="SKUs viáveis"
+              value={`${number.format(readiness.viaveis || 0)} / 350–500`}
+              hint={`${number.format(readiness.confiaveis || 0)} com match confiável; frete e margem real considerados`}
             />
             <DetailField
               label="SKUs importados"
