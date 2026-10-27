@@ -61,17 +61,14 @@ function imageUrl(url) {
 
 const CATALOG_FEE_RATE = 0.14;
 const CATALOG_TAX_RATE = 0.06;
-const CATALOG_MIN_MARGIN = 0.45;
-const CATALOG_TARGET_MARGIN = 0.5;
 const CATALOG_MIN_PRICE_MULTIPLE = 3;
 const CATALOG_MIN_PROFIT_COST = 1;
 const CATALOG_MARKET_TOLERANCE = 1.05;
 const CATALOG_DEFAULT_SHIPPING = 25;
 const CATALOG_SHIPPING_TABLE = [
-  { maxKg: 0.3, cost: 21.9 },
-  { maxKg: 0.5, cost: 23.9 },
-  { maxKg: 1, cost: 26.9 },
-  { maxKg: 2, cost: 31.9 },
+  { maxKg: 0.5, cost: 19.5 },
+  { maxKg: 1, cost: 21 },
+  { maxKg: 2, cost: 23.5 },
   { maxKg: 5, cost: 42.9 },
   { maxKg: 10, cost: 58.9 },
   { maxKg: 20, cost: 79.9 },
@@ -136,14 +133,10 @@ function catalogPricing(item, supplier, listing) {
   const marketReliable = Boolean(market && market > 0 && marketConfidence != null && marketConfidence >= 0.8);
   const feeRate = CATALOG_FEE_RATE;
   const taxRate = CATALOG_TAX_RATE;
-  const denominator = 1 - feeRate - taxRate - CATALOG_TARGET_MARGIN;
-  const priceForMargin = denominator > 0
-    ? (cost + shippingInfo.cost + packaging) / denominator
-    : 0;
-  const priceForProfit = (2 * cost + shippingInfo.cost + packaging) /
+  const priceForProfit = (2 * cost + 1 + shippingInfo.cost + packaging) /
     (1 - feeRate - taxRate);
   const priceForMultiple = cost * CATALOG_MIN_PRICE_MULTIPLE;
-  const target = Math.max(priceForMargin, priceForProfit, priceForMultiple);
+  const target = Math.max(priceForProfit, priceForMultiple);
   const ceiling = market ? market * CATALOG_MARKET_TOLERANCE : null;
   const capped = Boolean(ceiling && target > ceiling);
   const suggested = capped ? ceiling : target;
@@ -158,8 +151,7 @@ function catalogPricing(item, supplier, listing) {
   const profitOverCost = cost > 0 ? profit / cost : 0;
   const economic =
     cost > 0 &&
-    margin >= CATALOG_MIN_MARGIN &&
-    profitOverCost >= CATALOG_MIN_PROFIT_COST &&
+    profitOverCost > CATALOG_MIN_PROFIT_COST &&
     multiple >= CATALOG_MIN_PRICE_MULTIPLE;
   const competitive = !ceiling || price <= ceiling;
   const viable = economic && competitive && marketReliable;
@@ -606,7 +598,7 @@ function DashboardView({
   const monthRevenue = Number(monthly?.faturamento) || 0;
   const monthOrders = Number(monthly?.pedidos) || 0;
   const monthTicket = Number(monthly?.ticket_medio) || 0;
-  const marginBase = avgMargin > 0 ? avgMargin : 0.5;
+  const marginBase = avgMargin > 0 ? avgMargin : 0;
   const projectedProfit = monthRevenue * marginBase;
   const revenueProgress = Math.min((monthRevenue / goalRevenue) * 100, 100);
   const profitProgress = Math.min((projectedProfit / goalProfit) * 100, 100);
@@ -671,7 +663,7 @@ function DashboardView({
             </div>
             <div>
               <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
-                <span>Lucro projetado ({Math.round(marginBase * 100)}% de margem)</span>
+                <span>Lucro projetado (margem média dos anúncios)</span>
                 <span>{Math.round(profitProgress)}%</span>
               </div>
               <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
@@ -681,7 +673,7 @@ function DashboardView({
           </div>
         </div>
         <p className="mt-4 text-[11px] text-slate-400">
-          Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, mantenha lucro sobre o custo acima de 100% (ideal 150–200%), margem líquida sobre a venda entre 45% e 50% e multiplicador de pelo menos 3x.
+          Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, mantenha lucro líquido sobre o custo acima de 100% (ideal 150–200%) e multiplicador de pelo menos 3x.
         </p>
       </div>
 
@@ -1372,11 +1364,7 @@ function RadarView({ version = 0, onFindSupplier, onAnalyze, onToast }) {
                       <td className="px-5 py-3">
                         {item.margem_bruta_pct != null ? (
                           <span
-                            className={`badge ${
-                              item.margem_bruta_pct >= 45
-                                ? 'bg-emerald-50 text-emerald-700'
-                                : 'bg-amber-50 text-amber-700'
-                            }`}
+                            className="badge bg-slate-100 text-slate-600"
                           >
                             {Math.round(item.margem_bruta_pct)}%
                           </span>
@@ -1913,7 +1901,7 @@ function ListingsView({
     try {
       const result = await request('/listings/sync-prices', {
         method: 'POST',
-        body: { dry_run: dryRun, max_batch: 50, margem: 0.5 },
+        body: { dry_run: dryRun, max_batch: 50, lucro_sobre_custo: 1 },
       });
       const message = `${result.updated || 0} reajuste(s) ${dryRun ? 'simulado(s)' : 'aplicado(s)'}, ${result.skipped || 0} ignorado(s), ${result.errors || 0} erro(s).`;
       onToast(dryRun ? 'success' : 'success', message);
@@ -2462,7 +2450,7 @@ function CatalogoView({ onToast, externalSearch = '' }) {
             <div>
               <h3 className="font-bold">Prontidão da operação</h3>
               <p className="mt-1 text-sm text-slate-500">
-                Critério de volume: 350 a 500 SKUs viáveis, com match confiável, frete estimado, taxas, impostos, margem líquida de 45% a 50%, lucro de pelo menos 100% do custo e preço dentro do teto de mercado.
+                Critério de volume: 350 a 500 SKUs viáveis, com match confiável, frete estimado, taxas, impostos, lucro líquido acima de 100% do custo, multiplicador de pelo menos 3x e preço dentro do teto de mercado.
               </p>
             </div>
             <span className={`badge ${readiness.atende_volume && readiness.atende_cep ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>
@@ -3040,7 +3028,7 @@ function ProductDetailModal({ produto, fornecedor, listing, onClose }) {
             <DetailField
               label={pricing.listed ? 'Preço de venda no anúncio' : 'Preço de venda sugerido'}
               value={brl(pricing.price)}
-              hint={pricing.listed ? 'Valor praticado hoje' : pricing.capped ? 'Limitado pelo teto de mercado; margem mínima não atingida' : 'Calculado com margem alvo de 50%'}
+              hint={pricing.listed ? 'Valor praticado hoje' : pricing.capped ? 'Limitado pelo teto de mercado; lucro mínimo não atingido' : 'Calculado para lucro acima de 100% do custo'}
             />
             <DetailField
               label="Lucro líquido"
@@ -3166,7 +3154,7 @@ function ProductDetailModal({ produto, fornecedor, listing, onClose }) {
           </div>
 
           <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
-            Regra de leitura: a margem é sempre sobre o preço de venda. Quando o anúncio já existe, o preço e os custos salvos no anúncio prevalecem. Sem anúncio, o preço sugerido usa taxa ML de 14%, imposto de 6%, frete pela tabela de peso, margem alvo de 50% e piso de 45%. Se a mediana de mercado impedir a margem, o produto fica marcado como “Ajustar” em vez de esconder o prejuízo.
+            Regra de leitura: o lucro líquido é sempre medido sobre o custo. Quando o anúncio já existe, o preço e os custos salvos no anúncio prevalecem. Sem anúncio, o preço sugerido usa taxa ML de 14%, imposto de 6%, frete pela tabela de peso e lucro líquido acima de 100% do custo. Se a mediana de mercado impedir esse lucro, o produto fica marcado como “Ajustar” em vez de esconder o prejuízo.
           </p>
         </div>
       </div>
@@ -3191,7 +3179,7 @@ function CreateListingModal({
   onClose,
   onConfirm,
 }) {
-  const salePrice = pricing?.price ?? Math.round((Number(cost) || 0) / (1 - margin / 100));
+  const salePrice = pricing?.price ?? 0;
   const profit = pricing?.net_profit ?? null;
   const netMargin = pricing?.net_margin != null ? Math.round(pricing.net_margin * 1000) / 10 : null;
   const score = validation?.score ?? null;
@@ -3202,13 +3190,10 @@ function CreateListingModal({
 
   if (pricing) {
     if (pricing.competitive === false) {
-      warnings.push('Preço acima da referência de mercado. Reduza o custo ou a margem.');
+      warnings.push('Preço acima da referência de mercado. Reduza o custo ou ajuste o preço.');
     }
-    if (pricing.net_margin < 0.45) {
-      warnings.push('Margem líquida sobre a venda abaixo de 45%. A publicação fica bloqueada.');
-    }
-    if (pricing.profit_over_cost != null && pricing.profit_over_cost < 1) {
-      warnings.push('Lucro sobre o custo abaixo de 100%. A publicação fica bloqueada.');
+    if (pricing.profit_over_cost != null && pricing.profit_over_cost <= 1) {
+      warnings.push('Lucro líquido sobre o custo deve ficar acima de 100%. A publicação fica bloqueada.');
     }
     if (pricing.price_multiple != null && pricing.price_multiple < 3) {
       warnings.push('Multiplicador abaixo de 3x o custo. A publicação fica bloqueada.');
@@ -3270,7 +3255,7 @@ function CreateListingModal({
               />
             </div>
             <p className="mt-1 text-xs text-slate-500">
-              Preço de compra no fornecedor/hub. O preço do anúncio é calculado com taxa do ML, frete, impostos e margem líquida.
+              Preço de compra no fornecedor/hub. O preço do anúncio é calculado com taxa do ML, frete, impostos e lucro líquido acima de 100% do custo.
             </p>
           </div>
 
@@ -3306,20 +3291,23 @@ function CreateListingModal({
           <div>
             <div className="flex items-center justify-between">
               <label htmlFor="margin" className="text-sm font-semibold">
-                Margem líquida desejada (sobre a venda)
+                Lucro líquido desejado sobre o custo
               </label>
               <span className="text-sm font-bold text-brand-700">{margin}%</span>
             </div>
             <input
               id="margin"
               type="range"
-              min="45"
-              max="70"
-              step="1"
+              min="100"
+              max="300"
+              step="10"
               value={margin}
               onChange={(event) => setMargin(Number(event.target.value))}
               className="mt-2 w-full accent-brand-500"
             />
+            <p className="mt-1 text-xs text-slate-500">
+              Mínimo de 100% acima do custo. O preço de venda é calculado para garantir esse lucro líquido.
+            </p>
             <div className="mt-3 grid grid-cols-2 gap-3">
               <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Preço de venda</p>
@@ -3381,7 +3369,7 @@ function CreateListingModal({
           {pricing ? (
             <div className={`rounded-xl border p-3 text-xs ${pricing.viable ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>
               <p className="font-semibold">
-                {pricing.viable ? 'Anúncio validado e viável.' : 'Anúncio bloqueado para proteger sua margem.'}
+                {pricing.viable ? 'Anúncio validado e viável.' : 'Anúncio bloqueado para proteger seu lucro.'}
               </p>
               <p className="mt-1">
                 Custo {brl(pricing.cost)} · Taxa ML {brl(pricing.sale_fee)} · Frete {brl(pricing.shipping_cost)}
@@ -3411,7 +3399,7 @@ function CreateListingModal({
           </button>
           <button type="button" onClick={onConfirm} className="btn-primary" disabled={!canPublish}>
             {creating ? <Spinner className="h-4 w-4" /> : <Icon name="tag" className="h-4 w-4" />}
-            {creating ? 'Publicando...' : validating ? 'Validando...' : pricing && !pricing.viable ? 'Ajuste custo/margem' : 'Publicar anúncio'}
+            {creating ? 'Publicando...' : validating ? 'Validando...' : pricing && !pricing.viable ? 'Ajuste custo/lucro' : 'Publicar anúncio'}
           </button>
         </div>
       </div>
@@ -3450,7 +3438,7 @@ export default function App() {
   const [radarVersion, setRadarVersion] = useState(0);
   const [authError, setAuthError] = useState('');
   const [modalProduct, setModalProduct] = useState(null);
-  const [margin, setMargin] = useState(50);
+  const [margin, setMargin] = useState(100);
   const [freeShipping, setFreeShipping] = useState(false);
   const [creating, setCreating] = useState(false);
   const [pausing, setPausing] = useState(false);
@@ -3515,7 +3503,7 @@ export default function App() {
             catalogo_id: produto.catalogo_id || produto.id,
             item_id: produto.item_id || null,
             custo: costNumber,
-            margem: marginValue / 100,
+            lucro_sobre_custo: marginValue / 100,
             free_shipping: freeShippingValue,
             frete: Number.isFinite(shippingNumber) ? shippingNumber : null,
             fornecedor_id: produto.seller?.id || null,
@@ -3805,7 +3793,7 @@ export default function App() {
     lastValidationRef.current = { key: null, data: null };
     validationInFlightRef.current = null;
     setModalProduct(produto);
-    setMargin(18);
+    setMargin(100);
     setFreeShipping(false);
     setSupplierCost(Number(produto.price) || 0);
     setShippingCost('');
@@ -3831,7 +3819,7 @@ export default function App() {
         ? { id: String(item.fornecedor_id), nickname: item.fornecedor_nome }
         : null,
     });
-    setMargin(18);
+    setMargin(100);
     setFreeShipping(false);
     setSupplierCost(Number(item.custo) || 0);
     setShippingCost('');
@@ -3843,7 +3831,7 @@ export default function App() {
   const createListing = async () => {
     if (!modalProduct) return;
     if (!pricing?.viable) {
-      showToast('error', 'Ajuste o custo ou a margem para o anúncio ficar viável.');
+      showToast('error', 'Ajuste o custo para o anúncio ficar viável com lucro acima de 100%.');
       return;
     }
     setCreating(true);
@@ -3854,7 +3842,7 @@ export default function App() {
           catalogo_id: modalProduct.catalogo_id || modalProduct.id,
           item_id: modalProduct.item_id || null,
           custo: supplierCost,
-          margem: margin / 100,
+          lucro_sobre_custo: margin / 100,
           free_shipping: freeShipping,
           frete:
             shippingCost === '' || !Number.isFinite(Number(shippingCost))

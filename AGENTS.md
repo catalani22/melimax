@@ -55,7 +55,7 @@ Operação de dropshipping nacional no Mercado Livre com produtos de estoque fí
 - `dados/mirao.csv`: 7.128 produtos via GraphQL; 1.751 com preço R$ 15–30, mas só 74 em estoque. Atacado tradicional, sem dropshipping; usar como benchmark.
 - `dados/atacadum.csv`: só 5 produtos extraídos. CEP 01012-001 (Centro/SP). Site aplicou rate limit 401 após ~20 requisições; aguardar e raspar devagar.
 - Nenhum dos fornecedores atuais compartilha o mesmo CEP: Atacadum 01012-001, C7 01022-050, Smarke 08471-000. A regra de um remetente/coleta do ML continua sem solução; precisa de hub/3PL ou operar um principal + backup.
-- `dados/candidatos_unificados.csv`: 189 SKUs que fecham ≥100% sobre custo; a coluna `viavel_plataforma` é histórica e deve ser recalculada com o piso atual de 45%.
+- `dados/candidatos_unificados.csv`: 189 SKUs que fecham ≥100% sobre custo; a coluna `viavel_plataforma` é histórica e deve ser recalculada com o critério atual: lucro líquido > 100% do custo.
 
 ## Alerta de validação de mercado (26/10/2026)
 
@@ -104,7 +104,7 @@ Operação de dropshipping nacional no Mercado Livre com produtos de estoque fí
 
 - `price_alerts` registra alterações de custo do fornecedor e de preço de venda.
 - Triggers no Postgres gravam custo anterior/novo e preço anterior/novo, margem anterior/nova e lucro anterior/novo.
-- `GET /api/suppliers/prontidao` mede volume viável (frete estimado + taxas + impostos + margem de 45% a 50% + teto de mercado), SKUs confiáveis, grupos de CEP e pendências operacionais.
+- `GET /api/suppliers/prontidao` mede volume viável (frete estimado + taxas + impostos + lucro líquido acima de 100% do custo + multiplicador 3x + teto de mercado), SKUs confiáveis, grupos de CEP e pendências operacionais.
 - Estado de 2026-10-27: 742 importados, 222 confiáveis, 29 com mercado ≥3x custo, 18 realmente viáveis; nenhum grupo de CEP compartilhado.
 - `GET /api/listings/alertas?limite=30` retorna os alertas com nome do fornecedor.
 - `POST /api/listings/alertas/lidas` marca alertas como lidos.

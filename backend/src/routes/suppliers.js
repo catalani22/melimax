@@ -338,10 +338,9 @@ router.get('/prontidao', async (req, res, next) => {
          SELECT *,
            CASE
              WHEN peso_total <= 0 THEN 25
-             WHEN peso_total <= 0.3 THEN 21.9
-             WHEN peso_total <= 0.5 THEN 23.9
-             WHEN peso_total <= 1 THEN 26.9
-             WHEN peso_total <= 2 THEN 31.9
+             WHEN peso_total <= 0.5 THEN 19.5
+             WHEN peso_total <= 1 THEN 21
+             WHEN peso_total <= 2 THEN 23.5
              WHEN peso_total <= 5 THEN 42.9
              WHEN peso_total <= 10 THEN 58.9
              WHEN peso_total <= 20 THEN 79.9
@@ -352,13 +351,11 @@ router.get('/prontidao', async (req, res, next) => {
        precos AS (
          SELECT *,
            GREATEST(
-             (custo + frete + embalagem) / 0.3,
-             (2 * custo + frete + embalagem) / 0.8,
+             (2 * custo + 1 + frete + embalagem) / 0.8,
              custo * 3
            ) AS preco_alvo,
            GREATEST(
-             (custo + frete + embalagem) / 0.35,
-             (2 * custo + frete + embalagem) / 0.8,
+             (2 * custo + 1 + frete + embalagem) / 0.8,
              custo * 3
            ) AS preco_piso
          FROM custos
@@ -377,7 +374,7 @@ router.get('/prontidao', async (req, res, next) => {
          )::int AS fortes,
          COUNT(*) FILTER (
            WHERE custo > 0
-             AND preco_mercado > 0
+             AND preco_mercado >= 80
              AND mercado_confianca >= 0.8
              AND preco_piso <= preco_mercado * 1.05
          )::int AS viaveis
@@ -410,7 +407,7 @@ router.get('/prontidao', async (req, res, next) => {
     const pendencias = [];
     if (viaveis < 350) {
       pendencias.push(
-        `Faltam ${350 - viaveis} SKU(s) viáveis para a meta de 350; há ${viaveis} com frete, taxas, impostos, margem de 45% a 50%, lucro de 100% sobre o custo e preço dentro do teto de mercado.`
+        `Faltam ${350 - viaveis} SKU(s) viáveis para a meta de 350; há ${viaveis} com frete, taxas, impostos, lucro líquido acima de 100% do custo, multiplicador de 3x e preço dentro do teto de mercado.`
       );
     } else if (viaveis > 500) {
       pendencias.push(

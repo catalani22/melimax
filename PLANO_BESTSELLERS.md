@@ -26,11 +26,9 @@ Ter uma lista grande de produtos em tendência, com poucos fornecedores, margem 
 
 ## Regras de preço
 
-- Margem desejada: 50% líquida sobre a venda.
-- Margem líquida mínima: 45%.
-- Lucro sobre custo mínimo: 100%.
+- Lucro líquido sobre o custo acima de 100% (ideal 150–200%).
 - Teto competitivo: mediana de mercado × 1,05.
-- Piso: preço que ainda entrega margem líquida mínima.
+- Piso: preço que ainda entrega lucro líquido acima de 100% do custo.
 - Arredondar para cima em reais.
 - Não atualizar se a variação for menor que 1%.
 - Anúncios `paused` podem ser atualizados livremente; anúncios ativos exigem aprovação.
@@ -58,7 +56,7 @@ Ter uma lista grande de produtos em tendência, com poucos fornecedores, margem 
 
 - Fornecedor com estoque no Brasil e NF-e.
 - Custo atualizado há menos de 24h.
-- Margem ≥ 100% sobre custo e ≥ 45% líquida.
+- Lucro líquido > 100% sobre o custo.
 - Preço dentro do teto de mercado.
 - Fotos reais, título ≤ 60 caracteres, ficha técnica completa e descrição > 100 caracteres.
 - Score de qualidade ≥ 85.
