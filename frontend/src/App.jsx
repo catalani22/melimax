@@ -256,20 +256,20 @@ function PasswordScreen({ onSubmit, error, loading }) {
   const [showPassword, setShowPassword] = useState(false);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
+    <div className="relative min-h-screen overflow-hidden bg-meli-ink text-white">
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-brand-500/20 blur-3xl" />
-        <div className="absolute -right-24 bottom-0 h-96 w-96 rounded-full bg-emerald-500/10 blur-3xl" />
+        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-meli-blue/30 blur-3xl" />
+        <div className="absolute -right-24 bottom-0 h-96 w-96 rounded-full bg-meli-yellow/20 blur-3xl" />
       </div>
 
       <div className="relative mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 py-14">
         <div className="w-full rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur sm:p-8">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-400 font-black text-slate-950">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-meli-yellow font-black text-slate-950">
               ML
             </div>
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-300">Melimax</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-meli-yellow">Melimax</p>
               <h1 className="text-lg font-bold">Acesso restrito</h1>
             </div>
           </div>
@@ -347,20 +347,20 @@ function LoginScreen({ onLogin, error }) {
   ];
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
+    <div className="relative min-h-screen overflow-hidden bg-meli-ink text-white">
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-brand-500/20 blur-3xl" />
-        <div className="absolute -right-24 bottom-0 h-96 w-96 rounded-full bg-emerald-500/10 blur-3xl" />
+        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-meli-blue/30 blur-3xl" />
+        <div className="absolute -right-24 bottom-0 h-96 w-96 rounded-full bg-meli-yellow/20 blur-3xl" />
       </div>
 
       <div className="relative mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center gap-12 px-6 py-14 lg:flex-row lg:justify-between">
         <div className="max-w-xl">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-400 text-lg font-black text-slate-950">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-meli-yellow text-lg font-black text-slate-950">
               ML
             </div>
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-300">Melimax</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-meli-yellow">Melimax</p>
               <h1 className="text-2xl font-bold">Painel Mercado Livre</h1>
             </div>
           </div>
@@ -417,10 +417,10 @@ function LoginScreen({ onLogin, error }) {
 function StatCard({ label, value, hint, accent = 'slate' }) {
   const accents = {
     slate: 'bg-slate-900 text-white',
-    brand: 'bg-brand-400 text-slate-900',
+    brand: 'bg-meli-yellow text-slate-900',
     emerald: 'bg-emerald-500 text-white',
     sky: 'bg-sky-500 text-white',
-    amber: 'bg-amber-500 text-white',
+    amber: 'bg-meli-yellow text-slate-900',
   };
 
   return (
@@ -532,7 +532,7 @@ function DashboardView({
                 <span>{Math.round(revenueProgress)}%</span>
               </div>
               <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
-                <div className="h-2 rounded-full bg-brand-400" style={{ width: `${revenueProgress}%` }} />
+                <div className="h-2 rounded-full bg-meli-blue" style={{ width: `${revenueProgress}%` }} />
               </div>
             </div>
             <div>
@@ -541,7 +541,7 @@ function DashboardView({
                 <span>{Math.round(profitProgress)}%</span>
               </div>
               <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
-                <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${profitProgress}%` }} />
+                <div className="h-2 rounded-full bg-meli-yellow" style={{ width: `${profitProgress}%` }} />
               </div>
             </div>
           </div>
@@ -568,7 +568,7 @@ function DashboardView({
               </p>
               <div className="mt-2 h-2 w-full max-w-md overflow-hidden rounded-full bg-slate-100">
                 <div
-                  className={`h-2 rounded-full ${todaySales >= dailyTarget ? 'bg-rose-500' : 'bg-amber-400'}`}
+                  className={`h-2 rounded-full ${todaySales >= dailyTarget ? 'bg-rose-500' : 'bg-meli-yellow'}`}
                   style={{ width: `${warmupProgress}%` }}
                 />
               </div>
@@ -3273,7 +3273,7 @@ export default function App() {
 
   if (dashboardChecking) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
+      <div className="flex min-h-screen items-center justify-center bg-meli-ink text-white">
         <div className="flex flex-col items-center gap-4">
           <Spinner className="h-8 w-8 text-brand-400" />
           <p className="text-sm text-slate-400">Verificando acesso...</p>
@@ -3288,7 +3288,7 @@ export default function App() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
+      <div className="flex min-h-screen items-center justify-center bg-meli-ink text-white">
         <div className="flex flex-col items-center gap-4">
           <Spinner className="h-8 w-8 text-brand-400" />
           <p className="text-sm text-slate-400">Carregando painel...</p>
@@ -3318,12 +3318,12 @@ export default function App() {
       ) : null}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-slate-800 bg-slate-950 text-white transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-slate-800 bg-meli-ink text-white transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${
           mobileNav ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         <div className="flex items-center gap-3 px-5 py-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-400 font-black text-slate-950">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-meli-yellow font-black text-slate-950">
             ML
           </div>
           <div>
@@ -3353,7 +3353,7 @@ export default function App() {
                 }}
                 className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
                   active
-                    ? 'bg-brand-400 text-slate-950'
+                    ? 'bg-meli-blue text-white'
                     : 'text-slate-300 hover:bg-white/5 hover:text-white'
                 }`}
               >
