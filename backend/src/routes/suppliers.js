@@ -326,7 +326,10 @@ router.get('/prontidao', async (req, res, next) => {
            sp.mercado_confianca,
            COALESCE(s.nome, sp.fornecedor_nome, sp.fornecedor_id) AS fornecedor_nome,
            s.cep, s.cidade, s.uf,
-           COALESCE(sp.peso_kg, 0) + COALESCE(sp.tara_kg, 0) AS peso_total,
+           GREATEST(
+             COALESCE(sp.peso_kg, 0) + COALESCE(sp.tara_kg, 0),
+             COALESCE(sp.altura_cm * sp.largura_cm * sp.comprimento_cm / 6000, 0)
+           ) AS peso_total,
            COALESCE(s.custo_embalagem, 0) AS embalagem
          FROM supplier_products sp
          LEFT JOIN suppliers s ON s.slug = sp.fornecedor_id
