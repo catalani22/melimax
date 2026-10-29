@@ -259,8 +259,7 @@ function supplierStockInfo(supplierCost) {
 }
 
 async function getSaleFee(categoryId, listingTypeId, referencePrice) {
-  const priceBucket = Math.round((Number(referencePrice) || 0) / 50) * 50;
-  const key = `${categoryId}:${listingTypeId}:${priceBucket}`;
+  const key = `${categoryId}:${listingTypeId}:${Number(referencePrice || 0).toFixed(2)}`;
   const hit = feeCache.get(key);
   if (hit && Date.now() - hit.createdAt < FEE_CACHE_TTL) return hit.value;
 
@@ -285,7 +284,7 @@ async function getSaleFee(categoryId, listingTypeId, referencePrice) {
     }
     return fee;
   } catch {
-    return { percentage: 0.12, fixed: 0 };
+    return { percentage: Number(process.env.ML_FEE_RATE || 0.19), fixed: 0 };
   }
 }
 

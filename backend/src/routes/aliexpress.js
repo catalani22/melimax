@@ -23,6 +23,12 @@ import {
 } from '../lib/aliexpress-scraper.js';
 import { mlFetch } from '../lib/ml.js';
 import { query } from '../lib/db.js';
+import {
+  applyCostBreakdownToProduct,
+  buildCostBreakdown,
+  getExactListingFee,
+  priceProductWithExactMlFee,
+} from '../lib/ml-fees.js';
 
 const router = express.Router();
 
@@ -42,6 +48,31 @@ let catalogLoadPromise = null;
 let catalogLoadedAt = 0;
 let storeCatalogCache = null;
 const CATALOG_REFRESH_TTL_MS = 5000;
+
+function applyStoredMlFee(product, price, cost) {
+  const percentage = Number(product.taxa_ml_pct ?? ML_FEE_RATE * 100);
+  const fixedFee = Number(product.taxa_ml_fixa_brl || 0);
+  const fee = {
+    percentage: percentage / 100,
+    fixed_fee: fixedFee,
+    sale_fee_amount: Number(
+      (Number(price) * (percentage / 100) + fixedFee).toFixed(2)
+    ),
+    listing_fee_amount: Number(product.custo_listagem_ml_brl || 0),
+    listing_type_id: product.taxa_ml_listing_type_id || PREMIUM_LISTING_TYPE,
+    listing_type_name: product.taxa_ml_listing_type_name || 'Premium',
+    source: product.taxa_ml_fonte || 'stored',
+    queried_at: product.taxa_ml_calculada_em || new Date().toISOString(),
+  };
+  const breakdown = buildCostBreakdown({
+    price,
+    cost,
+    fee,
+    shippingCost: ML_SHIPPING_COST,
+    taxRate: ML_TAX_RATE,
+  });
+  return applyCostBreakdownToProduct(product, breakdown, ML_TAX_RATE);
+}
 
 function readBundledJson(kind) {
   try {
@@ -386,7 +417,8 @@ router.get('/produtos', (req, res) => {
     configuracao_custos: {
       tipo_anuncio: 'Premium (gold_pro)',
       listing_type_id: PREMIUM_LISTING_TYPE,
-      taxa_ml_pct: Number((ML_FEE_RATE * 100).toFixed(2)),
+      taxa_ml_por_categoria: true,
+      taxa_ml_fallback_pct: Number((ML_FEE_RATE * 100).toFixed(2)),
       imposto_pct: Number((ML_TAX_RATE * 100).toFixed(2)),
       frete_vendedor_brl: ML_SHIPPING_COST,
       piso_preco_brl: MIN_ML_PRICE,
@@ -395,6 +427,30 @@ router.get('/produtos', (req, res) => {
     total_filtrado: filtered.length,
     produtos: filtered,
   });
+});
+
+router.get('/taxa-ml', async (req, res, next) => {
+  try {
+    const categoryId = req.query.categoria_id || req.query.category_id;
+    const price = Number(req.query.preco ?? req.query.price);
+    const cost = Math.max(Number(req.query.custo ?? req.query.cost) || 0, 0);
+    if (!categoryId || !(price > 0)) {
+      return res.status(400).json({
+        error: 'Informe categoria_id e preco para consultar a taxa real do Mercado Livre.',
+      });
+    }
+    const fee = await getExactListingFee({ categoryId, price });
+    const breakdown = buildCostBreakdown({
+      price,
+      cost,
+      fee,
+      shippingCost: ML_SHIPPING_COST,
+      taxRate: ML_TAX_RATE,
+    });
+    res.json({ ok: true, fee, breakdown });
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.get('/fornecedores-homologados', (_req, res) => {
@@ -492,8 +548,18 @@ router.post('/importar-loja', async (req, res, next) => {
         )
       );
 
-      runningList = [...runningList, ...scrapedChunk];
-      addedProducts.push(...scrapedChunk);
+      const pricedChunk = await Promise.all(
+        scrapedChunk.map((product) =>
+          priceProductWithExactMlFee({
+            product,
+            price: product.preco_venda_ml_sugerido,
+            cost: product.preco_custo_aliexpress_brl,
+          }).then((result) => result.product)
+        )
+      );
+
+      runningList = [...runningList, ...pricedChunk];
+      addedProducts.push(...pricedChunk);
     }
 
     if (addedProducts.length > 0) {
@@ -587,43 +653,23 @@ router.patch('/produtos/:sku', async (req, res, next) => {
   current.multiplicador_venda = pricing.multiplier;
   current.preco_calculado_2_8x_brl = pricing.calculated;
 
-  if (body.preco_venda_manual_brl != null && Number(body.preco_venda_manual_brl) >= MIN_ML_PRICE) {
-    const manualPrice = Number(Number(body.preco_venda_manual_brl).toFixed(2));
-    const mlFee = Number((manualPrice * ML_FEE_RATE).toFixed(2));
-    const taxes = Number((manualPrice * ML_TAX_RATE).toFixed(2));
-    const netProfit = Number(
-      (manualPrice - pricing.cost - mlFee - taxes - ML_SHIPPING_COST).toFixed(2)
-    );
-    current.preco_venda_ml_sugerido = manualPrice;
-    current.taxa_ml_estimada_brl = mlFee;
-    current.imposto_estimado_brl = taxes;
-    current.custo_anuncio_premium_brl = mlFee;
-    current.custo_frete_vendedor_brl = Number(ML_SHIPPING_COST.toFixed(2));
-    current.custo_total_operacao_brl = Number(
-      (pricing.cost + mlFee + taxes + ML_SHIPPING_COST).toFixed(2)
-    );
-    current.tipo_anuncio = 'Premium (gold_pro)';
-    current.tipo_anuncio_ml = 'premium';
-    current.margem_estimada = Number((manualPrice - pricing.cost).toFixed(2));
-    current.lucro_liquido_estimado_brl = netProfit;
-    current.margem_liquida_pct = Number(((netProfit / manualPrice) * 100).toFixed(1));
-    current.roi_sobre_custo_pct =
-      pricing.cost > 0 ? Number(((netProfit / pricing.cost) * 100).toFixed(1)) : 0;
-  } else {
-    current.preco_venda_ml_sugerido = pricing.finalPrice;
-    current.piso_79_90_aplicado = pricing.pisoAplicado;
-    current.taxa_ml_estimada_brl = pricing.mlFee;
-    current.imposto_estimado_brl = pricing.taxes;
-    current.custo_anuncio_premium_brl = pricing.mlFee;
-    current.custo_frete_vendedor_brl = pricing.shippingSellerCost;
-    current.custo_total_operacao_brl = pricing.totalOperationCost;
-    current.tipo_anuncio = 'Premium (gold_pro)';
-    current.tipo_anuncio_ml = 'premium';
-    current.margem_estimada = pricing.grossMargin;
-    current.lucro_liquido_estimado_brl = pricing.netProfit;
-    current.margem_liquida_pct = pricing.netMarginPct;
-    current.roi_sobre_custo_pct = pricing.roiPct;
-  }
+  const manualPrice =
+    body.preco_venda_manual_brl != null &&
+    Number(body.preco_venda_manual_brl) >= MIN_ML_PRICE
+      ? Number(Number(body.preco_venda_manual_brl).toFixed(2))
+      : null;
+  const salePrice = manualPrice ?? pricing.finalPrice;
+  const priced = await priceProductWithExactMlFee({
+    product: current,
+    price: salePrice,
+    cost: pricing.cost,
+    shippingCost: ML_SHIPPING_COST,
+    taxRate: ML_TAX_RATE,
+  });
+  Object.assign(current, priced.product);
+  current.preco_venda_ml_sugerido = salePrice;
+  current.piso_79_90_aplicado =
+    manualPrice != null ? salePrice > pricing.calculated : pricing.pisoAplicado;
 
   const q = computeMlQualityScore(current);
   current.qualidade_score = q.score;
@@ -696,16 +742,24 @@ router.post('/scrape', async (req, res, next) => {
       }
     }
 
+    const pricedScraped = (
+      await priceProductWithExactMlFee({
+        product: scraped,
+        price: scraped.preco_venda_ml_sugerido,
+        cost: scraped.preco_custo_aliexpress_brl,
+      })
+    ).product;
+
     if (salvarNoCatalogo) {
       const existingIdx = products.findIndex(
-        (p) => String(p.aliexpress_item_id) === String(scraped.aliexpress_item_id)
+        (p) => String(p.aliexpress_item_id) === String(pricedScraped.aliexpress_item_id)
       );
       if (existingIdx >= 0) {
-        scraped.codigo_interno = products[existingIdx].codigo_interno;
-        scraped.sku = `${scraped.codigo_interno}-${scraped.aliexpress_item_id}`;
-        products[existingIdx] = scraped;
+        pricedScraped.codigo_interno = products[existingIdx].codigo_interno;
+        pricedScraped.sku = `${pricedScraped.codigo_interno}-${pricedScraped.aliexpress_item_id}`;
+        products[existingIdx] = pricedScraped;
       } else {
-        products.push(scraped);
+        products.push(pricedScraped);
       }
       await persistCatalog(products);
     }
@@ -713,7 +767,7 @@ router.post('/scrape', async (req, res, next) => {
     res.json({
       ok: true,
       salvo: salvarNoCatalogo,
-      produto: scraped,
+      produto: pricedScraped,
       total_catalogo: products.length,
     });
   } catch (err) {
@@ -738,19 +792,13 @@ router.post('/recalcular-lote', async (req, res, next) => {
       : item.titulo_ml;
 
     const updated = {
-      ...item,
+      ...applyStoredMlFee(item, pricing.finalPrice, pricing.cost),
       titulo_ml: nextTitle,
       multiplicador_venda: pricing.multiplier,
       preco_calculado_2_8x_brl: pricing.calculated,
       preco_minimo_79_90: pricing.floor,
       preco_venda_ml_sugerido: pricing.finalPrice,
       piso_79_90_aplicado: pricing.pisoAplicado,
-      taxa_ml_estimada_brl: pricing.mlFee,
-      imposto_estimado_brl: pricing.taxes,
-      margem_estimada: pricing.grossMargin,
-      lucro_liquido_estimado_brl: pricing.netProfit,
-      margem_liquida_pct: pricing.netMarginPct,
-      roi_sobre_custo_pct: pricing.roiPct,
       atualizado_em: new Date().toISOString(),
     };
     const q = computeMlQualityScore(updated);

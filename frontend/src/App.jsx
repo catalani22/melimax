@@ -201,17 +201,73 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [descTab, setDescTab] = useState('otimizada');
+  const [feeInfo, setFeeInfo] = useState(() => ({
+    percentage: Number(product.taxa_ml_pct ?? 19) / 100,
+    fixedFee: Number(product.taxa_ml_fixa_brl || 0),
+    source: product.taxa_ml_fonte || 'stored',
+    listingTypeName: product.taxa_ml_listing_type_name || 'Premium',
+  }));
 
   const previewCalc = useMemo(() => {
     const cost = Math.max(Number(custoBrl) || 0, 0);
     const mult = Math.max(Number(multiplicador) || 2.8, 1);
     const raw = Number((cost * mult).toFixed(2));
     const finalPrice = Math.max(raw, 79.9);
-    const fee = Number((finalPrice * 0.19).toFixed(2));
-    const tax = Number((finalPrice * 0.06).toFixed(2));
-    const net = Number((finalPrice - cost - fee - tax).toFixed(2));
-    return { cost, raw, finalPrice, fee, tax, net, piso: finalPrice > raw };
-  }, [custoBrl, multiplicador]);
+    const fee = Number(
+      (finalPrice * (Number(feeInfo.percentage) || 0) + Number(feeInfo.fixedFee || 0)).toFixed(2)
+    );
+    const taxPct = Number(product.imposto_pct ?? 6);
+    const tax = Number((finalPrice * (taxPct / 100)).toFixed(2));
+    const totalCost = Number((cost + fee + tax).toFixed(2));
+    const net = Number((finalPrice - totalCost).toFixed(2));
+    const margin = finalPrice > 0 ? Number(((net / finalPrice) * 100).toFixed(1)) : 0;
+    const roi = cost > 0 ? Number(((net / cost) * 100).toFixed(1)) : 0;
+    return {
+      cost,
+      raw,
+      finalPrice,
+      fee,
+      tax,
+      taxPct,
+      totalCost,
+      net,
+      margin,
+      roi,
+      feePct: Number((Number(feeInfo.percentage) * 100).toFixed(2)),
+      feeFixed: Number(feeInfo.fixedFee || 0),
+      feeSource: feeInfo.source,
+      piso: finalPrice > raw,
+    };
+  }, [custoBrl, multiplicador, feeInfo, product.imposto_pct]);
+
+  useEffect(() => {
+    if (!product.categoria_ml_id) return undefined;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const data = await request(
+          `/aliexpress/taxa-ml?categoria_id=${encodeURIComponent(
+            product.categoria_ml_id
+          )}&preco=${encodeURIComponent(previewCalc.finalPrice)}&custo=${encodeURIComponent(
+            previewCalc.cost
+          )}`
+        );
+        if (cancelled || !data?.fee) return;
+        setFeeInfo({
+          percentage: Number(data.fee.percentage) || 0.19,
+          fixedFee: Number(data.fee.fixed_fee || 0),
+          source: data.fee.source || 'mercadolivre_api',
+          listingTypeName: data.fee.listing_type_name || 'Premium',
+        });
+      } catch {
+        // mantém a última taxa conhecida
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [product.categoria_ml_id, previewCalc.finalPrice, previewCalc.cost]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -359,16 +415,44 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
                   <span className="font-mono text-sm text-meli-blue">{brl(previewCalc.finalPrice)}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
-                  <span>Comissão Premium ML (19%) + Impostos EI (6%):</span>
-                  <span className="font-mono">- {brl(previewCalc.fee + previewCalc.tax)}</span>
+                  <span>Custo do Produto (AliExpress):</span>
+                  <span className="font-mono">- {brl(previewCalc.cost)}</span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>
+                    Comissão {feeInfo.listingTypeName} ML ({previewCalc.feePct}%
+                    {previewCalc.feeFixed > 0 ? ` + ${brl(previewCalc.feeFixed)}` : ''}):
+                  </span>
+                  <span className="font-mono">- {brl(previewCalc.fee)}</span>
+                </div>
+                <div className="flex justify-between text-[11px] text-slate-500">
+                  <span>Fonte da taxa</span>
+                  <span>
+                    {previewCalc.feeSource === 'mercadolivre_api'
+                      ? 'Taxa real Mercado Livre'
+                      : 'Estimativa/armazenada'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>Impostos EI ({previewCalc.taxPct}%):</span>
+                  <span className="font-mono">- {brl(previewCalc.tax)}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Frete Vendedor (AliExpress Brasil):</span>
                   <span className="font-mono text-emerald-700">R$ 0,00 (Grátis)</span>
                 </div>
-                <div className="flex justify-between border-t border-slate-200 pt-1.5 font-semibold text-emerald-700">
-                  <span>Lucro Líquido Estimado:</span>
+                <div className="flex justify-between border-t border-slate-200 pt-1.5 text-slate-700">
+                  <span>Custo Total da Operação:</span>
+                  <span className="font-mono">- {brl(previewCalc.totalCost)}</span>
+                </div>
+                <div className="flex justify-between font-semibold text-emerald-700">
+                  <span>Lucro Líquido Real:</span>
                   <span className="font-mono">{brl(previewCalc.net)}</span>
+                </div>
+                <div className="flex justify-between text-[11px] text-slate-500">
+                  <span>
+                    Margem {previewCalc.margin}% · ROI {previewCalc.roi}% sobre o custo
+                  </span>
                 </div>
               </div>
             </div>
@@ -1407,11 +1491,14 @@ export default function App() {
                             <div className="text-[10px] text-slate-500">
                               ROI {item.roi_sobre_custo_pct}%
                             </div>
+                            <div className="text-[10px] text-slate-500">
+                              Taxa ML {brl(item.taxa_ml_estimada_brl)} · Imp. {brl(item.imposto_estimado_brl)}
+                            </div>
                           </td>
 
                           <td className="px-3 py-3 text-[11px]">
                             <div className="font-mono font-semibold text-emerald-700">
-                              Qualidade {item.qualidade_score || 98}% · Premium · Frete Grátis BR
+                              Qualidade {item.qualidade_score || 98}% · Premium {item.taxa_ml_pct ?? 19}% · Frete Grátis BR
                             </div>
                             <div className="text-slate-500">Por minha conta · R$ 0,00 · 5–10d</div>
                           </td>
@@ -1985,6 +2072,9 @@ export default function App() {
 
               <div className="surface space-y-4 p-6 lg:col-span-5">
                 <div className="label">Simulador Rápido de Precificação Premium (2.8x a 3.0x + Piso R$ 79,90)</div>
+                <div className="text-[11px] text-slate-500">
+                  Simulação conservadora. A taxa real por categoria é consultada no Mercado Livre ao abrir/salvar cada produto.
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-medium text-slate-700">Custo AliExpress (R$)</label>
@@ -2027,7 +2117,7 @@ export default function App() {
                     </div>
                   ) : null}
                   <div className="flex justify-between pt-1 text-slate-600">
-                    <span>Comissão Premium ML (19%):</span>
+                    <span>Comissão Premium ML (estimativa 19%):</span>
                     <span className="font-mono">- {brl(simResult.fee)}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
