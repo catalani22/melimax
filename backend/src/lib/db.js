@@ -199,7 +199,7 @@ function mockQuery(text, params = []) {
         permalink,
         margin,
         thumbnail,
-        listing_type_id: listing_type_id || 'gold_special',
+        listing_type_id: listing_type_id || 'gold_pro',
         cost,
         sale_fee,
         taxes,

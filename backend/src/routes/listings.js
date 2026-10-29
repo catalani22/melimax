@@ -5,9 +5,9 @@ import { findSupplierCost } from '../lib/supplier-costs.js';
 
 const router = express.Router();
 
-const LISTING_TYPE = process.env.ML_LISTING_TYPE || 'gold_special';
+const LISTING_TYPE = process.env.ML_LISTING_TYPE || 'gold_pro';
 const EMPTY_GTIN_REASON = process.env.ML_EMPTY_GTIN_REASON || '17055160';
-const DEFAULT_SHIPPING_COST = Number(process.env.ML_SHIPPING_COST || 25);
+const DEFAULT_SHIPPING_COST = Number(process.env.ML_SHIPPING_COST || 0);
 const TAX_RATE = Number(process.env.ML_TAX_RATE || 0.06);
 const MIN_PRICE_MULTIPLE = Number(process.env.ML_MIN_PRICE_MULTIPLE || 3);
 const MIN_PROFIT_OVER_COST = Number(
@@ -216,6 +216,13 @@ function volumetricWeight(item) {
 
 function estimateShipping(supplierCost) {
   const weight = volumetricWeight(supplierCost);
+  if (DEFAULT_SHIPPING_COST <= 0) {
+    return {
+      cost: 0,
+      source: 'free',
+      ...weight,
+    };
+  }
   if (!weight.peso_considerado) {
     return {
       cost: DEFAULT_SHIPPING_COST,

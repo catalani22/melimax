@@ -16,6 +16,10 @@ import {
   buildMercadoLivreBulkCsv,
   DEFAULT_MULTIPLIER,
   MIN_ML_PRICE,
+  ML_FEE_RATE,
+  ML_TAX_RATE,
+  ML_SHIPPING_COST,
+  PREMIUM_LISTING_TYPE,
 } from '../lib/aliexpress-scraper.js';
 import { mlFetch } from '../lib/ml.js';
 import { query } from '../lib/db.js';
@@ -379,6 +383,15 @@ router.get('/produtos', (req, res) => {
       etiquetas: false,
       comprador_cnpj: 'MeLi Max Shop (CNPJ)',
     },
+    configuracao_custos: {
+      tipo_anuncio: 'Premium (gold_pro)',
+      listing_type_id: PREMIUM_LISTING_TYPE,
+      taxa_ml_pct: Number((ML_FEE_RATE * 100).toFixed(2)),
+      imposto_pct: Number((ML_TAX_RATE * 100).toFixed(2)),
+      frete_vendedor_brl: ML_SHIPPING_COST,
+      piso_preco_brl: MIN_ML_PRICE,
+      multiplicador_padrao: DEFAULT_MULTIPLIER,
+    },
     total_filtrado: filtered.length,
     produtos: filtered,
   });
@@ -576,12 +589,21 @@ router.patch('/produtos/:sku', async (req, res, next) => {
 
   if (body.preco_venda_manual_brl != null && Number(body.preco_venda_manual_brl) >= MIN_ML_PRICE) {
     const manualPrice = Number(Number(body.preco_venda_manual_brl).toFixed(2));
-    const mlFee = Number((manualPrice * 0.14).toFixed(2));
-    const taxes = Number((manualPrice * 0.06).toFixed(2));
-    const netProfit = Number((manualPrice - pricing.cost - mlFee - taxes).toFixed(2));
+    const mlFee = Number((manualPrice * ML_FEE_RATE).toFixed(2));
+    const taxes = Number((manualPrice * ML_TAX_RATE).toFixed(2));
+    const netProfit = Number(
+      (manualPrice - pricing.cost - mlFee - taxes - ML_SHIPPING_COST).toFixed(2)
+    );
     current.preco_venda_ml_sugerido = manualPrice;
     current.taxa_ml_estimada_brl = mlFee;
     current.imposto_estimado_brl = taxes;
+    current.custo_anuncio_premium_brl = mlFee;
+    current.custo_frete_vendedor_brl = Number(ML_SHIPPING_COST.toFixed(2));
+    current.custo_total_operacao_brl = Number(
+      (pricing.cost + mlFee + taxes + ML_SHIPPING_COST).toFixed(2)
+    );
+    current.tipo_anuncio = 'Premium (gold_pro)';
+    current.tipo_anuncio_ml = 'premium';
     current.margem_estimada = Number((manualPrice - pricing.cost).toFixed(2));
     current.lucro_liquido_estimado_brl = netProfit;
     current.margem_liquida_pct = Number(((netProfit / manualPrice) * 100).toFixed(1));
@@ -592,6 +614,11 @@ router.patch('/produtos/:sku', async (req, res, next) => {
     current.piso_79_90_aplicado = pricing.pisoAplicado;
     current.taxa_ml_estimada_brl = pricing.mlFee;
     current.imposto_estimado_brl = pricing.taxes;
+    current.custo_anuncio_premium_brl = pricing.mlFee;
+    current.custo_frete_vendedor_brl = pricing.shippingSellerCost;
+    current.custo_total_operacao_brl = pricing.totalOperationCost;
+    current.tipo_anuncio = 'Premium (gold_pro)';
+    current.tipo_anuncio_ml = 'premium';
     current.margem_estimada = pricing.grossMargin;
     current.lucro_liquido_estimado_brl = pricing.netProfit;
     current.margem_liquida_pct = pricing.netMarginPct;
@@ -850,7 +877,7 @@ async function publishSingleProductToMl(product, options = {}) {
     .map((url) => ({ source: url }));
 
   const status = options.status === 'active' ? 'active' : 'paused';
-  const listingTypeId = options.listing_type_id || 'gold_special';
+  const listingTypeId = options.listing_type_id || PREMIUM_LISTING_TYPE;
   const attributes = await buildHighScoreMlAttributes(product, leafCategoryId);
 
   const payload = {
@@ -945,6 +972,8 @@ router.post('/publicar-ml', async (req, res, next) => {
         status_anuncio: created.status || req.body?.status || 'paused',
         ml_item_id: created.id,
         ml_permalink: created.permalink || null,
+        tipo_anuncio: 'Premium (gold_pro)',
+        tipo_anuncio_ml: 'premium',
       };
       await persistCatalog(products);
     }
@@ -965,7 +994,7 @@ router.post('/publicar-lote', async (req, res, next) => {
     const requestedSkus = Array.isArray(req.body?.skus) ? req.body.skus : [];
     const limite = Math.min(Math.max(Number(req.body?.limite) || 15, 1), 50);
     const status = req.body?.status === 'active' ? 'active' : 'paused';
-    const listingTypeId = req.body?.listing_type_id || 'gold_special';
+    const listingTypeId = req.body?.listing_type_id || PREMIUM_LISTING_TYPE;
     const fornecedor = String(req.body?.fornecedor || '').trim();
 
     const products = getAliExpressCatalog();
@@ -1012,6 +1041,8 @@ router.post('/publicar-lote', async (req, res, next) => {
             status_anuncio: created.status || status,
             ml_item_id: created.id,
             ml_permalink: created.permalink || null,
+            tipo_anuncio: 'Premium (gold_pro)',
+            tipo_anuncio_ml: 'premium',
           };
         }
         resultados.push({

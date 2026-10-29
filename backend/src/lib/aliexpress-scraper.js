@@ -9,8 +9,11 @@ const BASE_COOKIE = 'aep_usuc_f=site=bra&c_tp=BRL&region=BR&b_locale=pt_BR';
 
 export const DEFAULT_MULTIPLIER = 2.8;
 export const MIN_ML_PRICE = 79.9;
-export const ML_FEE_RATE = 0.14;
-export const ML_TAX_RATE = 0.06;
+export const ML_FEE_RATE = Number(process.env.ML_FEE_RATE || 0.19);
+export const ML_TAX_RATE = Number(process.env.ML_TAX_RATE || 0.06);
+export const ML_SHIPPING_COST = Number(process.env.ML_SHIPPING_COST || 0);
+export const PREMIUM_LISTING_TYPE =
+  process.env.ML_LISTING_TYPE || 'gold_pro';
 
 export const APPROVED_BRAZIL_STORES = [
   {
@@ -136,11 +139,12 @@ export function calculateMlPricing(costBrl, multiplier = DEFAULT_MULTIPLIER, min
   const pisoAplicado = finalPrice > calculated;
   const mlFee = Number((finalPrice * ML_FEE_RATE).toFixed(2));
   const taxes = Number((finalPrice * ML_TAX_RATE).toFixed(2));
-  const shippingSellerCost = 0;
+  const shippingSellerCost = Number(ML_SHIPPING_COST.toFixed(2));
   const grossMargin = Number((finalPrice - cost).toFixed(2));
   const netProfit = Number((finalPrice - cost - mlFee - taxes - shippingSellerCost).toFixed(2));
   const netMarginPct = finalPrice > 0 ? Number(((netProfit / finalPrice) * 100).toFixed(1)) : 0;
   const roiPct = cost > 0 ? Number(((netProfit / cost) * 100).toFixed(1)) : 0;
+  const totalOperationCost = Number((cost + mlFee + taxes + shippingSellerCost).toFixed(2));
 
   return {
     cost: Number(cost.toFixed(2)),
@@ -156,6 +160,10 @@ export function calculateMlPricing(costBrl, multiplier = DEFAULT_MULTIPLIER, min
     netProfit,
     netMarginPct,
     roiPct,
+    totalOperationCost,
+    listingType: PREMIUM_LISTING_TYPE,
+    feeRate: ML_FEE_RATE,
+    taxRate: ML_TAX_RATE,
   };
 }
 
@@ -1459,7 +1467,8 @@ export async function scrapeAliExpressProduct({
     categoria_ml: catAndDims.mlCategory,
     categoria_ml_id: catAndDims.mlCategoryId,
     condicao: 'Novo',
-    tipo_anuncio: 'Clássico (gold_special)',
+    tipo_anuncio: 'Premium (gold_pro)',
+    tipo_anuncio_ml: 'premium',
     estoque_disponivel: inventory,
     preco_custo_aliexpress_brl: pricing.cost,
     preco_tabela_aliexpress_brl: Number(effectiveOrigBrl.toFixed(2)),
@@ -1471,7 +1480,9 @@ export async function scrapeAliExpressProduct({
     piso_79_90_aplicado: pricing.pisoAplicado,
     taxa_ml_estimada_brl: pricing.mlFee,
     imposto_estimado_brl: pricing.taxes,
-    custo_frete_vendedor_brl: 0,
+    custo_anuncio_premium_brl: pricing.mlFee,
+    custo_frete_vendedor_brl: pricing.shippingSellerCost,
+    custo_total_operacao_brl: pricing.totalOperationCost,
     margem_estimada: pricing.grossMargin,
     lucro_liquido_estimado_brl: pricing.netProfit,
     margem_liquida_pct: pricing.netMarginPct,
@@ -1682,7 +1693,7 @@ export function buildMercadoLivreBulkCsv(products) {
       'BRL',
       p.estoque_disponivel,
       p.condicao,
-      'Clássico',
+      'Premium',
       'Vou enviar por minha conta',
       'Todo o Brasil (Sudeste, Sul, Nordeste, Centro-Oeste e Norte)',
       'Sim',

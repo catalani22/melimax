@@ -207,7 +207,7 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
     const mult = Math.max(Number(multiplicador) || 2.8, 1);
     const raw = Number((cost * mult).toFixed(2));
     const finalPrice = Math.max(raw, 79.9);
-    const fee = Number((finalPrice * 0.14).toFixed(2));
+    const fee = Number((finalPrice * 0.19).toFixed(2));
     const tax = Number((finalPrice * 0.06).toFixed(2));
     const net = Number((finalPrice - cost - fee - tax).toFixed(2));
     return { cost, raw, finalPrice, fee, tax, net, piso: finalPrice > raw };
@@ -325,7 +325,7 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
 
             <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-xs font-semibold text-slate-700">
-                Composição do Preço (Piso R$ 79,90 · Frete Grátis Brasil)
+                Composição do Preço (Anúncio Premium · Piso R$ 79,90 · Frete Grátis Brasil)
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -359,7 +359,7 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
                   <span className="font-mono text-sm text-meli-blue">{brl(previewCalc.finalPrice)}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
-                  <span>Taxa ML (~14%) + Imposto (~6%):</span>
+                  <span>Comissão Premium ML (19%) + Impostos EI (6%):</span>
                   <span className="font-mono">- {brl(previewCalc.fee + previewCalc.tax)}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
@@ -931,7 +931,7 @@ export default function App() {
     const m = Math.max(Number(simMult) || 2.8, 1);
     const calc = Number((c * m).toFixed(2));
     const finalPrice = Math.max(calc, 79.9);
-    const fee = Number((finalPrice * 0.14).toFixed(2));
+    const fee = Number((finalPrice * 0.19).toFixed(2));
     const tax = Number((finalPrice * 0.06).toFixed(2));
     const net = Number((finalPrice - c - fee - tax).toFixed(2));
     const roi = c > 0 ? Number(((net / c) * 100).toFixed(1)) : 0;
@@ -1411,7 +1411,7 @@ export default function App() {
 
                           <td className="px-3 py-3 text-[11px]">
                             <div className="font-mono font-semibold text-emerald-700">
-                              Qualidade {item.qualidade_score || 98}% · Frete Grátis BR
+                              Qualidade {item.qualidade_score || 98}% · Premium · Frete Grátis BR
                             </div>
                             <div className="text-slate-500">Por minha conta · R$ 0,00 · 5–10d</div>
                           </td>
@@ -1984,7 +1984,7 @@ export default function App() {
               </div>
 
               <div className="surface space-y-4 p-6 lg:col-span-5">
-                <div className="label">Simulador Rápido de Precificação (2.8x a 3.0x + Piso R$ 79,90)</div>
+                <div className="label">Simulador Rápido de Precificação Premium (2.8x a 3.0x + Piso R$ 79,90)</div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-medium text-slate-700">Custo AliExpress (R$)</label>
@@ -2027,11 +2027,11 @@ export default function App() {
                     </div>
                   ) : null}
                   <div className="flex justify-between pt-1 text-slate-600">
-                    <span>Comissão ML (~14%):</span>
+                    <span>Comissão Premium ML (19%):</span>
                     <span className="font-mono">- {brl(simResult.fee)}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
-                    <span>Impostos Estimados (~6%):</span>
+                    <span>Impostos EI (6%):</span>
                     <span className="font-mono">- {brl(simResult.tax)}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
