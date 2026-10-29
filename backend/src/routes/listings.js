@@ -9,12 +9,11 @@ const LISTING_TYPE = process.env.ML_LISTING_TYPE || 'gold_special';
 const EMPTY_GTIN_REASON = process.env.ML_EMPTY_GTIN_REASON || '17055160';
 const DEFAULT_SHIPPING_COST = Number(process.env.ML_SHIPPING_COST || 25);
 const TAX_RATE = Number(process.env.ML_TAX_RATE || 0.06);
+const MIN_PRICE_MULTIPLE = Number(process.env.ML_MIN_PRICE_MULTIPLE || 3);
 const MIN_PROFIT_OVER_COST = Number(
   process.env.ML_MIN_PROFIT_OVER_COST || 1
 );
 const MARKET_TOLERANCE = Number(process.env.ML_MARKET_TOLERANCE || 1.05);
-const FREE_SHIPPING_MIN = Number(process.env.ML_FREE_SHIPPING_MIN || 79);
-const FIXED_FEE_BELOW_MIN = Number(process.env.ML_FIXED_FEE_BELOW_MIN || 6.75);
 const STOCK_STALE_HOURS = Number(process.env.ML_STOCK_STALE_HOURS || 24);
 const SHIPPING_TABLE = [
   { maxKg: 0.5, cost: 19.5 },
@@ -319,7 +318,7 @@ async function priceListing(source, body) {
           peso_considerado: null,
         }
       : estimateShipping(supplierCost);
-  const shippingEstimate = shipping.cost;
+  const shippingCost = shipping.cost;
   const stock = supplierStockInfo(supplierCost);
   const taxRate = Number(body.taxa ?? body.tax_rate ?? TAX_RATE) || 0;
   const desiredProfit = clampProfitOverCost(
@@ -333,7 +332,7 @@ async function priceListing(source, body) {
     throw err;
   }
 
-  const fee = await getSaleFee(source.categoryId, listingType, Math.max(cost, 80));
+  const fee = await getSaleFee(source.categoryId, listingType, Math.max(cost * 3, 80));
   const denominator = 1 - fee.percentage - taxRate;
   if (denominator <= 0) {
     const err = new Error(
@@ -343,30 +342,19 @@ async function priceListing(source, body) {
     throw err;
   }
 
-  const packagingCost = Number(body.embalagem ?? body.packaging_cost) || 0;
-  const profitTarget = cost * (1 + desiredProfit) + 1 + packagingCost;
-  const priceWithoutShipping = Math.ceil(
-    (profitTarget + FIXED_FEE_BELOW_MIN) / denominator
+  const profitTarget = cost * (1 + desiredProfit) + 1;
+  const computedPrice = Math.ceil(
+    (profitTarget + shippingCost + fee.fixed) / denominator
   );
-  let computedPrice = priceWithoutShipping;
-  let shippingCost = 0;
-  let fixedFee = FIXED_FEE_BELOW_MIN;
-  if (priceWithoutShipping >= FREE_SHIPPING_MIN) {
-    computedPrice = Math.ceil((profitTarget + shippingEstimate) / denominator);
-    shippingCost = shippingEstimate;
-    fixedFee = 0;
-  }
   const manualPrice = Number(body.preco ?? body.price);
   const price =
     Number.isFinite(manualPrice) && manualPrice > 0
       ? Math.round(manualPrice)
       : computedPrice;
-  shippingCost = price >= FREE_SHIPPING_MIN ? shippingEstimate : 0;
-  fixedFee = price < FREE_SHIPPING_MIN ? FIXED_FEE_BELOW_MIN : 0;
 
-  const saleFee = Math.round(price * fee.percentage + fixedFee);
+  const saleFee = Math.round(price * fee.percentage + fee.fixed);
   const taxes = Math.round(price * taxRate);
-  const netProfit = Math.round(price - cost - shippingCost - packagingCost - saleFee - taxes);
+  const netProfit = Math.round(price - cost - shippingCost - saleFee - taxes);
   const netMargin = price > 0 ? netProfit / price : 0;
   const priceMultiple = cost > 0 ? price / cost : 0;
   const profitOverCost = cost > 0 ? netProfit / cost : 0;
@@ -388,8 +376,6 @@ async function priceListing(source, body) {
     price,
     computed_price: computedPrice,
     shipping_cost: shippingCost,
-    shipping_estimate: shippingEstimate,
-    packaging_cost: packagingCost,
     shipping_source: shipping.source,
     shipping_weight_kg: shipping.peso_considerado,
     shipping_actual_weight_kg: shipping.peso_kg,
@@ -404,8 +390,9 @@ async function priceListing(source, body) {
     market,
     competitive,
     viable:
+      priceMultiple >= MIN_PRICE_MULTIPLE &&
       profitOverCost > MIN_PROFIT_OVER_COST &&
-      (market?.median == null || price <= market.median * MARKET_TOLERANCE),
+      (competitive === null || competitive),
   };
 }
 
@@ -1037,9 +1024,8 @@ router.post('/sync-prices', async (req, res, next) => {
         const categoryId = item.category_id || null;
         const listingType = item.listing_type_id || row.listing_type_id || LISTING_TYPE;
         const cost = Number(supplierCost.custo);
-        const shippingEstimate = estimateShipping(supplierCost).cost;
-        const packaging = Number(row.packaging_cost) || 0;
-        const fee = await getSaleFee(categoryId, listingType, Math.max(cost, 80));
+        const shipping = estimateShipping(supplierCost).cost;
+        const fee = await getSaleFee(categoryId, listingType, Math.max(cost * 3, 80));
         const denominator = 1 - fee.percentage - taxRate;
         if (denominator <= 0) {
           skipped += 1;
@@ -1047,14 +1033,10 @@ router.post('/sync-prices', async (req, res, next) => {
           continue;
         }
 
-        const profitTarget = cost * (1 + desiredProfit) + 1 + packaging;
-        const priceWithoutShipping = Math.ceil(
-          (profitTarget + FIXED_FEE_BELOW_MIN) / denominator
+        const profitTarget = cost * (1 + desiredProfit) + 1;
+        const computed = Math.ceil(
+          (profitTarget + shipping + fee.fixed) / denominator
         );
-        const computed =
-          priceWithoutShipping < FREE_SHIPPING_MIN
-            ? priceWithoutShipping
-            : Math.ceil((profitTarget + shippingEstimate) / denominator);
         const market = await listingMarket(
           row.catalogo_id || item.catalog_product_id,
           row.source_price
@@ -1063,18 +1045,16 @@ router.post('/sync-prices', async (req, res, next) => {
           market.median != null
             ? Math.floor(market.median * MARKET_TOLERANCE)
             : null;
-        const target = computed;
-        const shippingCost = target >= FREE_SHIPPING_MIN ? shippingEstimate : 0;
-        const fixedFee = target < FREE_SHIPPING_MIN ? FIXED_FEE_BELOW_MIN : 0;
-        const saleFee = Math.round(target * fee.percentage + fixedFee);
+        const target = ceiling ? Math.min(computed, ceiling) : computed;
+        const saleFee = Math.round(target * fee.percentage + fee.fixed);
         const taxes = Math.round(target * taxRate);
-        const profit = Math.round(target - cost - shippingCost - packaging - saleFee - taxes);
+        const profit = Math.round(target - cost - shipping - saleFee - taxes);
         const netMargin = target > 0 ? profit / target : 0;
         const profitOverCost = cost > 0 ? profit / cost : 0;
         const priceMultiple = cost > 0 ? target / cost : 0;
         const viable =
           profitOverCost > MIN_PROFIT_OVER_COST &&
-          (ceiling == null || target <= ceiling);
+          priceMultiple >= MIN_PRICE_MULTIPLE;
         const current = Number(item.price) || Number(row.price) || 0;
         const deltaPct = current > 0 ? (target - current) / current : 0;
 
@@ -1119,12 +1099,14 @@ router.post('/sync-prices', async (req, res, next) => {
             [
               target,
               Number((profit / target).toFixed(4)),
-              target,
+              Math.round(
+                (profitTarget + shipping + fee.fixed) / denominator
+              ),
               ceiling,
               cost,
               saleFee,
               taxes,
-              shippingCost,
+              shipping,
               profit,
               Number((fee.percentage * 100).toFixed(2)),
               row.id,

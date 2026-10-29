@@ -1,0 +1,16 @@
+{
+  "name": "melimax",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "npm run build --workspace=ml-dropshipping-frontend && node backend/src/index.js",
+    "build": "npm run build --workspace=ml-dropshipping-frontend",
+    "start": "node backend/src/index.js",
+    "lint": "node --check backend/src/index.js && node --check backend/src/app.js && node --check backend/src/lib/db.js"
+  }
+}

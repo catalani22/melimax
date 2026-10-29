@@ -1,8 +1,46 @@
 import express from 'express';
 import { query } from '../lib/db.js';
 import { getAccount, getUserId, mlFetch } from '../lib/ml.js';
+import { findAliExpressByIdentifier } from './aliexpress.js';
 
 const router = express.Router();
+
+function formatAddressObject(addr) {
+  if (!addr) return null;
+  const street = [addr.street_name, addr.street_number].filter(Boolean).join(', ');
+  const complement = addr.comment || addr.apartment || '';
+  const neighborhood = addr.neighborhood?.name || addr.neighborhood || '';
+  const city = addr.city?.name || addr.city || '';
+  const state = addr.state?.id?.replace(/^BR-/, '') || addr.state?.name || '';
+  const zip = addr.zip_code || '';
+  const receiverName = addr.receiver_name || '';
+  const receiverPhone = addr.receiver_phone || '';
+
+  const formattedLines = [
+    receiverName ? `Destinatário: ${receiverName}` : null,
+    receiverPhone ? `Telefone: ${receiverPhone}` : null,
+    street ? `Endereço: ${street}${complement ? ` - ${complement}` : ''}` : null,
+    neighborhood ? `Bairro: ${neighborhood}` : null,
+    city || state ? `Cidade/UF: ${[city, state].filter(Boolean).join(' - ')}` : null,
+    zip ? `CEP: ${zip}` : null,
+    'País: Brasil',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return {
+    receiver_name: receiverName,
+    receiver_phone: receiverPhone,
+    street_name: addr.street_name || '',
+    street_number: addr.street_number || '',
+    complement,
+    neighborhood,
+    city,
+    state,
+    zip_code: zip,
+    formatted: formattedLines,
+  };
+}
 
 function formatOrder(order) {
   return {
@@ -13,23 +51,49 @@ function formatOrder(order) {
     status_detail: order.status_detail,
     total_amount: order.total_amount,
     paid_amount: order.paid_amount,
-    currency_id: order.currency_id,
+    currency_id: order.currency_id || 'BRL',
     buyer: order.buyer
-      ? { id: String(order.buyer.id), nickname: order.buyer.nickname || null }
+      ? {
+          id: String(order.buyer.id),
+          nickname: order.buyer.nickname || null,
+          full_name: [order.buyer.first_name, order.buyer.last_name].filter(Boolean).join(' ') || null,
+          doc_number: order.buyer.billing_info?.doc_number || null,
+        }
       : null,
-    items: (order.order_items || []).map((entry) => ({
-      item_id: entry.item?.id || null,
-      title: entry.item?.title || null,
-      variation_id: entry.item?.variation_id || null,
-      quantity: entry.quantity,
-      unit_price: entry.unit_price,
-      sale_fee: entry.sale_fee,
-      currency_id: entry.currency_id,
-      thumbnail: entry.item?.thumbnail || null,
-    })),
+    items: (order.order_items || []).map((entry) => {
+      const sellerSku =
+        entry.item?.seller_sku || entry.item?.seller_custom_field || '';
+      const matchedAli = findAliExpressByIdentifier(sellerSku);
+      return {
+        item_id: entry.item?.id || null,
+        seller_sku: sellerSku || matchedAli?.sku || null,
+        title: entry.item?.title || null,
+        variation_id: entry.item?.variation_id || null,
+        quantity: entry.quantity,
+        unit_price: entry.unit_price,
+        sale_fee: entry.sale_fee,
+        currency_id: entry.currency_id || 'BRL',
+        thumbnail: entry.item?.thumbnail || matchedAli?.imagem_1 || null,
+        aliexpress: matchedAli
+          ? {
+              sku: matchedAli.sku,
+              codigo_interno: matchedAli.codigo_interno,
+              aliexpress_item_id: matchedAli.aliexpress_item_id,
+              url_aliexpress: matchedAli.url_aliexpress,
+              custo_brl: matchedAli.preco_custo_aliexpress_brl,
+              fornecedor_nome: matchedAli.fornecedor_nome,
+              imagem: matchedAli.imagem_1,
+            }
+          : null,
+      };
+    }),
     shipping: order.shipping
-      ? { id: String(order.shipping.id), mode: order.shipping.mode || null }
-      : null,
+      ? {
+          id: order.shipping.id ? String(order.shipping.id) : null,
+          mode: order.shipping.mode || 'not_specified',
+          receiver_address: formatAddressObject(order.shipping.receiver_address),
+        }
+      : { id: null, mode: 'not_specified', receiver_address: null },
     payments: (order.payments || []).map((payment) => ({
       id: String(payment.id),
       status: payment.status,
@@ -41,70 +105,131 @@ function formatOrder(order) {
   };
 }
 
-async function attachSuppliers(orders) {
-  const itemIds = [
-    ...new Set(
-      orders
-        .flatMap((order) => order.items || [])
-        .map((item) => item.item_id)
-        .filter(Boolean)
-    ),
-  ];
-  if (!itemIds.length) return orders;
-
+async function attachExecutions(orders) {
+  if (!orders.length) return orders;
   try {
-    const { rows } = await query(
-      `SELECT ml_item_id, supplier, supplier_id
-       FROM listings
-       WHERE ml_item_id = ANY($1)`,
-      [itemIds]
-    );
-    const byItem = new Map(rows.map((row) => [row.ml_item_id, row]));
-
-    return orders.map((order) => {
-      const items = (order.items || []).map((item) => {
-        const listing = byItem.get(item.item_id);
-        return {
-          ...item,
-          supplier: listing
-            ? {
-                id: listing.supplier_id || null,
-                nome: listing.supplier || listing.supplier_id || null,
-              }
-            : null,
-        };
-      });
-      const suppliers = new Set(
-        items
-          .map((item) => item.supplier?.id || item.supplier?.nome)
-          .filter(Boolean)
-      );
-      return {
-        ...order,
-        items,
-        supplier_count: suppliers.size,
-        multi_supplier: suppliers.size > 1,
-      };
-    });
+    const { rows } = await query('SELECT * FROM order_executions ORDER BY updated_at DESC');
+    const byOrder = new Map(rows.map((r) => [String(r.order_id), r]));
+    return orders.map((order) => ({
+      ...order,
+      execution: byOrder.get(String(order.id)) || null,
+    }));
   } catch {
     return orders;
   }
 }
 
-async function currentUserId() {
-  const account = await getAccount();
-  if (!account) {
-    const err = new Error('Conta Mercado Livre nao conectada.');
-    err.status = 401;
-    err.code = 'ML_NOT_CONNECTED';
-    throw err;
+router.get('/execucoes', async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT * FROM order_executions ORDER BY updated_at DESC');
+    res.json({ total: rows.length, execucoes: rows });
+  } catch (err) {
+    next(err);
   }
-  return getUserId(account);
-}
+});
+
+router.post('/:orderId/rastreio', async (req, res, next) => {
+  try {
+    const orderId = String(req.params.orderId || '').trim();
+    if (!orderId) {
+      return res.status(400).json({ error: 'Informe o número da venda do Mercado Livre.' });
+    }
+
+    const sku = String(req.body?.sku || '').trim();
+    const matchedAli = findAliExpressByIdentifier(sku);
+    const aliexpressUrl =
+      String(req.body?.aliexpress_url || '').trim() || matchedAli?.url_aliexpress || '';
+    const aliexpressOrderId = String(req.body?.aliexpress_order_id || '').trim();
+    const trackingNumber = String(req.body?.tracking_number || '').trim();
+    const carrier = String(req.body?.carrier || 'Transportadora Brasil').trim();
+    const buyerName = String(req.body?.buyer_name || '').trim();
+    const shippingAddress = String(req.body?.shipping_address || '').trim();
+    const notes = String(req.body?.notes || '').trim();
+
+    let step = Number(req.body?.step) || 1;
+    if (trackingNumber) step = 5;
+    else if (aliexpressOrderId && step < 3) step = 3;
+
+    const { rows } = await query(
+      `INSERT INTO order_executions
+        (order_id, sku, aliexpress_url, aliexpress_order_id, tracking_number, carrier, step, buyer_name, shipping_address, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       ON CONFLICT (order_id) DO UPDATE SET
+         sku = COALESCE(NULLIF(EXCLUDED.sku, ''), order_executions.sku),
+         aliexpress_url = COALESCE(NULLIF(EXCLUDED.aliexpress_url, ''), order_executions.aliexpress_url),
+         aliexpress_order_id = EXCLUDED.aliexpress_order_id,
+         tracking_number = EXCLUDED.tracking_number,
+         carrier = EXCLUDED.carrier,
+         step = EXCLUDED.step,
+         buyer_name = COALESCE(NULLIF(EXCLUDED.buyer_name, ''), order_executions.buyer_name),
+         shipping_address = COALESCE(NULLIF(EXCLUDED.shipping_address, ''), order_executions.shipping_address),
+         notes = EXCLUDED.notes,
+         updated_at = NOW()
+       RETURNING *`,
+      [
+        orderId,
+        sku || matchedAli?.sku || '',
+        aliexpressUrl,
+        aliexpressOrderId,
+        trackingNumber,
+        carrier,
+        step,
+        buyerName,
+        shippingAddress,
+        notes,
+      ]
+    );
+
+    let mlNotified = false;
+    let mlMessage = null;
+    if (trackingNumber && req.body?.enviar_ml) {
+      const account = await getAccount();
+      if (account) {
+        try {
+          const orderData = await mlFetch(`/orders/${encodeURIComponent(orderId)}`);
+          const shipmentId = orderData?.shipping?.id;
+          if (shipmentId) {
+            await mlFetch(`/shipments/${encodeURIComponent(shipmentId)}`, {
+              method: 'PUT',
+              body: {
+                status: 'shipped',
+                tracking_number: trackingNumber,
+                receiver_id: orderData?.buyer?.id,
+              },
+            });
+            mlNotified = true;
+          }
+        } catch (err) {
+          mlMessage = err.message;
+        }
+      }
+    }
+
+    res.json({
+      ok: true,
+      execucao: rows[0],
+      ml_notified: mlNotified,
+      ml_message: mlMessage,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get('/', async (req, res, next) => {
   try {
-    const userId = await currentUserId();
+    const account = await getAccount();
+    if (!account) {
+      const { rows } = await query('SELECT * FROM order_executions ORDER BY updated_at DESC');
+      return res.json({
+        connected: false,
+        total: rows.length,
+        orders: [],
+        execucoes_manuais: rows,
+      });
+    }
+
+    const userId = await getUserId(account);
     const limit = Math.min(Math.max(Number(req.query.limite) || 50, 1), 50);
     const params = new URLSearchParams({
       seller: String(userId),
@@ -114,86 +239,15 @@ router.get('/', async (req, res, next) => {
     if (req.query.status) params.set('order.status', String(req.query.status));
 
     const data = await mlFetch(`/orders/search?${params.toString()}`);
-    const orders = await attachSuppliers(
-      (data?.results || []).map(formatOrder)
-    );
+    const orders = await attachExecutions((data?.results || []).map(formatOrder));
+    const { rows } = await query('SELECT * FROM order_executions ORDER BY updated_at DESC');
+
     res.json({
+      connected: true,
       total: data?.paging?.total ?? orders.length,
       orders,
+      execucoes_manuais: rows,
     });
-  } catch (err) {
-    next(err);
-  }
-});
-
-const monthlyCache = new Map();
-const MONTHLY_CACHE_TTL = 5 * 60 * 1000;
-
-router.get('/resumo-mensal', async (req, res, next) => {
-  try {
-    const userId = await currentUserId();
-    const now = new Date();
-    const year = Number(req.query.ano) || now.getFullYear();
-    const month = Number(req.query.mes)
-      ? Math.min(Math.max(Number(req.query.mes) - 1, 0), 11)
-      : now.getMonth();
-    const cacheKey = `${userId}:${year}:${month}`;
-    const cached = monthlyCache.get(cacheKey);
-    if (cached && Date.now() - cached.createdAt < MONTHLY_CACHE_TTL) {
-      return res.json(cached.value);
-    }
-
-    const from = new Date(year, month, 1, 0, 0, 0, 0);
-    const to = new Date(year, month + 1, 0, 23, 59, 59, 999);
-    const limit = Math.min(Math.max(Number(req.query.limite) || 200, 1), 400);
-    const collected = [];
-    let offset = 0;
-    let total = null;
-
-    while (collected.length < limit) {
-      const params = new URLSearchParams({
-        seller: String(userId),
-        'order.date_created.from': from.toISOString(),
-        'order.date_created.to': to.toISOString(),
-        sort: 'date_desc',
-        limit: String(Math.min(50, limit - collected.length)),
-        offset: String(offset),
-      });
-      const data = await mlFetch(`/orders/search?${params.toString()}`);
-      const results = data?.results || [];
-      total = data?.paging?.total ?? total;
-      collected.push(...results);
-      if (!results.length || collected.length >= (total || 0)) break;
-      offset += results.length;
-    }
-
-    const validOrders = collected.filter(
-      (order) =>
-        !['cancelled', 'invalid', 'pending_cancel'].includes(order.status)
-    );
-    const faturamento = validOrders.reduce(
-      (sum, order) => sum + (Number(order.total_amount) || 0),
-      0
-    );
-    const value = {
-      ano: year,
-      mes: month + 1,
-      from: from.toISOString(),
-      to: to.toISOString(),
-      total: total ?? collected.length,
-      carregados: collected.length,
-      pedidos: validOrders.length,
-      faturamento,
-      ticket_medio: validOrders.length ? faturamento / validOrders.length : 0,
-    };
-    monthlyCache.set(cacheKey, { value, createdAt: Date.now() });
-    if (monthlyCache.size > 50) {
-      const oldest = [...monthlyCache.entries()].sort(
-        (a, b) => a[1].createdAt - b[1].createdAt
-      )[0];
-      if (oldest) monthlyCache.delete(oldest[0]);
-    }
-    res.json(value);
   } catch (err) {
     next(err);
   }
@@ -202,7 +256,19 @@ router.get('/resumo-mensal', async (req, res, next) => {
 router.get('/:orderId', async (req, res, next) => {
   try {
     const data = await mlFetch(`/orders/${encodeURIComponent(req.params.orderId)}`);
-    const [order] = await attachSuppliers([formatOrder(data)]);
+    const formatted = formatOrder(data);
+
+    // Fetch full shipment receiver address if shipping.id is available
+    if (formatted.shipping?.id && !formatted.shipping.receiver_address) {
+      try {
+        const shipment = await mlFetch(`/shipments/${encodeURIComponent(formatted.shipping.id)}`);
+        if (shipment?.receiver_address) {
+          formatted.shipping.receiver_address = formatAddressObject(shipment.receiver_address);
+        }
+      } catch {}
+    }
+
+    const [order] = await attachExecutions([formatted]);
     res.json(order);
   } catch (err) {
     next(err);

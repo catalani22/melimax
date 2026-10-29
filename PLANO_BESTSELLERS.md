@@ -27,9 +27,7 @@ Ter uma lista grande de produtos em tendência, com poucos fornecedores, margem 
 ## Regras de preço
 
 - Lucro líquido sobre o custo acima de 100% (ideal 150–200%).
-- Venda de pelo menos 3x o custo, sem faixa fixa de preço.
-- Demanda mínima: 2 a 3 vendas/mês por produto.
-- Custo flexível: o que manda é o lucro líquido acima de 100% do custo após taxas, frete, embalagem e impostos.
+- Teto competitivo: mediana de mercado × 1,05.
 - Piso: preço que ainda entrega lucro líquido acima de 100% do custo.
 - Arredondar para cima em reais.
 - Não atualizar se a variação for menor que 1%.
@@ -59,7 +57,7 @@ Ter uma lista grande de produtos em tendência, com poucos fornecedores, margem 
 - Fornecedor com estoque no Brasil e NF-e.
 - Custo atualizado há menos de 24h.
 - Lucro líquido > 100% sobre o custo.
-- Lucro líquido acima de 100% do custo depois de todas as taxas, frete, embalagem e impostos.
+- Preço dentro do teto de mercado.
 - Fotos reais, título ≤ 60 caracteres, ficha técnica completa e descrição > 100 caracteres.
 - Score de qualidade ≥ 85.
 

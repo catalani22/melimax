@@ -1,0 +1,43 @@
+{
+  "gerado_em": "2026-10-29T11:34:57.708Z",
+  "lote1_total": 115,
+  "lote2_links_unicos_pdf": 121,
+  "lote2_adicionados_prontos": 117,
+  "lote2_descartados_estoque_ou_frete": [
+    {
+      "itemId": "1005012454828772",
+      "motivo": "Anúncio pausado/sem estoque ativo na loja DropFacil Store"
+    },
+    {
+      "itemId": "1005009821387942",
+      "motivo": "Anúncio pausado/sem estoque ativo na loja DropFacil Store"
+    }
+  ],
+  "lote2_descartados_duplicidade": [
+    {
+      "itemId": "1005009846837770",
+      "titulo": "Mini Caixa Caixinha Som Bluetooth Portátil com USB MP3 P2 Sd",
+      "costBrl": 21.1,
+      "motivo": "titulo_similar",
+      "similaridade": 0.75,
+      "mantidoSku": "TEMP-1005009728582692",
+      "mantidoTitulo": "Mini Caixinha Som Bluetooth Portátil com USB MP3 P2 Sd Rádio",
+      "mantidoCusto": 19.44
+    },
+    {
+      "itemId": "1005010163508395",
+      "titulo": "Munhequeira Ortopédica Ajustável com Alta Compressão Alívio",
+      "costBrl": 32,
+      "motivo": "titulo_similar",
+      "similaridade": 0.67,
+      "mantidoSku": "TEMP-1005012238922882",
+      "mantidoTitulo": "Munhequeira Ortopédica de Alta Compressão Ajustável Protetor",
+      "mantidoCusto": 24.58
+    }
+  ],
+  "total_base_unificada": 232,
+  "com_4_ou_mais_imagens": 232,
+  "qualidade_minima_pct": 98,
+  "qualidade_media_pct": 99,
+  "acima_85_pct": 232
+}

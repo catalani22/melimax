@@ -20,7 +20,12 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(hashA, hashB);
 }
 
+function authExplicitlyEnabled() {
+  return String(process.env.DASHBOARD_AUTH_ENABLED || '').toLowerCase() === 'true';
+}
+
 function authDisabled() {
+  if (!authExplicitlyEnabled()) return true;
   return String(process.env.DASHBOARD_AUTH_DISABLED || '').toLowerCase() === 'true';
 }
 

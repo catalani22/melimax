@@ -7,9 +7,17 @@ function firstHttpUrl(value, fallback) {
   return (candidate || fallback).replace(/\/+$/, '');
 }
 
+function nonLocalIfAppUrl(value) {
+  if (!value) return '';
+  if (process.env.APP_URL && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(String(value).trim())) {
+    return '';
+  }
+  return value;
+}
+
 export const FRONTEND_URL = firstHttpUrl(
-  process.env.FRONTEND_URL || process.env.CORS_ORIGIN,
-  'http://localhost:5173'
+  nonLocalIfAppUrl(process.env.FRONTEND_URL) || process.env.APP_URL || process.env.CORS_ORIGIN,
+  'http://localhost:3000'
 );
 
 const VERCEL_BACKEND_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
@@ -17,12 +25,12 @@ const VERCEL_BACKEND_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
   : null;
 
 export const BACKEND_URL = firstHttpUrl(
-  process.env.BACKEND_URL || VERCEL_BACKEND_URL,
-  'http://localhost:3001'
+  nonLocalIfAppUrl(process.env.BACKEND_URL) || process.env.APP_URL || VERCEL_BACKEND_URL,
+  'http://localhost:3000'
 );
 
 export const REDIRECT_URI =
-  process.env.ML_REDIRECT_URI || `${BACKEND_URL}/api/auth/callback`;
+  nonLocalIfAppUrl(process.env.ML_REDIRECT_URI) || `${BACKEND_URL}/api/auth/callback`;
 
 export const CORS_ORIGINS = Array.from(
   new Set([

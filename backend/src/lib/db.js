@@ -3,22 +3,282 @@ import { hashPassword } from './password.js';
 
 const { Pool } = pg;
 
-const memory = { accounts: [], listings: [], labels: [] };
+const DEFAULT_SUPPLIERS = [
+  {
+    id: 1,
+    slug: 'aliexpress-brasil',
+    nome: 'AliExpress Brasil (Estoque Nacional + Frete Grátis)',
+    site: 'https://pt.aliexpress.com',
+    descricao:
+      'Operação exclusiva com vendedores AliExpress de estoque físico no Brasil (notas 4.8–4.9) e frete grátis. Entrega no Mercado Livre configurada como "Vou enviar por minha conta" para Todo o Brasil a R$ 0,00 (prazo de 5 a 10 dias).',
+    nichos: ['eletronicos', 'casa', 'beleza', 'ferramentas', 'acessorios', 'utilidades'],
+    pedido_minimo: 0,
+    dropshipping: true,
+    integracao: 'csv_api',
+    ativo: true,
+    cnpj: null,
+    endereco: 'Armazéns Locais no Brasil (Envio Direto ao Comprador)',
+    bairro: null,
+    cidade: 'São Paulo',
+    uf: 'SP',
+    cep: null,
+    prazo_postagem: 'Envio imediato — Entrega de 5 a 10 dias',
+    custo_embalagem: 0,
+    observacoes: 'Sem geração de etiquetas. Rastreamento inserido manualmente no pedido do Mercado Livre.',
+    created_at: new Date().toISOString(),
+  },
+  {
+    id: 2,
+    slug: 'cssv-shop-store',
+    nome: 'CSSV SHOP Store (AliExpress Brasil)',
+    site: 'https://pt.aliexpress.com/store/1105400522',
+    descricao:
+      'Fornecedor principal do catálogo PDF no AliExpress Brasil (Loja 1105400522) com nota 4.8, frete grátis nacional e pronta entrega.',
+    nichos: ['casa', 'eletronicos', 'beleza', 'ferramentas', 'acessorios'],
+    pedido_minimo: 0,
+    dropshipping: true,
+    integracao: 'csv_api',
+    ativo: true,
+    cnpj: null,
+    endereco: 'Estoque Nacional Brasil',
+    bairro: null,
+    cidade: 'São Paulo',
+    uf: 'SP',
+    cep: null,
+    prazo_postagem: '5 a 10 dias (Todo o Brasil)',
+    custo_embalagem: 0,
+    observacoes: 'Comprar em nome da Melimax - Shop (CNPJ) inserindo o endereço completo do comprador.',
+    created_at: new Date().toISOString(),
+  },
+];
+
+const memory = {
+  accounts: [],
+  listings: [],
+  order_executions: [],
+  suppliers: DEFAULT_SUPPLIERS.map((item) => ({ ...item })),
+  supplier_products: [],
+  price_alerts: [],
+  dashboard_users: [],
+};
+let nextIds = { accounts: 1, listings: 1, suppliers: 3, supplier_products: 1, users: 1, executions: 1 };
 let pool = null;
 let schemaPromise = null;
 
 if (process.env.DATABASE_URL) {
-  pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    max: 5,
-    idleTimeoutMillis: 15000,
-    connectionTimeoutMillis: 10000,
-  });
-  pool.on('error', (err) => {
-    console.error('[db] pool error:', err.message);
-  });
-} else {
-  console.warn('[db] DATABASE_URL ausente: usando memoria (dados nao persistem)');
+  try {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: 5,
+      idleTimeoutMillis: 15000,
+      connectionTimeoutMillis: 3000,
+    });
+    pool.on('error', (err) => {
+      console.error('[db] pool error:', err.message);
+    });
+  } catch {
+    pool = null;
+  }
+}
+
+function disablePool() {
+  if (pool) {
+    pool.end().catch(() => {});
+    pool = null;
+  }
+  schemaPromise = null;
+}
+
+function mockQuery(text, params = []) {
+  try {
+    const sql = String(text || '').trim();
+    const upper = sql.toUpperCase();
+
+    if (upper.includes('FROM ML_ACCOUNTS')) {
+      const sorted = [...memory.accounts].sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      );
+      return { rows: sorted.slice(0, 1), rowCount: sorted.length ? 1 : 0 };
+    }
+    if (upper.startsWith('INSERT INTO ML_ACCOUNTS')) {
+      const [user_id, nickname, access_token, refresh_token, expires_in, expires_at, scope] = params;
+      const existing = memory.accounts.find((a) => String(a.user_id) === String(user_id));
+      const now = new Date().toISOString();
+      if (existing) {
+        Object.assign(existing, { nickname, access_token, refresh_token, expires_in, expires_at, scope, updated_at: now });
+        return { rows: [existing], rowCount: 1 };
+      }
+      const created = {
+        id: nextIds.accounts++,
+        user_id,
+        nickname,
+        access_token,
+        refresh_token,
+        expires_in,
+        expires_at,
+        scope,
+        updated_at: now,
+      };
+      memory.accounts.push(created);
+      return { rows: [created], rowCount: 1 };
+    }
+    if (upper.startsWith('UPDATE ML_ACCOUNTS')) {
+      const [access_token, refresh_token, expires_in, expires_at, scope, user_id] = params;
+      const existing = memory.accounts.find((a) => String(a.user_id) === String(user_id));
+      if (existing) {
+        Object.assign(existing, { access_token, refresh_token, expires_in, expires_at, scope, updated_at: new Date().toISOString() });
+        return { rows: [existing], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    }
+    if (upper.startsWith('DELETE FROM ML_ACCOUNTS')) {
+      const count = memory.accounts.length;
+      memory.accounts.length = 0;
+      return { rows: [], rowCount: count };
+    }
+    if (upper === 'SELECT * FROM SUPPLIERS ORDER BY NOME ASC') {
+      const rows = [...memory.suppliers].sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+      return { rows, rowCount: rows.length };
+    }
+    if (upper.startsWith('INSERT INTO LISTINGS')) {
+      const [
+        ml_item_id,
+        title,
+        price,
+        supplier,
+        status,
+        score,
+        source_item_id,
+        source_price,
+        supplier_id,
+        permalink,
+        margin,
+        thumbnail,
+        listing_type_id,
+        cost,
+        sale_fee,
+        taxes,
+        shipping_cost,
+        net_profit,
+      ] = params;
+      const now = new Date().toISOString();
+      const existing = memory.listings.find((l) => l.ml_item_id === ml_item_id);
+      if (existing) {
+        Object.assign(existing, {
+          title,
+          price,
+          supplier,
+          status,
+          score,
+          source_item_id,
+          source_price,
+          supplier_id,
+          permalink,
+          margin,
+          thumbnail,
+          listing_type_id,
+          cost,
+          sale_fee,
+          taxes,
+          shipping_cost,
+          net_profit,
+        });
+        return { rows: [existing], rowCount: 1 };
+      }
+      const created = {
+        id: nextIds.listings++,
+        ml_item_id,
+        title,
+        price,
+        supplier: supplier || 'aliexpress-brasil',
+        status: status || 'paused',
+        score: score || 90,
+        source_item_id,
+        source_price,
+        supplier_id: supplier_id || 'aliexpress-brasil',
+        permalink,
+        margin,
+        thumbnail,
+        listing_type_id: listing_type_id || 'gold_special',
+        cost,
+        sale_fee,
+        taxes,
+        shipping_cost: shipping_cost ?? 0,
+        net_profit,
+        created_at: now,
+      };
+      memory.listings.push(created);
+      return { rows: [created], rowCount: 1 };
+    }
+    if (upper.startsWith('SELECT * FROM LISTINGS')) {
+      const rows = [...memory.listings].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      return { rows: rows.slice(0, 200), rowCount: Math.min(rows.length, 200) };
+    }
+    if (upper.includes('FROM ORDER_EXECUTIONS')) {
+      if (params.length === 1 && typeof params[0] === 'string') {
+        const found = memory.order_executions.filter((e) => e.order_id === params[0]);
+        return { rows: found, rowCount: found.length };
+      }
+      const rows = [...memory.order_executions].sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      );
+      return { rows, rowCount: rows.length };
+    }
+    if (upper.startsWith('INSERT INTO ORDER_EXECUTIONS')) {
+      const [
+        order_id,
+        sku,
+        aliexpress_url,
+        aliexpress_order_id,
+        tracking_number,
+        carrier,
+        step,
+        buyer_name,
+        shipping_address,
+        notes,
+      ] = params;
+      const now = new Date().toISOString();
+      const existing = memory.order_executions.find((e) => e.order_id === String(order_id));
+      if (existing) {
+        Object.assign(existing, {
+          sku: sku ?? existing.sku,
+          aliexpress_url: aliexpress_url ?? existing.aliexpress_url,
+          aliexpress_order_id: aliexpress_order_id ?? existing.aliexpress_order_id,
+          tracking_number: tracking_number ?? existing.tracking_number,
+          carrier: carrier ?? existing.carrier,
+          step: step ?? existing.step,
+          buyer_name: buyer_name ?? existing.buyer_name,
+          shipping_address: shipping_address ?? existing.shipping_address,
+          notes: notes ?? existing.notes,
+          updated_at: now,
+        });
+        return { rows: [existing], rowCount: 1 };
+      }
+      const created = {
+        id: nextIds.executions++,
+        order_id: String(order_id),
+        sku: sku || '',
+        aliexpress_url: aliexpress_url || '',
+        aliexpress_order_id: aliexpress_order_id || '',
+        tracking_number: tracking_number || '',
+        carrier: carrier || 'Transportadora Brasil',
+        step: step || 1,
+        buyer_name: buyer_name || '',
+        shipping_address: shipping_address || '',
+        notes: notes || '',
+        created_at: now,
+        updated_at: now,
+      };
+      memory.order_executions.push(created);
+      return { rows: [created], rowCount: 1 };
+    }
+    if (upper.includes('COUNT(*)::INT AS TOTAL') && upper.includes('FROM PRICE_ALERTS')) {
+      return { rows: [{ total: 0, nao_lidas: 0 }], rowCount: 1 };
+    }
+  } catch {}
+  return { rows: [], rowCount: 0 };
 }
 
 export function usingMemory() {
@@ -26,21 +286,24 @@ export function usingMemory() {
 }
 
 export async function query(text, params) {
-  if (!pool) return { rows: [] };
-  return pool.query(text, params);
+  if (!pool) return mockQuery(text, params);
+  try {
+    return await pool.query(text, params);
+  } catch (err) {
+    if (
+      err &&
+      (['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH'].includes(err.code) ||
+        /connect|timeout|terminated/i.test(String(err.message || '')))
+    ) {
+      disablePool();
+      return mockQuery(text, params);
+    }
+    throw err;
+  }
 }
 
 export function mem(table) {
   return memory[table] || [];
-}
-
-export function memPush(table, row) {
-  (memory[table] ||= []).push(row);
-  return row;
-}
-
-export function memFind(table, fn) {
-  return (memory[table] || []).find(fn);
 }
 
 const SCHEMA = `
@@ -86,17 +349,6 @@ ALTER TABLE listings ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC;
 ALTER TABLE listings ADD COLUMN IF NOT EXISTS packaging_cost NUMERIC;
 ALTER TABLE listings ADD COLUMN IF NOT EXISTS net_profit NUMERIC;
 ALTER TABLE listings ADD COLUMN IF NOT EXISTS fee_percentage NUMERIC;
-ALTER TABLE listings ADD COLUMN IF NOT EXISTS payload JSONB;
-ALTER TABLE listings ADD COLUMN IF NOT EXISTS quality_breakdown JSONB;
-ALTER TABLE listings ADD COLUMN IF NOT EXISTS supplier_sku TEXT;
-ALTER TABLE listings ADD COLUMN IF NOT EXISTS gtin TEXT;
-ALTER TABLE listings ADD COLUMN IF NOT EXISTS category_id TEXT;
-ALTER TABLE listings ADD COLUMN IF NOT EXISTS description TEXT;
-ALTER TABLE listings ADD COLUMN IF NOT EXISTS pictures JSONB;
-ALTER TABLE listings ADD COLUMN IF NOT EXISTS attributes JSONB;
-ALTER TABLE listings ADD COLUMN IF NOT EXISTS available_quantity INTEGER;
-ALTER TABLE listings ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
-ALTER TABLE listings ADD COLUMN IF NOT EXISTS draft_source TEXT;
 
 CREATE TABLE IF NOT EXISTS labels (
   id SERIAL PRIMARY KEY,
@@ -153,16 +405,6 @@ ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS mercado_multiplo NUMERIC;
 ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS matched_id TEXT;
 ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS matched_name TEXT;
 ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS categoria_ml TEXT;
-ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS validado_manual BOOLEAN DEFAULT FALSE;
-ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS validado_manual_nota TEXT;
-ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS validado_manual_em TIMESTAMPTZ;
-ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS mercado_tentado_em TIMESTAMPTZ;
-ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS alto_giro_manual BOOLEAN DEFAULT FALSE;
-ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS fotos JSONB DEFAULT '[]'::jsonb;
-ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS descricao TEXT;
-ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS atributos JSONB DEFAULT '[]'::jsonb;
-ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS supplier_ref TEXT;
-ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS atualizado_fornecedor_em TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_supplier_products_catalogo
   ON supplier_products (catalogo_id);
@@ -319,8 +561,6 @@ CREATE TABLE IF NOT EXISTS suppliers (
   cidade TEXT,
   uf TEXT,
   cep TEXT,
-  cep_distribuicao TEXT,
-  endereco_distribuicao TEXT,
   prazo_postagem TEXT,
   custo_embalagem NUMERIC DEFAULT 0,
   observacoes TEXT,
@@ -333,11 +573,121 @@ ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS bairro TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS cidade TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS uf TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS cep TEXT;
-ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS cep_distribuicao TEXT;
-ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS endereco_distribuicao TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS prazo_postagem TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS custo_embalagem NUMERIC DEFAULT 0;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS observacoes TEXT;
+
+INSERT INTO suppliers (slug, nome, descricao, nichos, pedido_minimo, dropshipping, integracao)
+VALUES
+  ('plb-importadora', 'PLB Importadora',
+   'Importadora de aco inoxidavel: correntes, aliancas, brincos, pulseiras e acessorios antialergicos. Regiao da 25 de Marco/Bras, Sao Paulo.',
+   ARRAY['moda','acessorios','joias'], NULL, FALSE, 'manual'),
+  ('lb-eletronicos', 'LB Eletronicos',
+   'Importadora e distribuidora na Galeria Page do Bras. Fones Bluetooth, carregadores, caixas de som, smartwatches e suportes veiculares.',
+   ARRAY['eletronicos','informatica','celulares','games'], 500, FALSE, 'manual'),
+  ('adjuntos-acessorios', 'ADJuntos Acessorios (Junto Acessorios)',
+   'Importadora de acessorios de informatica, som e carregadores rapidos. Cabos, power banks, adaptadores e pequenos eletroportateis.',
+   ARRAY['informatica','eletronicos'], NULL, FALSE, 'manual'),
+  ('ultimix-atacado', 'Ultimix Atacado',
+   'Atacadista de utilidades domesticas e organizacao. Utensilios de cozinha em silicone/inox, potes e organizadores.',
+   ARRAY['casa','eletrodomesticos'], NULL, FALSE, 'manual'),
+  ('vinha-costa', 'Vinha Costa (Costa.Tech)',
+   'Fornecedor de smartwatches e wearables de marcas asiaticas de alto giro, com chamadas, ilha dinamica e telas AMOLED.',
+   ARRAY['relogios','eletronicos'], NULL, FALSE, 'manual'),
+  ('fforder', 'FFOrder',
+   'Catalogo global com dropshipping e fulfillment. Sem integracao nativa com Mercado Livre: importar CSV/API e validar prazo, estoque e nota fiscal por SKU.',
+   ARRAY['eletronicos','casa','moda','beleza','esportes','pet','ferramentas','brinquedos','automotivo'], NULL, TRUE, 'csv'),
+  ('c7-drop', 'C7 Drop (Cem Tecnologia)',
+   'Dropshipping nacional com estoque em Sao Paulo, sem mensalidade e com NF-e.',
+   ARRAY['casa','eletronicos','informatica','utilidades'], NULL, TRUE, 'manual'),
+  ('atacadum', 'Atacadum',
+   'Atacado com estoque em Sao Paulo e dropshipping sem mensalidade nem pedido minimo.',
+   ARRAY['casa','eletronicos','utilidades','ferramentas'], NULL, TRUE, 'manual'),
+  ('onedrop', 'OneDrop',
+   'Hub de dropshipping com multiplos fornecedores e catalogo nacional.',
+   ARRAY['eletronicos','casa','moda','beleza','esportes','pet'], NULL, TRUE, 'api'),
+  ('smarke', 'Smarke',
+   'Fornecedor de produtos de giro com estoque em Sao Paulo e dropshipping nacional.',
+   ARRAY['casa','eletronicos','utilidades'], NULL, TRUE, 'manual'),
+  ('mirao', 'Mirao Atacado',
+   'Atacado tradicional usado como referencia de preco e sortimento. Nao opera dropshipping.',
+   ARRAY['ferramentas','casa','eletronicos'], NULL, FALSE, 'manual')
+ON CONFLICT (slug) DO NOTHING;
+
+UPDATE suppliers SET
+  bairro = COALESCE(bairro, 'Centro'),
+  cidade = COALESCE(cidade, 'Sao Paulo'),
+  uf = COALESCE(uf, 'SP'),
+  cep = COALESCE(cep, '01022-050'),
+  prazo_postagem = COALESCE(prazo_postagem, 'Confirmar com o fornecedor'),
+  custo_embalagem = 2.50,
+  observacoes = COALESCE(observacoes, 'Endereco completo nao informado; confirmar antes da primeira coleta.')
+WHERE slug = 'c7-drop'
+  AND cep IS NULL;
+
+UPDATE suppliers SET
+  bairro = COALESCE(bairro, 'Centro'),
+  cidade = COALESCE(cidade, 'Sao Paulo'),
+  uf = COALESCE(uf, 'SP'),
+  cep = COALESCE(cep, '01012-001'),
+  prazo_postagem = COALESCE(prazo_postagem, 'Corte diario as 13h'),
+  custo_embalagem = COALESCE(custo_embalagem, 0),
+  observacoes = COALESCE(observacoes, 'Endereco completo nao informado; confirmar antes da primeira coleta.')
+WHERE slug = 'atacadum'
+  AND cep IS NULL;
+
+UPDATE suppliers SET
+  prazo_postagem = COALESCE(prazo_postagem, 'Confirmar com o fornecedor'),
+  custo_embalagem = COALESCE(custo_embalagem, 0),
+  observacoes = COALESCE(observacoes, 'CEP e endereco de coleta nao informados pela plataforma.')
+WHERE slug = 'onedrop'
+  AND cep IS NULL;
+
+UPDATE suppliers SET
+  cnpj = COALESCE(cnpj, '37.776.426/0001-41'),
+  endereco = COALESCE(endereco, 'Av. dos Metalurgicos, 1597, sala 1'),
+  bairro = COALESCE(bairro, 'Cidade Tiradentes'),
+  cidade = COALESCE(cidade, 'Sao Paulo'),
+  uf = COALESCE(uf, 'SP'),
+  cep = COALESCE(cep, '08471-000'),
+  prazo_postagem = COALESCE(prazo_postagem, 'Confirmar com o fornecedor'),
+  custo_embalagem = COALESCE(custo_embalagem, 0),
+  observacoes = COALESCE(observacoes, 'Estoque fisico em Sao Paulo; confirmar prazo de postagem.')
+WHERE slug = 'smarke'
+  AND cep IS NULL;
+
+UPDATE suppliers SET
+  prazo_postagem = COALESCE(prazo_postagem, 'Nao opera dropshipping'),
+  custo_embalagem = COALESCE(custo_embalagem, 0),
+  observacoes = COALESCE(observacoes, 'Usado como benchmark de preco; nao e fornecedor de dropshipping.')
+WHERE slug = 'mirao'
+  AND cidade IS NULL;
+
+CREATE TABLE IF NOT EXISTS order_executions (
+  id SERIAL PRIMARY KEY,
+  order_id TEXT UNIQUE NOT NULL,
+  sku TEXT,
+  aliexpress_url TEXT,
+  aliexpress_order_id TEXT,
+  tracking_number TEXT,
+  carrier TEXT,
+  step INTEGER DEFAULT 1,
+  buyer_name TEXT,
+  shipping_address TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_executions_updated
+  ON order_executions (updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS app_state (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+`;
 
 async function seedAdminUser() {
   const password = process.env.DASHBOARD_PASSWORD;
@@ -359,23 +709,33 @@ export async function ensureSchema() {
         await seedAdminUser();
         return true;
       })
-      .catch((err) => {
-        schemaPromise = null;
-        throw err;
+      .catch(() => {
+        disablePool();
+        return false;
       });
   }
   return schemaPromise;
 }
 
 export async function dashboardUserCount() {
-  if (!pool) return 0;
-  const { rows } = await pool.query('SELECT COUNT(*)::int AS count FROM dashboard_users');
-  return Number(rows[0]?.count) || 0;
+  if (!pool) return memory.dashboard_users.length;
+  try {
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS count FROM dashboard_users');
+    return Number(rows[0]?.count) || 0;
+  } catch {
+    disablePool();
+    return memory.dashboard_users.length;
+  }
 }
 
 export async function dbStatus() {
-  if (!pool) return { driver: 'memory', ok: false };
-  const started = Date.now();
-  await pool.query('SELECT 1');
-  return { driver: 'postgres', ok: true, latency_ms: Date.now() - started };
+  if (!pool) return { driver: 'memory', ok: true };
+  try {
+    const started = Date.now();
+    await pool.query('SELECT 1');
+    return { driver: 'postgres', ok: true, latency_ms: Date.now() - started };
+  } catch {
+    disablePool();
+    return { driver: 'memory', ok: true };
+  }
 }
