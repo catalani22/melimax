@@ -38,10 +38,10 @@ Defina `DASHBOARD_PASSWORD` no backend para criar o usuário `admin` inicial. Co
 ## Funcionalidades
 - Conexão OAuth real com Mercado Livre (MLB)
 - Catálogo dos 20 melhores nichos com ticket médio
-- Produtos reais da API Mercado Livre (acima de R$ 80)
+- Produtos reais da API Mercado Livre como referência de mercado (sem gate de preço)
 - Fornecedores validados de renome
 - Criação de anúncios com qualificação acima de 85%
-- Lucro líquido sobre o custo acima de 100% (ideal 150–200%) e multiplicador mínimo de 3x
+- Lucro líquido acima de 100% do custo depois de taxas, frete, embalagem e impostos; venda de pelo menos 3x o custo, sem faixa fixa de preço, com custo flexível e demanda mínima de 2–3 vendas/mês
 - Etiquetas de remessa enviadas aos fornecedores
 - Radar Viral: tendências do Mercado Livre com snapshots diários, concorrência, preço e margem bruta
 - Simulador de margem líquida antes de publicar, com taxa real do ML e frete por peso

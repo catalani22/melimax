@@ -59,11 +59,15 @@ function imageUrl(url) {
   return String(url).replace(/^http:/, 'https:');
 }
 
+const OPERATIONAL_SUPPLIER_IDS = [];
+const OPERATIONAL_CEP = '';
+const CATALOG_OPERATIONAL_MIN_PROFIT = 0.8;
 const CATALOG_FEE_RATE = 0.14;
 const CATALOG_TAX_RATE = 0.06;
-const CATALOG_MIN_PRICE_MULTIPLE = 3;
 const CATALOG_MIN_PROFIT_COST = 1;
 const CATALOG_MARKET_TOLERANCE = 1.05;
+const CATALOG_FIXED_FEE = 6.75;
+const CATALOG_FREE_SHIPPING_MIN = 79;
 const CATALOG_DEFAULT_SHIPPING = 25;
 const CATALOG_SHIPPING_TABLE = [
   { maxKg: 0.5, cost: 19.5 },
@@ -130,32 +134,75 @@ function catalogPricing(item, supplier, listing) {
     safeNumber(supplier?.custo_embalagem) ?? 0;
   const market = safeNumber(item?.preco_mercado);
   const marketConfidence = safeNumber(item?.mercado_confianca);
-  const marketReliable = Boolean(market && market > 0 && marketConfidence != null && marketConfidence >= 0.8);
+  const manual = Boolean(item?.validado_manual);
+  const marketReliable = Boolean(market && market > 0 && (manual || (marketConfidence != null && marketConfidence >= 0.8)));
   const feeRate = CATALOG_FEE_RATE;
   const taxRate = CATALOG_TAX_RATE;
-  const priceForProfit = (2 * cost + 1 + shippingInfo.cost + packaging) /
+  const priceWithoutShipping = (2 * cost + 1 + packaging + CATALOG_FIXED_FEE) /
     (1 - feeRate - taxRate);
-  const priceForMultiple = cost * CATALOG_MIN_PRICE_MULTIPLE;
-  const target = Math.max(priceForProfit, priceForMultiple);
+  const priceWithShipping = (2 * cost + 1 + shippingInfo.cost + packaging) /
+    (1 - feeRate - taxRate);
+  const priceForProfit = priceWithoutShipping < CATALOG_FREE_SHIPPING_MIN
+    ? priceWithoutShipping
+    : priceWithShipping;
+  const candidatePrice = Math.ceil(priceForProfit);
+  const suggested = marketReliable ? market : candidatePrice;
   const ceiling = market ? market * CATALOG_MARKET_TOLERANCE : null;
-  const capped = Boolean(ceiling && target > ceiling);
-  const suggested = capped ? ceiling : target;
+  const capped = false;
   const listedPrice = safeNumber(listing?.price);
   const price = listedPrice && listedPrice > 0 ? listedPrice : suggested;
-  const shipping = safeNumber(listing?.shipping_cost) ?? shippingInfo.cost;
-  const saleFee = safeNumber(listing?.sale_fee) ?? price * feeRate;
-  const taxes = safeNumber(listing?.taxes) ?? price * taxRate;
+  const shipping = price >= CATALOG_FREE_SHIPPING_MIN ? shippingInfo.cost : 0;
+  const saleFee = price * feeRate + (price < CATALOG_FREE_SHIPPING_MIN ? CATALOG_FIXED_FEE : 0);
+  const taxes = price * taxRate;
   const profit = price - cost - shipping - packaging - saleFee - taxes;
   const margin = price > 0 ? profit / price : 0;
   const multiple = cost > 0 ? price / cost : 0;
   const profitOverCost = cost > 0 ? profit / cost : 0;
   const economic =
     cost > 0 &&
-    profitOverCost > CATALOG_MIN_PROFIT_COST &&
-    multiple >= CATALOG_MIN_PRICE_MULTIPLE;
+    profitOverCost > CATALOG_MIN_PROFIT_COST;
+  const withinTarget = price <= 100;
   const competitive = !ceiling || price <= ceiling;
-  const viable = economic && competitive && marketReliable;
-  const state = viable ? 'viavel' : !marketReliable ? 'sem_referencia' : 'ajustar';
+  const operational =
+    cost > 0 &&
+    marketReliable &&
+    competitive &&
+    profitOverCost >= CATALOG_OPERATIONAL_MIN_PROFIT;
+  const viable = economic && marketReliable && competitive;
+  const candidate = economic && !viable;
+  const marketShipping = market > 0 && market >= CATALOG_FREE_SHIPPING_MIN
+    ? shippingInfo.cost
+    : 0;
+  const marketFee = market > 0
+    ? market * feeRate + (market < CATALOG_FREE_SHIPPING_MIN ? CATALOG_FIXED_FEE : 0)
+    : 0;
+  const marketTaxes = market > 0 ? market * taxRate : 0;
+  const marketProfit = market > 0
+    ? market - cost - marketShipping - packaging - marketFee - marketTaxes
+    : 0;
+  const marketProfitOverCost = cost > 0 ? marketProfit / cost : 0;
+  const marketOperational = market > 0 && marketProfitOverCost >= CATALOG_OPERATIONAL_MIN_PROFIT;
+  const validating = market > 0 && !marketReliable && marketOperational;
+  const near = marketReliable && !operational && profitOverCost >= 0.5;
+  const semMercado = market <= 0;
+  const shownPrice = market > 0 ? market : price;
+  const shownProfit = market > 0 ? marketProfit : profit;
+  const shownMargin = shownPrice > 0 ? shownProfit / shownPrice : 0;
+  const shownMultiple = cost > 0 ? shownPrice / cost : 0;
+  const shownProfitOverCost = market > 0 ? marketProfitOverCost : profitOverCost;
+  const state = viable
+    ? 'viavel'
+    : operational
+      ? 'alto_giro'
+      : validating
+        ? 'validar'
+        : near
+          ? 'quase'
+          : candidate
+            ? 'candidato'
+            : semMercado
+              ? 'sem_referencia'
+              : 'ajustar';
   return {
     cost,
     shipping,
@@ -164,8 +211,9 @@ function catalogPricing(item, supplier, listing) {
     market,
     marketConfidence,
     marketReliable,
+    manual,
     ceiling,
-    target,
+    target: suggested,
     suggested,
     capped,
     price,
@@ -174,9 +222,22 @@ function catalogPricing(item, supplier, listing) {
     profit,
     margin,
     multiple,
+    withinTarget,
     profitOverCost,
     economic,
+    candidate,
     competitive,
+    operational,
+    validating,
+    near,
+    semMercado,
+    marketProfit,
+    marketProfitOverCost,
+    shownPrice,
+    shownProfit,
+    shownMargin,
+    shownMultiple,
+    shownProfitOverCost,
     viable,
     state,
     listed: Boolean(listedPrice),
@@ -189,7 +250,7 @@ const NAV_ITEMS = [
   { id: 'dashboard', label: 'Visão geral', icon: 'grid' },
   { id: 'radar', label: 'Radar viral', icon: 'trending' },
   { id: 'catalogo', label: 'Catálogo', icon: 'layers' },
-  { id: 'produtos', label: 'Produtos', icon: 'box' },
+  { id: 'produtos', label: 'Mercado (referência)', icon: 'box' },
   { id: 'fornecedores', label: 'Fornecedores', icon: 'store' },
   { id: 'anuncios', label: 'Anúncios', icon: 'tag' },
   { id: 'pedidos', label: 'Pedidos', icon: 'cart' },
@@ -200,7 +261,7 @@ const VIEW_TITLES = {
   dashboard: { title: 'Visão geral', subtitle: 'Resumo da sua operação no Mercado Livre.' },
   radar: { title: 'Radar viral', subtitle: 'Acompanhe tendências, ofertas e produtos com espaço para preço melhor.' },
   catalogo: { title: 'Catálogo de fornecedores', subtitle: 'Importe custos, estoque, peso e acompanhe a atualização.' },
-  produtos: { title: 'Produtos', subtitle: 'Encontre produtos reais por nicho e crie anúncios.' },
+  produtos: { title: 'Mercado (referência)', subtitle: 'Preços e anúncios do Mercado Livre para referência. Não são candidatos da operação.' },
   fornecedores: { title: 'Fornecedores', subtitle: 'Vendedores reais encontrados no Mercado Livre.' },
   anuncios: { title: 'Anúncios', subtitle: 'Seus anúncios publicados e qualificação.' },
   pedidos: { title: 'Pedidos', subtitle: 'Vendas, envios e etiquetas do Mercado Envios.' },
@@ -391,11 +452,9 @@ function PasswordScreen({ onSubmit, error, loading }) {
       <div className="relative mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 py-14">
         <div className="w-full rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur sm:p-8">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-meli-yellow font-black text-slate-950">
-              ML
-            </div>
+            <img src="/brand-icon.png" alt="MeLi Max - Shop" className="h-11 w-11 rounded-xl object-cover" />
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-meli-yellow">Melimax</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-meli-yellow">MeLi Max - Shop</p>
               <h1 className="text-lg font-bold">Acesso restrito</h1>
             </div>
           </div>
@@ -467,8 +526,8 @@ function PasswordScreen({ onSubmit, error, loading }) {
 
 function LoginScreen({ onLogin, error }) {
   const features = [
-    'Produtos reais por nicho direto da API oficial',
-    'Criação de anúncios com margem configurável',
+    'Catálogo de fornecedores com custo, peso e estoque',
+    'Precificação com lucro líquido acima de 100% do custo',
     'Pedidos e etiquetas do Mercado Envios',
   ];
 
@@ -482,11 +541,9 @@ function LoginScreen({ onLogin, error }) {
       <div className="relative mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center gap-12 px-6 py-14 lg:flex-row lg:justify-between">
         <div className="max-w-xl">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-meli-yellow text-lg font-black text-slate-950">
-              ML
-            </div>
+            <img src="/brand-icon.png" alt="MeLi Max - Shop" className="h-12 w-12 rounded-2xl object-cover" />
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-meli-yellow">Melimax</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-meli-yellow">MeLi Max - Shop</p>
               <h1 className="text-2xl font-bold">Painel Mercado Livre</h1>
             </div>
           </div>
@@ -511,7 +568,9 @@ function LoginScreen({ onLogin, error }) {
           </ul>
         </div>
 
-        <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur sm:p-8">
+        <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-2xl backdrop-blur">
+          <img src="/melimax-cover.png" alt="MeLi Max - Shop" className="h-36 w-full object-cover object-center" />
+          <div className="p-6 sm:p-8">
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
             <Icon name="shield" className="h-4 w-4" />
             Acesso pessoal e seguro
@@ -534,6 +593,7 @@ function LoginScreen({ onLogin, error }) {
           <p className="mt-4 text-center text-xs text-slate-400">
             Seus tokens ficam no seu banco Postgres. Nenhum dado é compartilhado.
           </p>
+          </div>
         </div>
       </div>
     </div>
@@ -615,17 +675,15 @@ function DashboardView({
     );
   }).length;
   const dailyTarget = 3;
-  const warmupListings = listings.filter(
-    (item) =>
-      item.status === 'active' &&
-      Number(item.price) >= 80 &&
-      Number(item.price) <= 100
-  ).length;
+  const warmupListings = activeListings;
   const warmupProgress = Math.min((todaySales / dailyTarget) * 100, 100);
   const capitalNeeded = dailyTarget * 45 * 12;
 
   return (
     <div className="space-y-6">
+      <div className="overflow-hidden rounded-2xl border border-slate-200 shadow-sm">
+        <img src="/melimax-cover.png" alt="MeLi Max - Shop" className="h-40 w-full object-cover object-center sm:h-48" />
+      </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Anúncios" value={number.format(listings.length)} hint={`${activeListings} ativos`} accent="brand" />
         <StatCard label="Pedidos" value={number.format(orders.length)} hint="Últimos 50 pedidos" accent="emerald" />
@@ -673,7 +731,7 @@ function DashboardView({
           </div>
         </div>
         <p className="mt-4 text-[11px] text-slate-400">
-          Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, mantenha lucro líquido sobre o custo acima de 100% (ideal 150–200%) e multiplicador de pelo menos 3x.
+          Base: pedidos do mês atual carregados da API do Mercado Livre. O lucro projetado usa a margem média dos seus anúncios; para a meta de R$ 20 mil, trabalhe pelo preço real de mercado com lucro líquido acima de 100% do custo depois de taxas, frete e impostos. Não há piso fixo de múltiplo.
         </p>
       </div>
 
@@ -690,7 +748,7 @@ function DashboardView({
                 {todaySales >= dailyTarget ? ' · cota batida, pause os anúncios' : ''}
               </h3>
               <p className="mt-1 text-xs text-slate-500">
-                Anúncios entre R$ 80 e R$ 100: {warmupListings}/50 · capital de giro recomendado {brl(capitalNeeded)} a {brl(2000)} · exposição clássica · estoque de 1 unidade por anúncio.
+                Anúncios ativos: {warmupListings} · capital de giro recomendado {brl(capitalNeeded)} a {brl(2000)} · estoque de 1 unidade por anúncio.
               </p>
               <div className="mt-2 h-2 w-full max-w-md overflow-hidden rounded-full bg-slate-100">
                 <div
@@ -818,7 +876,7 @@ function ProductsView({ nichos, selectedNicho, onSelectNicho, produtos, loading,
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="font-bold">Escolha um nicho</h3>
-            <p className="text-sm text-slate-500">Os produtos são buscados na API oficial do Mercado Livre.</p>
+            <p className="text-sm text-slate-500">Referência de preço do Mercado Livre. A operação usa os produtos do Catálogo de fornecedores.</p>
           </div>
           {selectedNicho ? (
             <span className="badge bg-brand-50 text-brand-800">
@@ -855,7 +913,7 @@ function ProductsView({ nichos, selectedNicho, onSelectNicho, produtos, loading,
             <Icon name="search" className="h-6 w-6" />
           </div>
           <h3 className="mt-4 text-lg font-bold">Selecione um nicho para começar</h3>
-          <p className="mt-1 text-sm text-slate-500">Vamos buscar produtos acima de R$ 80 com boa relevância.</p>
+          <p className="mt-1 text-sm text-slate-500">Use esta aba apenas como referência. Para anunciar, selecione um produto barato no Catálogo de fornecedores.</p>
         </div>
       ) : null}
 
@@ -898,9 +956,9 @@ function ProductsView({ nichos, selectedNicho, onSelectNicho, produtos, loading,
                     <span className="badge bg-slate-100 text-slate-600">Novo</span>
                   ) : null}
                 </div>
-                <button type="button" onClick={() => onCreate(produto)} className="btn-primary mt-4 w-full">
-                  Criar anúncio
-                </button>
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
+                  Referência de mercado. Não é candidato da operação.
+                </div>
               </div>
             </article>
           ))}
@@ -2218,6 +2276,7 @@ function CatalogoView({ onToast, externalSearch = '' }) {
   const [alerts, setAlerts] = useState({ total: 0, nao_lidas: 0, alertas: [] });
   const [detailProduct, setDetailProduct] = useState(null);
   const [readiness, setReadiness] = useState(null);
+  const [tier, setTier] = useState('selecionados');
 
   const loadBase = useCallback(async () => {
     const [registryResult, summaryResult, staleResult, listingsResult, alertsResult, readinessResult] = await Promise.allSettled([
@@ -2263,9 +2322,12 @@ function CatalogoView({ onToast, externalSearch = '' }) {
   const loadProducts = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limite: '1000' });
+      const params = new URLSearchParams({
+        limite: '2000',
+        ativo: 'true',
+        fornecedor_ids: supplierFilter,
+      });
       if (search.trim()) params.set('q', search.trim());
-      if (supplierFilter) params.set('fornecedor_id', supplierFilter);
       const data = await request(`/suppliers/custos?${params.toString()}`);
       setProdutos(Array.isArray(data) ? data : []);
     } catch (error) {
@@ -2433,6 +2495,33 @@ function CatalogoView({ onToast, externalSearch = '' }) {
         (item.titulo && listing.title === item.titulo)
     ) || null;
 
+  const pricedProducts = produtos
+
+    .map((item) => ({
+      item,
+      pricing: catalogPricing(item, supplierFor(item), listingFor(item)),
+    }));
+  const operationalProducts = pricedProducts.filter(({ pricing }) => pricing.operational);
+  const validatingProducts = pricedProducts.filter(({ pricing }) => pricing.validating);
+  const nearProducts = pricedProducts.filter(({ pricing }) => pricing.near);
+  const noMarketProducts = pricedProducts.filter(({ pricing }) => pricing.semMercado);
+  const tierOptions = [
+    { id: 'selecionados', label: 'Selecionados 0,8x+', count: operationalProducts.length },
+    { id: 'validar', label: 'Validar mercado', count: validatingProducts.length },
+    { id: 'quase', label: 'Quase 0,5x–0,8x', count: nearProducts.length },
+    { id: 'sem_mercado', label: 'Sem preço de mercado', count: noMarketProducts.length },
+    { id: 'todos', label: 'Todos fornecedores', count: produtos.length },
+  ];
+  const tierProducts = {
+    selecionados: operationalProducts,
+    validar: validatingProducts,
+    quase: nearProducts,
+    sem_mercado: noMarketProducts,
+    todos: pricedProducts,
+  }[tier] || operationalProducts;
+  const displayedProducts = tierProducts.map(({ item }) => item);
+  const tierLabel = tierOptions.find((option) => option.id === tier)?.label || 'Selecionados';
+
   const markAlertsRead = async () => {
     try {
       await request('/listings/alertas/lidas', { method: 'POST', body: {} });
@@ -2450,18 +2539,23 @@ function CatalogoView({ onToast, externalSearch = '' }) {
             <div>
               <h3 className="font-bold">Prontidão da operação</h3>
               <p className="mt-1 text-sm text-slate-500">
-                Critério de volume: 350 a 500 SKUs viáveis, com match confiável, frete estimado, taxas, impostos, lucro líquido acima de 100% do custo, multiplicador de pelo menos 3x e preço dentro do teto de mercado.
+                Critério de volume: 350 a 500 SKUs. O alvo principal é o preço real de mercado com lucro acima de 100% após taxas, frete, embalagem e impostos. Não há piso fixo de múltiplo: um produto de custo baixo pode vender a 2,8x, 3x ou muito mais, desde que o preço seja competitivo e o lucro passe de 100%. Também entram produtos de alto giro com lucro de 0,8x a 1x do custo, desde que tenham demanda de 2 a 3 vendas/mês.
               </p>
             </div>
             <span className={`badge ${readiness.atende_volume && readiness.atende_cep ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>
               {readiness.atende_volume && readiness.atende_cep ? 'Pronto para operar' : 'Ainda em preparação'}
             </span>
           </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <DetailField
-              label="SKUs viáveis"
-              value={`${number.format(readiness.viaveis || 0)} / 350–500`}
-              hint={`${number.format(readiness.confiaveis || 0)} com match confiável; frete e margem real considerados`}
+              label="SKUs no pool"
+              value={`${number.format(readiness.pool_ampliado ?? readiness.viaveis_ampliados ?? readiness.viaveis ?? 0)} / 350–500`}
+              hint={`${number.format(readiness.viaveis || 0)} com lucro acima de 100% + ${number.format(readiness.alto_giro || 0)} em alto giro confirmado + ${number.format(readiness.potencial_08 || 0)} sem preço de mercado; selecione os de maior demanda`}
+            />
+            <DetailField
+              label="Candidatos por custo"
+              value={number.format(readiness.candidatos || 0)}
+              hint="Fecham 100% de lucro no papel; falta confirmar o preço real de mercado"
             />
             <DetailField
               label="SKUs importados"
@@ -2469,14 +2563,14 @@ function CatalogoView({ onToast, externalSearch = '' }) {
               hint={`${number.format(readiness.ativos || 0)} ativos com estoque`}
             />
             <DetailField
-              label="CEP compartilhado"
+              label="CEP de distribuição compartilhado"
               value={readiness.atende_cep ? 'Sim' : 'Não'}
-              hint={readiness.grupos_cep?.length ? readiness.grupos_cep.map((group) => `${group.cep}: ${group.fornecedores.join(' + ')}`).join(' · ') : 'Nenhum par de fornecedores no mesmo CEP'}
+              hint={readiness.grupos_cep?.length ? readiness.grupos_cep.map((group) => `${group.cep}: ${group.fornecedores.join(' + ')}`).join(' · ') : 'Nenhum par de fornecedores no mesmo CEP de distribuição'}
             />
             <DetailField
-              label="Fornecedores com CEP"
-              value={`${readiness.fornecedores?.filter((item) => item.cep).length || 0} de ${readiness.fornecedores?.length || 0}`}
-              hint="Sem CEP não entra na regra de um remetente por conta"
+              label="Fornecedores com CEP de distribuição"
+              value={`${readiness.fornecedores?.filter((item) => item.cep_distribuicao).length || 0} de ${readiness.fornecedores?.length || 0}`}
+              hint="O CEP cadastral da empresa não entra na regra de um remetente por conta"
             />
           </div>
           {readiness.pendencias?.length ? (
@@ -2491,28 +2585,28 @@ function CatalogoView({ onToast, externalSearch = '' }) {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          label="Produtos no catálogo"
-          value={number.format(summary?.total || 0)}
-          hint={`${number.format(summary?.ativos || 0)} ativos`}
+          label="Selecionados 0,8x+"
+          value={number.format(operationalProducts.length)}
+          hint="Lucro líquido acima de 80% do custo, com mercado confirmado"
+          accent="emerald"
+        />
+        <StatCard
+          label="Fornecedores da operação"
+          value={number.format(registry.length)}
+          hint="CEP não informado"
           accent="brand"
         />
         <StatCard
-          label="Fornecedores"
-          value={number.format(summary?.fornecedores?.length || 0)}
-          hint="Com custo importado"
+          label="Ativos com estoque"
+          value={number.format(produtos.filter((item) => item.ativo && Number(item.estoque) > 0).length)}
+          hint={`De ${number.format(produtos.length)} produtos cadastrados`}
           accent="sky"
         />
         <StatCard
-          label="Estoque desatualizado"
-          value={number.format(summary?.desatualizados || 0)}
-          hint="Mais de 24h sem reimportar"
-          accent={summary?.desatualizados ? 'amber' : 'emerald'}
-        />
-        <StatCard
-          label="Produtos ativos"
-          value={number.format(summary?.ativos || 0)}
-          hint="Disponíveis para anúncio"
-          accent="emerald"
+          label="Em auditoria"
+          value={number.format(Math.max(0, produtos.length - operationalProducts.length))}
+          hint="Abaixo de 0,8x, sem mercado ou fora do teto"
+          accent={produtos.length > operationalProducts.length ? 'amber' : 'emerald'}
         />
       </div>
 
@@ -2688,7 +2782,7 @@ function CatalogoView({ onToast, externalSearch = '' }) {
         <div className="mb-3 flex items-end justify-between gap-3">
           <div>
             <h3 className="font-bold">Fornecedores cadastrados</h3>
-            <p className="text-sm text-slate-500">Regra atual: grátis, sem mensalidade e sem pedido mínimo.</p>
+            <p className="text-sm text-slate-500">Fornecedores cadastrados no catálogo.</p>
           </div>
           <button type="button" onClick={refresh} className="btn-ghost" disabled={loading}>
             {loading ? <Spinner className="h-4 w-4" /> : <Icon name="refresh" className="h-4 w-4" />}
@@ -2726,7 +2820,12 @@ function CatalogoView({ onToast, externalSearch = '' }) {
                   </p>
                   <div className="mt-3 space-y-1 rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
                     <p>
-                      <span className="font-semibold">Coleta:</span>{' '}
+                      <span className="font-semibold">Distribuição:</span>{' '}
+                      {item.endereco_distribuicao || [item.endereco, item.bairro, item.cidade, item.uf].filter(Boolean).join(' · ') || 'Endereço não informado'}
+                      {item.cep_distribuicao ? ` · CEP ${item.cep_distribuicao}` : ' · CEP não informado'}
+                    </p>
+                    <p>
+                      <span className="font-semibold">Cadastro:</span>{' '}
                       {[item.endereco, item.bairro, item.cidade, item.uf].filter(Boolean).join(' · ') || 'Endereço não informado'}
                       {item.cep ? ` · CEP ${item.cep}` : ' · CEP não informado'}
                     </p>
@@ -2789,36 +2888,57 @@ function CatalogoView({ onToast, externalSearch = '' }) {
       <div className="card overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-slate-100 p-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h3 className="font-bold">Produtos importados</h3>
+            <h3 className="font-bold">Produtos selecionados</h3>
             <p className="text-sm text-slate-500">
-              {loading ? 'Carregando...' : `${number.format(produtos.length)} produto(s) exibidos.`}
+              {loading
+                ? 'Carregando...'
+                : `${number.format(displayedProducts.length)} produto(s) em “${tierLabel}”. Múltiplo bruto não é lucro: taxa fixa, 14% ML, 6% imposto e frete consomem a margem de itens baratos.`}
             </p>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <div className="relative">
-              <Icon
-                name="search"
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-              />
-              <input
-                className="input pl-9"
-                placeholder="SKU, EAN ou título"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </div>
-            <select
-              className="input"
-              value={supplierFilter}
-              onChange={(event) => setSupplierFilter(event.target.value)}
-            >
-              <option value="">Todos os fornecedores</option>
-              {registry.map((item) => (
-                <option key={item.slug} value={item.slug}>
-                  {item.nome}
-                </option>
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap gap-2">
+              {tierOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setTier(option.id)}
+                  className={`btn-ghost px-3 py-2 text-xs ${
+                    tier === option.id ? 'border-brand-300 bg-brand-50 text-brand-900' : ''
+                  }`}
+                >
+                  {option.label}
+                  <span className={`badge ${tier === option.id ? 'bg-brand-100 text-brand-900' : 'bg-slate-100 text-slate-600'}`}>
+                    {number.format(option.count)}
+                  </span>
+                </button>
               ))}
-            </select>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <div className="relative">
+                <Icon
+                  name="search"
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                />
+                <input
+                  className="input pl-9"
+                  placeholder="SKU, EAN ou título"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </div>
+              <select
+                className="input"
+                value={supplierFilter}
+                onChange={(event) => setSupplierFilter(event.target.value)}
+              >
+                <option value="">Todos fornecedores</option>
+                {registry.map((item) => (
+                  <option key={item.slug} value={item.slug}>
+                    {item.nome}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -2829,13 +2949,21 @@ function CatalogoView({ onToast, externalSearch = '' }) {
           </div>
         ) : null}
 
-        {!loading && produtos.length === 0 ? (
+        {!loading && displayedProducts.length === 0 ? (
           <div className="px-6 py-16 text-center text-sm text-slate-500">
-            Nenhum produto encontrado. Importe um CSV ou ajuste a busca.
+            {tier === 'selecionados'
+              ? 'Nenhum produto atinge 0,8x de lucro líquido com preço de mercado confirmado. Veja as abas “Validar mercado” e “Quase 0,5x–0,8x”.'
+              : tier === 'validar'
+                ? 'Nenhum produto com potencial acima de 0,8x aguardando validação de mercado.'
+                : tier === 'quase'
+                  ? 'Nenhum produto na faixa de 0,5x a 0,8x.'
+                  : tier === 'sem_mercado'
+                    ? 'Nenhum produto sem preço de mercado.'
+                    : 'Nenhum produto encontrado. Ajuste a busca.'}
           </div>
         ) : null}
 
-        {produtos.length > 0 ? (
+        {displayedProducts.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500">
@@ -2852,7 +2980,7 @@ function CatalogoView({ onToast, externalSearch = '' }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {produtos.map((item) => {
+                {displayedProducts.map((item) => {
                   const fornecedor = supplierFor(item);
                   const listing = listingFor(item);
                   const pricing = catalogPricing(item, fornecedor, listing);
@@ -2874,27 +3002,35 @@ function CatalogoView({ onToast, externalSearch = '' }) {
                       </td>
                       <td className="px-4 py-3 text-slate-600">
                         <p className="font-medium">{fornecedor.nome || item.fornecedor_nome || item.fornecedor_id}</p>
-                        <p className="text-xs text-slate-400">{fornecedor.cep ? `CEP ${fornecedor.cep}` : 'CEP não informado'}</p>
+                        <p className="text-xs text-slate-400">{fornecedor.cep_distribuicao ? `CEP distrib. ${fornecedor.cep_distribuicao}` : 'CEP de distribuição não informado'}</p>
                       </td>
                       <td className="px-4 py-3">
                         <p className="font-semibold">{brl(pricing.cost)}</p>
                         <p className="text-xs text-slate-400">{number.format(Number(item.estoque) || 0)} un.</p>
                       </td>
                       <td className="px-4 py-3">
-                        <p className="font-semibold">{brl(pricing.price)}</p>
-                        <p className="text-xs text-slate-400">{pricing.listed ? 'no anúncio' : 'sugerido'}</p>
+                        <p className="font-semibold">{brl(pricing.shownPrice)}</p>
+                        <p className="text-xs text-slate-400">
+                          {pricing.listed
+                            ? 'no anúncio'
+                            : pricing.market > 0
+                              ? pricing.marketReliable
+                                ? 'mercado'
+                                : 'mercado (validar)'
+                              : 'sugerido'}
+                        </p>
                       </td>
                       <td className="px-4 py-3">
-                        <p className={`font-semibold ${pricing.profit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                          {brl(pricing.profit)}
+                        <p className={`font-semibold ${pricing.shownProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {brl(pricing.shownProfit)}
                         </p>
-                        <p className="text-xs text-slate-400">{fmtPct(pricing.profitOverCost)} s/ custo</p>
+                        <p className="text-xs text-slate-400">{fmtPct(pricing.shownProfitOverCost)} s/ custo</p>
                       </td>
                       <td className="px-4 py-3">
-                        <p className={`font-semibold ${pricing.viable ? 'text-emerald-700' : 'text-amber-700'}`}>
-                          {fmtPct(pricing.margin)}
+                        <p className={`font-semibold ${pricing.operational ? 'text-emerald-700' : 'text-amber-700'}`}>
+                          {fmtPct(pricing.shownMargin)}
                         </p>
-                        <p className="text-xs text-slate-400">{pricing.multiple.toFixed(2)}x</p>
+                        <p className="text-xs text-slate-400">{pricing.shownMultiple.toFixed(2)}x</p>
                       </td>
                       <td className="px-4 py-3">
                         {item.estoque == null ? '—' : number.format(item.estoque)}
@@ -2914,11 +3050,21 @@ function CatalogoView({ onToast, externalSearch = '' }) {
                         >
                           {status === 'active' ? 'Ativo' : status === 'paused' ? 'Pausado' : 'Sem anúncio'}
                         </span>
-                        {!pricing.viable ? (
-                          <p className={`mt-1 text-xs ${pricing.state === 'sem_referencia' ? 'text-slate-500' : 'text-rose-700'}`}>
-                            {pricing.state === 'sem_referencia' ? 'Sem referência de mercado' : 'Ajustar preço'}
-                          </p>
-                        ) : null}
+                        {pricing.viable ? (
+                          <p className="mt-1 text-xs text-emerald-700">Viável acima de 100%</p>
+                        ) : pricing.operational ? (
+                          <p className="mt-1 text-xs text-emerald-700">Alto giro 0,8x–1x</p>
+                        ) : pricing.validating ? (
+                          <p className="mt-1 text-xs text-amber-700">Validar mercado (baixa confiança)</p>
+                        ) : pricing.near ? (
+                          <p className="mt-1 text-xs text-amber-700">Quase 0,8x</p>
+                        ) : pricing.semMercado ? (
+                          <p className="mt-1 text-xs text-slate-500">Sem preço de mercado</p>
+                        ) : pricing.candidate ? (
+                          <p className="mt-1 text-xs text-amber-700">Candidato sem referência</p>
+                        ) : (
+                          <p className="mt-1 text-xs text-rose-700">Fora do critério</p>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <button
@@ -3000,7 +3146,11 @@ function ProductDetailModal({ produto, fornecedor, listing, onClose }) {
               </span>
               <span className={`badge ${statusClass}`}>{statusLabel}</span>
               {pricing.viable ? (
-                <span className="badge bg-emerald-50 text-emerald-700">Viável</span>
+                <span className="badge bg-emerald-50 text-emerald-700">Viável acima de 100%</span>
+              ) : pricing.operational ? (
+                <span className="badge bg-emerald-50 text-emerald-700">Alto giro 0,8x–1x</span>
+              ) : pricing.candidate ? (
+                <span className="badge bg-amber-50 text-amber-800">Candidato sem referência</span>
               ) : pricing.state === 'sem_referencia' ? (
                 <span className="badge bg-slate-100 text-slate-600">Sem referência</span>
               ) : (
@@ -3048,8 +3198,9 @@ function ProductDetailModal({ produto, fornecedor, listing, onClose }) {
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <DetailField label="Fornecedor" value={fornecedor?.nome || produto.fornecedor_nome || produto.fornecedor_id} />
                 <DetailField label="CNPJ" value={fornecedor?.cnpj || 'Não informado'} />
-                <DetailField label="Endereço" value={endereco || 'Não informado'} />
-                <DetailField label="CEP de coleta" value={fornecedor?.cep || 'Não informado'} />
+                <DetailField label="Endereço cadastral" value={endereco || 'Não informado'} />
+                <DetailField label="CEP de distribuição" value={fornecedor?.cep_distribuicao || 'Não informado'} />
+                <DetailField label="CEP cadastral" value={fornecedor?.cep || 'Não informado'} />
                 <DetailField label="Prazo de postagem" value={fornecedor?.prazo_postagem || 'Confirmar'} />
                 <DetailField label="Site" value={fornecedor?.site || 'Não informado'} />
               </div>
@@ -3102,7 +3253,11 @@ function ProductDetailModal({ produto, fornecedor, listing, onClose }) {
                 <DetailField label="Máximo" value={produto.mercado_max ? brl(produto.mercado_max) : '—'} />
                 <DetailField label="Ofertas" value={produto.mercado_ofertas ?? '—'} />
                 <DetailField label="Vendedores" value={produto.mercado_vendedores ?? '—'} />
-                <DetailField label="Confiança do match" value={produto.mercado_confianca != null ? fmtPct(produto.mercado_confianca) : '—'} />
+                <DetailField
+                  label="Confiança do match"
+                  value={produto.validado_manual ? 'Revisado manualmente' : produto.mercado_confianca != null ? fmtPct(produto.mercado_confianca) : '—'}
+                  hint={produto.validado_manual_nota || undefined}
+                />
                 <DetailField label="Produto casado" value={produto.matched_name || 'Sem match'} />
               </div>
               {marketLink ? (
@@ -3154,7 +3309,7 @@ function ProductDetailModal({ produto, fornecedor, listing, onClose }) {
           </div>
 
           <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
-            Regra de leitura: o lucro líquido é sempre medido sobre o custo. Quando o anúncio já existe, o preço e os custos salvos no anúncio prevalecem. Sem anúncio, o preço sugerido usa taxa ML de 14%, imposto de 6%, frete pela tabela de peso e lucro líquido acima de 100% do custo. Se a mediana de mercado impedir esse lucro, o produto fica marcado como “Ajustar” em vez de esconder o prejuízo.
+            Regra de leitura: o lucro líquido é sempre medido sobre o custo. Quando o anúncio já existe, o preço e os custos salvos no anúncio prevalecem. Sem anúncio, o preço sugerido usa taxa ML de 14%, imposto de 6%, taxa fixa de R$ 6,75 abaixo de R$ 79, frete por peso acima de R$ 79 e lucro líquido acima de 100% do custo. Não há piso fixo de múltiplo; o que manda é o preço real de mercado e o lucro acima de 100% do custo.
           </p>
         </div>
       </div>
@@ -3189,14 +3344,11 @@ function CreateListingModal({
   const warnings = [];
 
   if (pricing) {
-    if (pricing.competitive === false) {
-      warnings.push('Preço acima da referência de mercado. Reduza o custo ou ajuste o preço.');
-    }
     if (pricing.profit_over_cost != null && pricing.profit_over_cost <= 1) {
       warnings.push('Lucro líquido sobre o custo deve ficar acima de 100%. A publicação fica bloqueada.');
     }
-    if (pricing.price_multiple != null && pricing.price_multiple < 3) {
-      warnings.push('Multiplicador abaixo de 3x o custo. A publicação fica bloqueada.');
+    if (pricing.competitive === false) {
+      warnings.push('Preço acima da referência de mercado. Ajuste o preço para não perder competitividade.');
     }
     if (pricing.cost_source === 'ml_offer') {
       warnings.push('Custo vindo da oferta do Mercado Livre. Informe o custo real do fornecedor para calcular o lucro.');
@@ -3306,7 +3458,7 @@ function CreateListingModal({
               className="mt-2 w-full accent-brand-500"
             />
             <p className="mt-1 text-xs text-slate-500">
-              Mínimo de 100% acima do custo. O preço de venda é calculado para garantir esse lucro líquido.
+              Lucro mínimo de 100% acima do custo, sem piso fixo de múltiplo. O preço é calculado para garantir esse lucro depois de taxas, frete e impostos e precisa caber no preço real de mercado.
             </p>
             <div className="mt-3 grid grid-cols-2 gap-3">
               <div className="rounded-lg bg-slate-50 p-3">
@@ -3776,7 +3928,7 @@ export default function App() {
     setLoadingProdutos(true);
     setLoadingFornecedores(true);
 
-    const produtosPromise = request(`/suppliers/produtos-reais?nicho=${encodeURIComponent(nichoId)}&limite=12&minPreco=80`)
+    const produtosPromise = request(`/suppliers/produtos-reais?nicho=${encodeURIComponent(nichoId)}&limite=12`)
       .then((data) => setProdutos(Array.isArray(data?.produtos) ? data.produtos : []))
       .catch(handleApiError)
       .finally(() => setLoadingProdutos(false));
@@ -4006,11 +4158,9 @@ export default function App() {
         }`}
       >
         <div className="flex items-center gap-3 px-5 py-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-meli-yellow font-black text-slate-950">
-            ML
-          </div>
+          <img src="/brand-icon.png" alt="MeLi Max - Shop" className="h-10 w-10 rounded-xl object-cover" />
           <div>
-            <p className="text-sm font-bold">Melimax</p>
+            <p className="text-sm font-bold">MeLi Max - Shop</p>
             <p className="text-[11px] uppercase tracking-wider text-slate-400">Painel pessoal</p>
           </div>
           <button

@@ -86,6 +86,17 @@ ALTER TABLE listings ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC;
 ALTER TABLE listings ADD COLUMN IF NOT EXISTS packaging_cost NUMERIC;
 ALTER TABLE listings ADD COLUMN IF NOT EXISTS net_profit NUMERIC;
 ALTER TABLE listings ADD COLUMN IF NOT EXISTS fee_percentage NUMERIC;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS payload JSONB;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS quality_breakdown JSONB;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS supplier_sku TEXT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS gtin TEXT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS category_id TEXT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS pictures JSONB;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS attributes JSONB;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS available_quantity INTEGER;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS draft_source TEXT;
 
 CREATE TABLE IF NOT EXISTS labels (
   id SERIAL PRIMARY KEY,
@@ -142,6 +153,16 @@ ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS mercado_multiplo NUMERIC;
 ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS matched_id TEXT;
 ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS matched_name TEXT;
 ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS categoria_ml TEXT;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS validado_manual BOOLEAN DEFAULT FALSE;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS validado_manual_nota TEXT;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS validado_manual_em TIMESTAMPTZ;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS mercado_tentado_em TIMESTAMPTZ;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS alto_giro_manual BOOLEAN DEFAULT FALSE;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS fotos JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS descricao TEXT;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS atributos JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS supplier_ref TEXT;
+ALTER TABLE supplier_products ADD COLUMN IF NOT EXISTS atualizado_fornecedor_em TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_supplier_products_catalogo
   ON supplier_products (catalogo_id);
@@ -298,6 +319,8 @@ CREATE TABLE IF NOT EXISTS suppliers (
   cidade TEXT,
   uf TEXT,
   cep TEXT,
+  cep_distribuicao TEXT,
+  endereco_distribuicao TEXT,
   prazo_postagem TEXT,
   custo_embalagem NUMERIC DEFAULT 0,
   observacoes TEXT,
@@ -310,96 +333,11 @@ ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS bairro TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS cidade TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS uf TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS cep TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS cep_distribuicao TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS endereco_distribuicao TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS prazo_postagem TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS custo_embalagem NUMERIC DEFAULT 0;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS observacoes TEXT;
-
-INSERT INTO suppliers (slug, nome, descricao, nichos, pedido_minimo, dropshipping, integracao)
-VALUES
-  ('plb-importadora', 'PLB Importadora',
-   'Importadora de aco inoxidavel: correntes, aliancas, brincos, pulseiras e acessorios antialergicos. Regiao da 25 de Marco/Bras, Sao Paulo.',
-   ARRAY['moda','acessorios','joias'], NULL, FALSE, 'manual'),
-  ('lb-eletronicos', 'LB Eletronicos',
-   'Importadora e distribuidora na Galeria Page do Bras. Fones Bluetooth, carregadores, caixas de som, smartwatches e suportes veiculares.',
-   ARRAY['eletronicos','informatica','celulares','games'], 500, FALSE, 'manual'),
-  ('adjuntos-acessorios', 'ADJuntos Acessorios (Junto Acessorios)',
-   'Importadora de acessorios de informatica, som e carregadores rapidos. Cabos, power banks, adaptadores e pequenos eletroportateis.',
-   ARRAY['informatica','eletronicos'], NULL, FALSE, 'manual'),
-  ('ultimix-atacado', 'Ultimix Atacado',
-   'Atacadista de utilidades domesticas e organizacao. Utensilios de cozinha em silicone/inox, potes e organizadores.',
-   ARRAY['casa','eletrodomesticos'], NULL, FALSE, 'manual'),
-  ('vinha-costa', 'Vinha Costa (Costa.Tech)',
-   'Fornecedor de smartwatches e wearables de marcas asiaticas de alto giro, com chamadas, ilha dinamica e telas AMOLED.',
-   ARRAY['relogios','eletronicos'], NULL, FALSE, 'manual'),
-  ('fforder', 'FFOrder',
-   'Catalogo global com dropshipping e fulfillment. Sem integracao nativa com Mercado Livre: importar CSV/API e validar prazo, estoque e nota fiscal por SKU.',
-   ARRAY['eletronicos','casa','moda','beleza','esportes','pet','ferramentas','brinquedos','automotivo'], NULL, TRUE, 'csv'),
-  ('c7-drop', 'C7 Drop (Cem Tecnologia)',
-   'Dropshipping nacional com estoque em Sao Paulo, sem mensalidade e com NF-e.',
-   ARRAY['casa','eletronicos','informatica','utilidades'], NULL, TRUE, 'manual'),
-  ('atacadum', 'Atacadum',
-   'Atacado com estoque em Sao Paulo e dropshipping sem mensalidade nem pedido minimo.',
-   ARRAY['casa','eletronicos','utilidades','ferramentas'], NULL, TRUE, 'manual'),
-  ('onedrop', 'OneDrop',
-   'Hub de dropshipping com multiplos fornecedores e catalogo nacional.',
-   ARRAY['eletronicos','casa','moda','beleza','esportes','pet'], NULL, TRUE, 'api'),
-  ('smarke', 'Smarke',
-   'Fornecedor de produtos de giro com estoque em Sao Paulo e dropshipping nacional.',
-   ARRAY['casa','eletronicos','utilidades'], NULL, TRUE, 'manual'),
-  ('mirao', 'Mirao Atacado',
-   'Atacado tradicional usado como referencia de preco e sortimento. Nao opera dropshipping.',
-   ARRAY['ferramentas','casa','eletronicos'], NULL, FALSE, 'manual')
-ON CONFLICT (slug) DO NOTHING;
-
-UPDATE suppliers SET
-  bairro = COALESCE(bairro, 'Centro'),
-  cidade = COALESCE(cidade, 'Sao Paulo'),
-  uf = COALESCE(uf, 'SP'),
-  cep = COALESCE(cep, '01022-050'),
-  prazo_postagem = COALESCE(prazo_postagem, 'Confirmar com o fornecedor'),
-  custo_embalagem = 2.50,
-  observacoes = COALESCE(observacoes, 'Endereco completo nao informado; confirmar antes da primeira coleta.')
-WHERE slug = 'c7-drop'
-  AND cep IS NULL;
-
-UPDATE suppliers SET
-  bairro = COALESCE(bairro, 'Centro'),
-  cidade = COALESCE(cidade, 'Sao Paulo'),
-  uf = COALESCE(uf, 'SP'),
-  cep = COALESCE(cep, '01012-001'),
-  prazo_postagem = COALESCE(prazo_postagem, 'Corte diario as 13h'),
-  custo_embalagem = COALESCE(custo_embalagem, 0),
-  observacoes = COALESCE(observacoes, 'Endereco completo nao informado; confirmar antes da primeira coleta.')
-WHERE slug = 'atacadum'
-  AND cep IS NULL;
-
-UPDATE suppliers SET
-  prazo_postagem = COALESCE(prazo_postagem, 'Confirmar com o fornecedor'),
-  custo_embalagem = COALESCE(custo_embalagem, 0),
-  observacoes = COALESCE(observacoes, 'CEP e endereco de coleta nao informados pela plataforma.')
-WHERE slug = 'onedrop'
-  AND cep IS NULL;
-
-UPDATE suppliers SET
-  cnpj = COALESCE(cnpj, '37.776.426/0001-41'),
-  endereco = COALESCE(endereco, 'Av. dos Metalurgicos, 1597, sala 1'),
-  bairro = COALESCE(bairro, 'Cidade Tiradentes'),
-  cidade = COALESCE(cidade, 'Sao Paulo'),
-  uf = COALESCE(uf, 'SP'),
-  cep = COALESCE(cep, '08471-000'),
-  prazo_postagem = COALESCE(prazo_postagem, 'Confirmar com o fornecedor'),
-  custo_embalagem = COALESCE(custo_embalagem, 0),
-  observacoes = COALESCE(observacoes, 'Estoque fisico em Sao Paulo; confirmar prazo de postagem.')
-WHERE slug = 'smarke'
-  AND cep IS NULL;
-
-UPDATE suppliers SET
-  prazo_postagem = COALESCE(prazo_postagem, 'Nao opera dropshipping'),
-  custo_embalagem = COALESCE(custo_embalagem, 0),
-  observacoes = COALESCE(observacoes, 'Usado como benchmark de preco; nao e fornecedor de dropshipping.')
-WHERE slug = 'mirao'
-  AND cidade IS NULL;
-`;
 
 async function seedAdminUser() {
   const password = process.env.DASHBOARD_PASSWORD;

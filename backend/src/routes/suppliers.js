@@ -315,6 +315,14 @@ router.post('/registro', async (req, res, next) => {
 
 router.get('/prontidao', async (req, res, next) => {
   try {
+    const fornecedorIds = String(req.query.fornecedor_ids || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const filter = fornecedorIds.length
+      ? 'WHERE sp.fornecedor_id = ANY($1::text[])'
+      : '';
+    const params = fornecedorIds.length ? [fornecedorIds] : [];
     const { rows } = await dbQuery(
       `WITH base AS (
          SELECT
@@ -323,9 +331,12 @@ router.get('/prontidao', async (req, res, next) => {
            sp.estoque,
            sp.custo,
            sp.preco_mercado,
+           sp.mercado_ofertas,
            sp.mercado_confianca,
-           COALESCE(s.nome, sp.fornecedor_nome, sp.fornecedor_id) AS fornecedor_nome,
-           s.cep, s.cidade, s.uf,
+           sp.validado_manual,
+           sp.alto_giro_manual,
+            COALESCE(s.nome, sp.fornecedor_nome, sp.fornecedor_id) AS fornecedor_nome,
+            s.cep, s.cep_distribuicao, s.endereco, s.endereco_distribuicao, s.cidade, s.uf,
            GREATEST(
              COALESCE(sp.peso_kg, 0) + COALESCE(sp.tara_kg, 0),
              COALESCE(sp.altura_cm * sp.largura_cm * sp.comprimento_cm / 6000, 0)
@@ -333,6 +344,7 @@ router.get('/prontidao', async (req, res, next) => {
            COALESCE(s.custo_embalagem, 0) AS embalagem
          FROM supplier_products sp
          LEFT JOIN suppliers s ON s.slug = sp.fornecedor_id
+         ${filter}
        ),
        custos AS (
          SELECT *,
@@ -348,49 +360,120 @@ router.get('/prontidao', async (req, res, next) => {
            END AS frete
          FROM base
        ),
+       precos_base AS (
+         SELECT *,
+           (2 * custo + 1 + 6.75 + embalagem) / 0.8 AS preco_sem_frete,
+           (2 * custo + 1 + frete + embalagem) / 0.8 AS preco_com_frete
+         FROM custos
+       ),
        precos AS (
          SELECT *,
-           GREATEST(
-             (2 * custo + 1 + frete + embalagem) / 0.8,
-             custo * 3
-           ) AS preco_alvo,
-           GREATEST(
-             (2 * custo + 1 + frete + embalagem) / 0.8,
-             custo * 3
-           ) AS preco_piso
-         FROM custos
+           CASE
+             WHEN preco_sem_frete < 79 THEN preco_sem_frete
+             ELSE preco_com_frete
+           END AS preco_piso
+         FROM precos_base
+       ),
+       mercado AS (
+         SELECT *,
+           preco_mercado
+             - custo
+             - CASE WHEN preco_mercado >= 79 THEN frete ELSE 0 END
+             - embalagem
+             - 0.2 * preco_mercado
+             - CASE WHEN preco_mercado < 79 THEN 6.75 ELSE 0 END AS lucro_mercado
+         FROM precos
+       ),
+       vendas AS (
+         SELECT *,
+           preco_piso AS preco_venda
+         FROM mercado
+       ),
+       resultado AS (
+         SELECT *,
+           preco_venda
+             - custo
+             - CASE WHEN preco_venda >= 79 THEN frete ELSE 0 END
+             - embalagem
+             - 0.2 * preco_venda AS lucro
+         FROM vendas
        )
        SELECT
-         fornecedor_id,
-         fornecedor_nome,
-         cep, cidade, uf,
+          fornecedor_id,
+          fornecedor_nome,
+          cep, cep_distribuicao, endereco, endereco_distribuicao, cidade, uf,
          COUNT(*)::int AS total,
          COUNT(*) FILTER (WHERE ativo AND COALESCE(estoque, 0) > 0)::int AS ativos,
          COUNT(*) FILTER (
            WHERE preco_mercado IS NOT NULL AND mercado_confianca >= 0.8
          )::int AS confiaveis,
          COUNT(*) FILTER (
-           WHERE preco_mercado >= custo * 3 AND mercado_confianca >= 0.8
+           WHERE preco_mercado IS NOT NULL AND (mercado_confianca >= 0.8 OR validado_manual) AND lucro_mercado >= custo
          )::int AS fortes,
          COUNT(*) FILTER (
            WHERE custo > 0
-             AND preco_mercado >= 80
-             AND mercado_confianca >= 0.8
-             AND preco_piso <= preco_mercado * 1.05
-         )::int AS viaveis
-       FROM precos
-       GROUP BY fornecedor_id, fornecedor_nome, cep, cidade, uf
-       ORDER BY total DESC`
+             AND ativo
+             AND COALESCE(estoque, 0) > 0
+             AND preco_mercado BETWEEN 80 AND 100
+             AND (mercado_confianca >= 0.8 OR validado_manual)
+             AND lucro_mercado >= custo
+         )::int AS faixa_80_100,
+         COUNT(*) FILTER (
+           WHERE custo > 0
+             AND ativo
+             AND COALESCE(estoque, 0) > 0
+             AND (mercado_confianca >= 0.8 OR validado_manual)
+             AND lucro_mercado >= custo
+         )::int AS validados_mercado,
+         COUNT(*) FILTER (
+           WHERE custo > 0
+             AND ativo
+             AND COALESCE(estoque, 0) > 0
+             AND lucro > custo
+         )::int AS candidatos,
+         COUNT(*) FILTER (
+           WHERE custo > 0
+             AND ativo
+             AND COALESCE(estoque, 0) > 0
+             AND (mercado_confianca >= 0.8 OR validado_manual)
+             AND lucro_mercado >= custo
+         )::int AS viaveis,
+         COUNT(*) FILTER (
+           WHERE custo > 0
+             AND ativo
+             AND COALESCE(estoque, 0) > 0
+             AND preco_mercado IS NOT NULL
+             AND (mercado_confianca >= 0.8 OR validado_manual)
+             AND lucro_mercado >= custo * 0.8
+             AND lucro_mercado < custo
+         )::int AS alto_giro,
+         COUNT(*) FILTER (
+           WHERE custo > 0
+             AND ativo
+             AND COALESCE(estoque, 0) > 0
+             AND preco_mercado IS NULL
+         )::int AS potencial_08
+       FROM resultado
+        GROUP BY fornecedor_id, fornecedor_nome, cep, cep_distribuicao, endereco, endereco_distribuicao, cidade, uf
+       ORDER BY total DESC`,
+      params
     );
     const total = rows.reduce((sum, row) => sum + Number(row.total || 0), 0);
     const ativos = rows.reduce((sum, row) => sum + Number(row.ativos || 0), 0);
     const confiaveis = rows.reduce((sum, row) => sum + Number(row.confiaveis || 0), 0);
     const fortes = rows.reduce((sum, row) => sum + Number(row.fortes || 0), 0);
+    const faixa80100 = rows.reduce((sum, row) => sum + Number(row.faixa_80_100 || 0), 0);
+    const candidatos = rows.reduce((sum, row) => sum + Number(row.candidatos || 0), 0);
+    const validadosMercado = rows.reduce((sum, row) => sum + Number(row.validados_mercado || 0), 0);
     const viaveis = rows.reduce((sum, row) => sum + Number(row.viaveis || 0), 0);
+    const altoGiro = rows.reduce((sum, row) => sum + Number(row.alto_giro || 0), 0);
+    const potencial08 = rows.reduce((sum, row) => sum + Number(row.potencial_08 || 0), 0);
+    const viaveisAmpliados = viaveis + altoGiro;
+    const poolAmpliado = viaveisAmpliados + potencial08;
     const cepMap = new Map();
     for (const row of rows) {
-      if (!row.cep) continue;
-      const key = String(row.cep);
+      if (!row.cep_distribuicao) continue;
+      const key = String(row.cep_distribuicao);
       if (!cepMap.has(key)) cepMap.set(key, []);
       cepMap.get(key).push(row);
     }
@@ -398,40 +481,53 @@ router.get('/prontidao', async (req, res, next) => {
       .map(([cep, fornecedores]) => ({
         cep,
         fornecedores: fornecedores.map((item) => item.fornecedor_nome),
+        ceps_cadastro: [...new Set(fornecedores.map((item) => item.cep).filter(Boolean))],
         total: fornecedores.reduce((sum, item) => sum + Number(item.total || 0), 0),
       }))
       .filter((grupo) => grupo.fornecedores.length >= 2);
     const semCep = rows
-      .filter((row) => !row.cep)
+      .filter((row) => !row.cep_distribuicao)
       .map((row) => row.fornecedor_nome);
     const pendencias = [];
-    if (viaveis < 350) {
+    if (poolAmpliado < 350) {
       pendencias.push(
-        `Faltam ${350 - viaveis} SKU(s) viáveis para a meta de 350; há ${viaveis} com frete, taxas, impostos, lucro líquido acima de 100% do custo, multiplicador de 3x e preço dentro do teto de mercado.`
+        `Faltam ${350 - poolAmpliado} SKU(s) para a meta de 350; há ${viaveis} com lucro acima de 100%, ${altoGiro} na faixa de 0,8x a 1x com mercado confirmado e ${potencial08} sem preço de mercado para validar.`
       );
-    } else if (viaveis > 500) {
+    } else if (viaveisAmpliados < 350) {
       pendencias.push(
-        `Há ${viaveis} SKUs viáveis; a meta é operar entre 350 e 500 para manter o catálogo enxuto.`
+        `O pool tem ${poolAmpliado} SKUs (${viaveis} acima de 100% + ${altoGiro} na faixa de 0,8x a 1x + ${potencial08} sem preço de mercado). A meta de 350 a 500 pode ser montada com esse pool, mas só ${viaveisAmpliados} estão confirmados; valide demanda de 2 a 3 vendas/mês antes de anunciar.`
+      );
+    } else if (poolAmpliado > 500) {
+      pendencias.push(
+        `Há ${poolAmpliado} SKUs no pool (${viaveis} acima de 100%, ${altoGiro} na faixa de 0,8x a 1x e ${potencial08} sem mercado). A meta é operar entre 350 e 500; selecione os de maior demanda e valide 2 a 3 vendas/mês.`
       );
     }
     if (!gruposCep.length) {
       pendencias.push(
-        'Nenhum par de fornecedores compartilha o mesmo CEP de coleta. O Mercado Livre aceita um endereço de remetente por conta.'
+        'Nenhum par de fornecedores compartilha o mesmo CEP de distribuicao. O Mercado Livre aceita um endereco de remetente por conta.'
       );
     }
     if (semCep.length) {
-      pendencias.push(`Sem CEP informado: ${semCep.join(', ')}.`);
+      pendencias.push(`Sem CEP de distribuicao informado: ${semCep.join(', ')}.`);
     }
     res.json({
       total,
       ativos,
       confiaveis,
       fortes,
+      faixa_80_100: faixa80100,
+      candidatos,
+      validados_mercado: validadosMercado,
       viaveis,
+      alto_giro: altoGiro,
+      viaveis_ampliados: viaveisAmpliados,
+      potencial_08: potencial08,
+      pool_ampliado: poolAmpliado,
       meta: { min: 350, max: 500 },
       fornecedores: rows,
       grupos_cep: gruposCep,
-      atende_volume: viaveis >= 350 && viaveis <= 500,
+      atende_volume: poolAmpliado >= 350,
+      atende_volume_confirmado: viaveisAmpliados >= 350,
       atende_cep: gruposCep.length > 0,
       pendencias,
     });
@@ -487,6 +583,14 @@ router.get('/custos/desatualizados', async (req, res, next) => {
       24 * 30
     );
     const limit = Math.min(Math.max(Number(req.query.limite) || 100, 1), 500);
+    const fornecedorIds = String(req.query.fornecedor_ids || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const supplierFilter = fornecedorIds.length
+      ? 'AND fornecedor_id = ANY($2::text[])'
+      : '';
+    const params = fornecedorIds.length ? [hours, fornecedorIds] : [hours];
     const { rows } = await dbQuery(
       `SELECT
          *,
@@ -497,16 +601,18 @@ router.get('/custos/desatualizados', async (req, res, next) => {
        FROM supplier_products
        WHERE ativo = TRUE
          AND atualizado_em < NOW() - ($1::numeric * INTERVAL '1 hour')
+         ${supplierFilter}
        ORDER BY atualizado_em ASC
        LIMIT ${limit}`,
-      [hours]
+      params
     );
     const { rows: countRows } = await dbQuery(
       `SELECT COUNT(*)::int AS total
        FROM supplier_products
        WHERE ativo = TRUE
-         AND atualizado_em < NOW() - ($1::numeric * INTERVAL '1 hour')`,
-      [hours]
+         AND atualizado_em < NOW() - ($1::numeric * INTERVAL '1 hour')
+         ${supplierFilter}`,
+      params
     );
     res.json({
       horas: hours,
@@ -531,6 +637,16 @@ router.get('/custos', async (req, res, next) => {
       if (req.query[field]) {
         params.push(String(req.query[field]));
         filters.push(`${column} = $${params.length}`);
+      }
+    }
+    if (req.query.fornecedor_ids) {
+      const ids = String(req.query.fornecedor_ids)
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (ids.length) {
+        params.push(ids);
+        filters.push(`fornecedor_id = ANY($${params.length}::text[])`);
       }
     }
     if (req.query.ativo === 'true') filters.push('ativo = TRUE');

@@ -1,0 +1,188 @@
+id,fornecedor_id,titulo,custo,status,matched_id,matched_name,ofertas,min,mediana,max,confianca
+478,c7-drop,"Adaptador Ethernet Starlink Gen 3 Multiportas com Cabo",200,sem_match,MLB59945390,"Adaptador Ethernet Ygitk para Starlink Gen 2, com cabo Ethernet",0,,,,0.417
+477,c7-drop,"Lixadeira Pneumática Orbital 5 Aspiração",184,sem_match,MLB35469207,"Lixadeira Pneumática Roto Orbital 5 Polegadas Sem Aspiração",0,,,,0.5
+476,c7-drop,"Cafeteira Portatil Prática Recarregavel Expresso 3em1",165,sem_match,MLB77082896,"Mini cafeteira portátil verde recarregável Expresso 3 em 1",0,,,,0.333
+474,c7-drop,"Mesa Para Volante De Mesa Antiderrapante E Convertível",155,sem_match,MLB77325873,"Mesa Para Notebook Dobrável Ajustável Antiderrapante, Para Cama e Sofá",2,159.99,164.99,169.99,0.425
+475,c7-drop,"Câmera Xiaomi C201 Visão Noturna",155,sem_match,MLB49585377,"Câmera Outdoor Xiaomi Bw500 Visão Noturna Cor Branca Branco",0,,,,0.4
+733,onedrop,"Mini Impressora Térmica De Etiquetas Portátil",149,sem_match,MLB51871094,"Aiyin Impressora De Etiquetas Portátil Bluetooth Térmica + 1 Rolo Papel Etiqueta Impressora Etiqueta Térmica Portátil Mini Impressora Compatível Android E Ios Escola Home Escritório",0,,,,0.5
+473,c7-drop,"Câmera De Segurança A'gold Plus Cam-10 Wi-fi C/visão Noturna",125,sem_match,MLB36738648,"Kit 2 Câmera Segurança Wi-fi Domo Visão Noturna",0,,,,0.333
+753,smarke,"Kit 2 em 1 Furadeira e Parafusadeira Elétrica 127V 300W Bomvink BOM-9613 com Cabeça Trocável",120,sem_match,MLB50231201,"Parafusadeira Elétrica Bomvink BOM-9911 Kit 2 Unidades 11 Pontas 3.6V",7,85,121.97,159.9,0.4
+732,onedrop,"Almofada De Apoio Lombar Cadeira Correção De Coluna G",115.9,ok,MLB78973318,"Almofada De Apoio Lombar Cadeira Correção De Coluna Gg - Azu Azul",3,265.9,286.9,291.42,1
+472,c7-drop,"COIBEU Torre de Tomadas Branca 9+4+1 - 9 Tomadas + 4 USB + 1 Type-C Cabo 2m Proteção Contra Sobrecarga",115,sem_match,MLB73212437,"Torre multitomada 16 em 1 com 12 tomadas elétricas, 3 USB 1 USB C, proteção contra sobrecarga, cabo de 2000 w 13a, organizador de cabos de faixa vertical de 1,2 m, jogos para escritório doméstico",11,190,234.97,359,0.636
+729,onedrop,"Almofada De Apoio Lombar Cadeira Correção De Coluna Gg",115,ok,MLB78973318,"Almofada De Apoio Lombar Cadeira Correção De Coluna Gg - Azu Azul",3,265.9,286.9,291.42,1
+730,onedrop,"Kit De Facas Marmorizado Rose Gold 9 Peças Branco",115,sem_match,MLB32435427,"Kit Facas Churrasco Antiaderente 6 Peças",0,,,,0.167
+731,onedrop,"Varal De Parede Retrátil Dobrável Branco",115,sem_match,MLB76730188,"Varal Parede Muro Retratil Dobravel Muro Reforçado Branco",0,,,,0.5
+470,c7-drop,"Câmera de Foto com Impressora Infantil MO-D25 Átomo",99,sem_match,MLB80910689,"Câmera de Foto com Impressora Infantil",5,91.9,149,199,0.571
+471,c7-drop,"Ventilador Portatil Bateria 8'' Inclui 21v Bateria Até 5 H 6000mAh",99,sem_match,MLB73813461,"Ventilador Portatil Bateria 8 Inclui 21v Bateria Até 5 H",1,218.4,218.4,218.4,0.729
+751,smarke,"Secador de Cabelo 2000W Home Goods com Bico 127V",95,sem_match,MLB46138501,"Philco Psc3050 Secador Cabelo Motor Profissional 2000w",23,194.9,242.1,330,0.429
+752,smarke,"Furadeira de Impacto 600W 10mm 220V Bomvink BOM-9670 com Rotação Reversível",95,sem_match,MLB65405341,"Furadeira De Impacto 10mm 600w Reversível Professional Amarelo",16,133.6,169.845,240.08,0.5
+466,c7-drop,"Lanterna Forte Recarregável 2000+ Metro 1000 Lúmens",94,sem_match,MLB44219634,"Lanterna Tática Militar Forte Potente Recarregável Zoom 2000 Lanterna Preto Luz Branco",5,64.71,117,128,0.571
+467,c7-drop,"Máquina De Acabamento Km-5027 Com Motor Forte E Lcd",94,ok,MLB78826762,"Máquina De Acabamento Km-5027 Com Motor Forte E Lcd",8,110,163.78,230,1
+750,smarke,"Furadeira e Parafusadeira Elétrica Sem Fio 12V de Lítio Escovada One-X FR-3332 com Maleta e Acessórios",92,sem_match,MLB66374160,"Furadeira e Parafusadeira Elétrica Btek Sem Fio Bateria Lítio 12v Bivolt 3/8 Mandril 10mm Dz42 com Maleta",7,129,191.05,214.44,0.583
+465,c7-drop,"Mouse Comfort Plus M280 para PC Escritório e Uso Doméstico",91,sem_match,MLB70390970,"4134277520 Teclados duráveis para uso doméstico e de escritório e um teclado com fio - Conjunto de mouse",6,94.9,130.95,149.99,0.5
+728,onedrop,"Luminária De Mesa Com Caixa De Som 4 Em 1 Branco",89.9,ok,MLB37242513,"Luminária Mesa High-end: Caixa Som E Luz Led Rgb Em Branco",1,139.99,139.99,139.99,0.85
+726,onedrop,"Conjunto De Yoga 5 Peças",81.9,sem_match,MLB38230157,"Conjunto Voit Yoga, 9 peças incluídas, cor verde claro",0,,,,0.5
+727,onedrop,"Esfregão Elétrico Versátil De Limpeza 360° Giratório",81.9,sem_match,MLB41414948,"Esfregão Elétrico Giratório 360 Versátil Perfeito Limpeza",0,,,,0.5
+486,c7-drop,"Keyboard Case Para Samsung Galaxy Tab S9/s8/s7 11-inch",400,sem_match,MLB63945191,"Bettdow Magic Keyboard Para Samsung Tab S7/s8/s9 Fe/s9 11 Preto",2,357.93,363.46500000000003,369,0.567
+485,c7-drop,"Plataforma Vibratória Esportivo Fitness Bluetooth",375,sem_match,MLB29601424,"Plataforma vibratória Bluetooth/Sit-ups/Fitness",1,2523.66,2523.66,2523.66,0.68
+484,c7-drop,"Tapo C320WS Câmera de Segurança Wifi 2K QHD Colorida IP66",320,sem_match,MLB19693785,"Câmera de Segurança Wi-Fi Externa TP-Link Tapo C320WS 2K 4MP IP66 Branco",22,265,377,499,0.667
+483,c7-drop,"Câmera Segurança Solar 4G Tripla Lente SIGMA SEG6223S",300,sem_match,MLB64908630,"Câmera Segurança Solar 4g 15x 6mp 4k Lente Tripla Led Sirene Black Mais Vendido",3,350,481.9,999.99,0.75
+482,c7-drop,"Tablet Infantil 7 Polegadas Android 6gb Ram 128gb Kids Wifi",289,ok,MLB64076350,"Tablet Infantil 7 Polegadas Android 8gb Ram 128gb Kids Wifi Rosa",4,412.99,479.69,552.89,0.889
+480,c7-drop,"Tradutor Instantâneo Utilidades 138 Idiomas Preto Bluetooth",285,sem_match,MLB46366366,"Tradutor Instantâneo T11 MIG Utilidades 138 Idiomas 32GB Prata Bluetooth",1,552,552,552,0.708
+479,c7-drop,"Ssd 2.5 Sata Iii 256gb Gravação 450mb/s Leitura 550mb/s",255,ok,MLB80263332,"Ssd 2.5 Sata Aitek 256gb Gravação 450mb/s Leitura 550mb/s Cor Preto",12,300,341.95,531.27,0.875
+735,onedrop,"Fechadura Digital Inteligente Segura E Prática",220,ok,MLB61688435,"Fechadura digital inteligente",12,274.55,389.995,500,1
+734,onedrop,"Fechadura Digital Inteligente",215.9,ok,MLB62411192,"Fechadura Digital Eletrônica Biométrica Smart Inteligente Cor Preto fechadura digital, fechadura eletrônica, fechadura biométrica, fechadura inteligente, fechadura digital com senha, fechadura digital",12,274.55,389.995,500,1
+478,c7-drop,"Adaptador Ethernet Starlink Gen 3 Multiportas com Cabo",200,sem_match,MLB76382604,"Adaptador Ethernet Starlink para Starlink Gen 2",0,,,,0.5
+477,c7-drop,"Lixadeira Pneumática Orbital 5 Aspiração",184,sem_match,MLB35469207,"Lixadeira Pneumática Roto Orbital 5 Polegadas Sem Aspiração",0,,,,0.5
+476,c7-drop,"Cafeteira Portatil Prática Recarregavel Expresso 3em1",165,sem_match,MLB67436019,"Cafeteira portátil rápida e recarregável",0,,,,0.375
+474,c7-drop,"Mesa Para Volante De Mesa Antiderrapante E Convertível",155,sem_match,MLB77325873,"Mesa Para Notebook Dobrável Ajustável Antiderrapante, Para Cama e Sofá",2,159.99,164.99,169.99,0.425
+475,c7-drop,"Câmera Xiaomi C201 Visão Noturna",155,sem_match,MLB49585377,"Câmera Outdoor Xiaomi Bw500 Visão Noturna Cor Branca Branco",0,,,,0.4
+733,onedrop,"Mini Impressora Térmica De Etiquetas Portátil",149,sem_match,MLB51871094,"Aiyin Impressora De Etiquetas Portátil Bluetooth Térmica + 1 Rolo Papel Etiqueta Impressora Etiqueta Térmica Portátil Mini Impressora Compatível Android E Ios Escola Home Escritório",0,,,,0.5
+473,c7-drop,"Câmera De Segurança A'gold Plus Cam-10 Wi-fi C/visão Noturna",125,sem_match,MLB36738648,"Kit 2 Câmera Segurança Wi-fi Domo Visão Noturna",1,278.91,278.91,278.91,0.729
+753,smarke,"Kit 2 em 1 Furadeira e Parafusadeira Elétrica 127V 300W Bomvink BOM-9613 com Cabeça Trocável",120,sem_match,MLB50436977,"Furadeira Parafusadeira Elétrica Torkz de 300W com Kit de 10 Brocas",6,114.97,130.97,159.9,0.667
+472,c7-drop,"COIBEU Torre de Tomadas Branca 9+4+1 - 9 Tomadas + 4 USB + 1 Type-C Cabo 2m Proteção Contra Sobrecarga",115,sem_match,MLB47180537,"Extensão Torre Multicontato 12 Tomadas 2 Usb 1 Usb-c 2m",13,180,209.99,359,0.667
+730,onedrop,"Kit De Facas Marmorizado Rose Gold 9 Peças Branco",115,sem_match,MLB32435427,"Kit Facas Churrasco Antiaderente 6 Peças",0,,,,0.25
+731,onedrop,"Varal De Parede Retrátil Dobrável Branco",115,sem_match,MLB76730188,"Varal Parede Muro Retratil Dobravel Muro Reforçado Branco",0,,,,0.5
+470,c7-drop,"Câmera de Foto com Impressora Infantil MO-D25 Átomo",99,ok,MLB80910689,"Câmera de Foto com Impressora Infantil",5,91.9,149,199,1
+471,c7-drop,"Ventilador Portatil Bateria 8'' Inclui 21v Bateria Até 5 H 6000mAh",99,ok,MLB73813461,"Ventilador Portatil Bateria 8 Inclui 21v Bateria Até 5 H",1,218.4,218.4,218.4,0.85
+751,smarke,"Secador de Cabelo 2000W Home Goods com Bico 127V",95,sem_match,MLB45423789,"Secador de cabelo Bluemos Secador de cabelo com difusor 2000w",3,194.9,299,330,0.6
+752,smarke,"Furadeira de Impacto 600W 10mm 220V Bomvink BOM-9670 com Rotação Reversível",95,sem_match,MLB65405341,"Furadeira De Impacto 10mm 600w Reversível Professional Amarelo",16,133.6,169.845,240.08,0.714
+466,c7-drop,"Lanterna Forte Recarregável 2000+ Metro 1000 Lúmens",94,sem_match,MLB29573855,"Lanterna LED recarregável Lanterna magnética de 1000 lúmens",5,64.71,117,128,0.667
+750,smarke,"Furadeira e Parafusadeira Elétrica Sem Fio 12V de Lítio Escovada One-X FR-3332 com Maleta e Acessórios",92,ok,MLB78515868,"Parafusadeira Furadeira Sem Fio Com Maleta E Acessórios",7,129,191.05,320,1
+465,c7-drop,"Mouse Comfort Plus M280 para PC Escritório e Uso Doméstico",91,sem_match,MLB22637569,"Mouse óptico ergonômico para uso em escritório doméstico 306a",6,94.9,130.95,149.99,0.571
+464,c7-drop,"Almofada De Pescoço De Carro Para Dirigir De Cabeça Lombar",84,sem_match,MLB22752364,"Almofada Pescoço Mickey Infantil Apoio De Cabeça Carro Avião",2,89.9,119.95,150,0.567
+726,onedrop,"Conjunto De Yoga 5 Peças",81.9,sem_match,MLB38230157,"Conjunto Voit Yoga, 9 peças incluídas, cor verde claro",0,,,,0.5
+727,onedrop,"Esfregão Elétrico Versátil De Limpeza 360° Giratório",81.9,sem_match,MLB41414948,"Esfregão Elétrico Giratório 360 Versátil Perfeito Limpeza",0,,,,0.5
+724,onedrop,"Câmera De Carro Wi-fi Dvr Full Hd 1080p Frontal E Traseira",79.9,sem_match,MLB28450771,"Câmera DVR de carro HD 1080P frontal interna e traseira",1,109.6,109.6,109.6,0.744
+725,onedrop,"Mini Aquecedor Portátil Elétrico Com Display Digital E Timer Preto",79.9,sem_match,MLB44414918,"Mini aquecedor elétrico portátil preto para escritório",0,,,,0.417
+462,c7-drop,"Repetidor Sinal Wifi 4 Antenas Alta Estabilidade Longo Alcance 300mbps",79,ok,MLB73097572,"Repetidor Sinal Wifi 4 Antenas Alta Estabilidade Longo Alcance 300mbps Wi-fi Internet Potente Fácil Instalação Roteador Wireless Gotwire? Amplificador Sem Fio Turbo Cobertura Estendida Casa Escritorio",1,50,50,50,0.85
+463,c7-drop,"Máscara Led 7 Cores Wireless Tratamento Estética Acne",79,ok,MLB41449641,"Máscara Led 7 Cores Wireless Tratamento Estética Acne",2,93,96.315,99.63,0.85
+461,c7-drop,"Organizador De Madeira Para Mesa, Porta-arquivos Com Gaveta",77.8,sem_match,MLB55517485,"Organizador de mesa de madeira com gaveta, organizador M",0,,,,0.5
+460,c7-drop,"Tomada Interruptor Inteligente 10a Touch Espelhado Wifi Automação Alexa",77,ok,MLB37231735,"Interruptor Wifi Tomada Inteligente Automação",1,109.69,109.69,109.69,0.85
+415,c7-drop,"Caixa Caixinha De Som Pc Computador Notebook Celular Usb P2 Cor Preto",30,ok,MLB65348483,"Caixa Caixinha De Som Pc Computador Notebook Celular Usb P2 Cor Preto",4,38.69,52.485,79.78,1
+416,c7-drop,"Bandeira Do Brasil Grande para bastao Poliéster 140x90 cm",30,sem_match,MLB74026043,"Bandeira do Brasil Torcida em Poliéster 140x90 cm",1,20.9,20.9,20.9,0.708
+526,mirao,"Caixa de Som Gamer Smart 6W Exbom 03860 - CS-C20",29.99,ok,MLB32286217,"Caixa De Som 6w Cs 66 Exbom",3,32.49,37.9,89,1
+668,onedrop,"Boné Country Bandeira Americana Ajustável Aba Curva Camurça",29.9,sem_match,MLB66126953,"Boné Country Trucker Básico Camurça Aba Curva Cor Bege Tamanho Un",0,,,,0.313
+669,onedrop,"Boné Medalha São Bento Masculino Trucker Tela Aba Curva",29.9,sem_match,MLB57462541,"Boné Medalha De São Bento Aba Curva Trucker Preto/vermelho",0,,,,0.389
+670,onedrop,"Boné Texas Route Cowboy Longhorn - todas as opções de Cor e Desenho e Tamanho",29.9,sem_match,MLB64143049,"Boné Texas Touro Cowboy Telinha Ajustável Pampa's Country Cor Jeans Tamanho 58 Cm",1,49.9,49.9,49.9,0.425
+671,onedrop,"Boné Texas Route Cowboy Touro - todas as opções de Cor e Desenho e Tamanho",29.9,sem_match,MLB64143049,"Boné Texas Touro Cowboy Telinha Ajustável Pampa's Country Cor Jeans Tamanho 58 Cm",1,49.9,49.9,49.9,0.51
+672,onedrop,"Boné Trucker Country Cowboy Camurça Brasil",29.9,sem_match,MLB43086143,"Boné Trucker Shure",1,192.52,192.52,192.52,0.567
+673,onedrop,"Kit 2 Camiseta Oversized Suedine Masculina Malhão Algodão",29.9,sem_match,MLB73801943,"Kit 2 Body Bebê Manga Curta Suedine Liso Algodão Confortável Feminino P",1,32,32,32,0.283
+674,onedrop,"Kit 2 Camisetas Oversized Masculina Streetwear Casual",29.9,sem_match,MLB73213264,"Kit 3 Camisetas Infantis Oversized",2,57,108.495,159.99,0.567
+675,onedrop,"Kit Banho Capivara Infantil Bioinstinto Kids",29.9,sem_match,MLB46560196,"Meu Cheirinho Kids Infantil Higiene Kit Banho Azul Menino",1,64.5,64.5,64.5,0.51
+676,onedrop,"Kit Higiene Infantil Bell Baby 4 Itens",29.9,sem_match,MLB72753369,"10 Kit Higiene Pessoal 4 Itens Shampoo Sabonete Escova",2,54.9,54.9,54.9,0.34
+677,onedrop,"Máquina De Aparar Pelo De Animais De Estimação Dourado",29.9,sem_match,MLB35382675,"Maquina Aparar Masculino Raspar Pelo Intimo Axila Virilha",0,,,,0.25
+744,smarke,"Depilador Elétrico Feminino Recarregável USB Lukton LFJ-3179",29.9,sem_match,MLB80142820,"Depilador Elétrico Feminino Portátil Recarregável Usb",2,37.99,48.495000000000005,59,0.708
+666,onedrop,"Kit Decorativo Ore e Confie com Vaso e Bandeja  Decoração Sala Quarto Luxo",29.86,sem_match,MLB67712731,"Enfeite Decorativo 3D – Ore e Confie – Decoração Escritório/Quarto",20,16.9,25.615000000000002,35,0.625
+667,onedrop,"Kit Decorativo “Ore e Confie” com Vaso e Bandeja – Toque de Fé e Sofisticação para sua Decoração",29.86,sem_match,MLB67712731,"Enfeite Decorativo 3D – Ore e Confie – Decoração Escritório/Quarto",20,16.9,25.615000000000002,35,0.5
+525,mirao,"Vitamina C Pure Redrock 60 Cáp 1000mg Imunidade Antioxidante",29.52,sem_match,MLB59202721,"Vitamina C 1000mg Alta Concentração Imunidade Antioxidante",2,25.9,29.39,32.88,0.567
+664,onedrop,"Almofada De Pescoço Para Viagem Cinza",29.3,ok,MLB52897268,"Almofada Pescoço Travesseiro Inflável Viagem Camping Avião Cor Cinza",1,44.9,44.9,44.9,0.85
+665,onedrop,"Almofada De Pescoço Para Viagem Rosa",29.3,sem_match,MLB69401312,"Almofada Viagem Travesseiro Aviao Travesseiro de Pescoço Almofada Pescoco Almofada Pescoço Memoria Urna Ajustavel com Capa e Brinde",1,49,49,49,0.637
+662,onedrop,"Porta Talheres Canelado Moderno Porta Utensílios Porta Colheres Organizador de Cozinha 15cm",29.07,ok,MLB66819937,"Porta Talheres Inox Organizador Utensílios Cozinha",3,37.9,44.16,59.9,0.833
+663,onedrop,"Suporte Porta Utensílios Concha Cozinha Canelado Organizador de Bancada Moderno",29.07,sem_match,MLB75211609,"Suporte Porta Facas Utensílios Organizador De Bancada Inox",2,29.9,44.9,59.9,0.607
+524,mirao,"Suporte Para TV Fixo com Rotação 180º monitor 10"" A 32"" EXBOM - SPTV-B100",29.03,sem_match,MLB44836284,"Suporte Para Tv Fixo 32 A 77 ELG",2,162,255,348,0.637
+412,c7-drop,"Tampões De Ouvido Com Cancelamento De Ruido Para Dormir",29,sem_match,MLB56704717,"Tampões de ouvido para dormir com cancelamento de ruído 60 pares de tampões de ouvido para dormir Tampões de ouvido reutilizáveis de espuma macia para dormir e reduzir o ruído Lake Blue",0,,,,0.5
+413,c7-drop,"Ring Light 16 cm de 10 W com Tripé  Ajustável e Controle de Luminosidade",29,ok,MLB23218843,"Ring Light 26 cm de 18 W com Tripé 2,10 m Ajustável e Controle de Luminosidade",4,57.49,78.75,139.9,1
+414,c7-drop,"Isqueiro Maçarico Recarregável Mod. Cartas Baralho",29,sem_match,MLB21339397,"Isqueiro Maçarico Ronson Torch Recarregável",0,,,,0.3
+522,mirao,"Microfone Profissional Dinâmico \Com Fio 3 Metros MT-1016",29,ok,MLB23157075,"Microfone Profissional Com Fio Dinamico",1,39.9,39.9,39.9,0.85
+523,mirao,"Teclado USB Standard Preto ABNT2 Padrão Brasileiro  Exbom - BK-102",29,sem_match,MLB36077709,"Teclado Usb Abnt2 Padrão Brasileiro Super Macio Notebook Pc Cor De Teclado Preto",20,27.99,36.57,49.99,0.667
+661,onedrop,"Kit 6 Peças Escorredores E Bacias Multiuso Para Cozinha Azul E Amarelo",28.9,sem_match,MLB76062288,"Kit 6 Facas De Mesa Inox Serrilhadas Multiuso Cozinha Vermelho, Amarelo, Azul",1,17.46,17.46,17.46,0.486
+411,c7-drop,"Faca Churrasco 8'' Inox Cabo Madeira Sq Para Corte de Carne",28.5,ok,MLB41447427,"Faca Churrasco 8'' Inox Cabo Madeira Sq Para Corte de Carne",5,31.97,59,78,1
+409,c7-drop,"Suporte Giratório 360° Ajustável Tablet Ate 12 Polegadas",28,sem_match,MLB62777311,"Suporte Giratório 360° De Ajustavel Base Para Tablet Celular iPad Universal Ate 12 Polegadas Dobrável Multifunções - Komei",0,,,,0.5
+410,c7-drop,"Coador Filtro de Café em Aço Inox .- Não usa Papel!",28,sem_match,MLB44130171,"Coador Filtro Café Peneira Reutilizável Aço Inox Sem Papel",1,38.34,38.34,38.34,0.637
+743,smarke,"Chapinha de Cabelo Titânio Iônica Profissional 450",27.9,sem_match,MLB35655400,"Chapinha Cabelo Profissional DK 230°C Titânio Bivolt Rosa",0,,,,0.4
+521,mirao,"Headphone Bluetooth sem Fio com Rádio FM e Slot para Cartão SD - ST-95",27,sem_match,MLB22150407,"Headphone Bluetooth Fm Rádio Cartão Sd Entrada Auxiliar Mp3",0,,,,0.333
+660,onedrop,"Relógio Feminino Inteligente Com Tela Touch (rosa)",26.99,sem_match,MLB45381266,"Relógio Feminino Rosa Com",0,,,,0.5
+520,mirao,"Filtro de Linha 4 Tomadas Universais Com Interruptores Cabo 2M ST-885",26.9,sem_match,MLB64386014,"Filtro de linha de 4 tomadas Starmega ST-885 cor branco comprimento do cabo de 2m",3,44.37,47,73.71,0.75
+659,onedrop,"Kit Removedor Elétrico De Calos Para Pés - Cinza",26.9,sem_match,MLB67489882,"Removedor elétrico de calos de pés, removedor de calos D",0,,,,0.5
+658,onedrop,"Mini Mixer Elétrico Recarregável Multiuso para Bebidas e Ovos",26.5,sem_match,MLB38200906,"Misturador Bebidas Portátil Elétrico Recarregável Mini Mixer",0,,,,0.357
+519,mirao,"Case TYPE C de HD e SSD para Smartphone Tipo-C Android Sata 2.5"" Usb 3.0 5Gpbs Cabo Y 03388 Exbom - CGHD-70",26.41,sem_match,MLB74809985,"KIT 2 Case HD Externo Exbom Gaveta HD/SSD USB 3.1 Tipo C Sata III + Cabo USB Tipo C",8,25.99,60.400000000000006,89.99,0.727
+408,c7-drop,"Adaptador USB-C para HDMI 4K Cinza Compatível com MHL e DP Alt Mode",26,ok,MLB50196667,"Adaptador USB-C para HDMI 4K Cinza Tomate Compatível com MHL e DP Alt Mode",17,25.99,32.29,62,1
+656,onedrop,"Ventilador De Pescoço Portátil Recarregável Flexível Usb",25.99,sem_match,MLB62086808,"Ventilador de pescoço portátil, ventilador de pescoço rosa recarregável USB",0,,,,0.417
+657,onedrop,"Ventilador De Pescoço Portátil Recarregável Flexível Usb Ver Verde",25.99,sem_match,MLB62086808,"Ventilador de pescoço portátil, ventilador de pescoço rosa recarregável USB",0,,,,0.417
+518,mirao,"Fita Led Rgb 3528 Rolo 5m Ip65 A Prova D'agua + Fonte",25.9,ok,MLB77091523,"5m De Fita Led 3528 Rgb Ip65 Com Fonte A Prova D'agua Rgb",1,48.4,48.4,48.4,0.85
+654,onedrop,"Conjunto Academia Fitness Levanta Bumbum Cinza",25.9,sem_match,MLB51397365,"Conjunto de alças tipo D, fitness, academia, polia de guidão",0,,,,0.25
+655,onedrop,"Kit De Gravação Profissional 4 Em 1",25.9,sem_match,MLB28371519,"Kit Gravação De Vídeo Profissional Microfone Condensador",0,,,,0.5
+649,onedrop,"Brinquedo Dispensador De Ração Preto",25.5,sem_match,MLB73883502,"Comedouro Interativo Gatos Brinquedo Dispensador Lento Ração Amarelo",0,,,,0.375
+650,onedrop,"Brinquedo Dispensador De Ração Verde",25.5,sem_match,MLB42357589,"Meu primeiro brinquedo dispensador com luzes sonoras e acessórios Cor verde",0,,,,0.375
+651,onedrop,"Conjunto Academia Fitness Levanta Bumbum",25.5,sem_match,MLB51397365,"Conjunto de alças tipo D, fitness, academia, polia de guidão",0,,,,0.3
+652,onedrop,"Conjunto Academia Fitness Levanta Bumbum Bege",25.5,sem_match,MLB51397365,"Conjunto de alças tipo D, fitness, academia, polia de guidão",0,,,,0.25
+653,onedrop,"Conjunto Academia Fitness Levanta Bumbum Rosa",25.5,sem_match,MLB51397365,"Conjunto de alças tipo D, fitness, academia, polia de guidão",0,,,,0.25
+648,onedrop,"Brinquedo Dispensador De Ração Amarelo",25.25,sem_match,MLB73883502,"Comedouro Interativo Gatos Brinquedo Dispensador Lento Ração Amarelo",0,,,,0.5
+405,c7-drop,"Caneta Teste De Fluído De Freio Dot3 Dot4 Carro Moto Auto",25,ok,MLB80563786,"Caneta Teste Fluido de Freio Digital Indicador Led Dot3 Dot4 Dot5.1 Carro Moto Caminhão Trator",8,66.9,79.645,126.49,0.889
+406,c7-drop,"Kit De Alimentos De Borracha Para Banheira Com 6 Peças",25,sem_match,MLB57296188,"Pato de Borracha Amarelo Elite Imports para Banheira – Kit com 12 Peças",2,44.26,45.644999999999996,47.03,0.637
+407,c7-drop,"Depilador Elétrico Aparador Sobrancelhas Rosto Buço",25,sem_match,MLB20711035,"Depilador Elétrico Aparador Sobrancelhas Rosto Buço Caneta",0,,,,0.5
+516,mirao,"Tripe para Camera ou Ring Light Ajustável 2.1 Metros OBERON - OR-PL21SC",25,sem_match,MLB36462472,"Tripé Para Câmera Oberon Tripe Com Ring Light Preto De 20cm De Diâmetro",1,30,30,30,0.531
+517,mirao,"Cabo Extensor USB 10 Metros 2.0 AM+AF OD5.0 - 03939",25,ok,MLB21364779,"Cabo X Cabo Extensor Usb 2.0 Am/af 3 Metros Com Filtro",4,99,99,159,0.857
+646,onedrop,"Inalador Nebulizador Portátil Ultrassônico Usb/pilhas Branco",24.9,sem_match,MLB76659124,"Inalador Nebulizador Inalador Ultrassonico Portátil Bivolt",0,,,,0.4
+647,onedrop,"Tapete Banheiro Antiderrapante Para Box Verde",24.9,sem_match,MLB23905243,"Tapete Banheiro Box Antiderrapante Silicone Com Ventosas Cor Verde",0,,,,0.5
+644,onedrop,"Power Bank Universal 10.000 Mah Carregador Celular Compatíve Variados",24.5,sem_match,MLB22195656,"Carregador Portatil Power Bank 10.000 Mil Mah Universal",0,,,,0.357
+645,onedrop,"Tapete Banheiro Antiderrapante Para Box Preto",24.5,sem_match,MLB56589318,"Tapete Banheiro Antiderrapante Box Ventosa Piso Lavanderia Preto",0,,,,0.5
+404,c7-drop,"Bandeja Plástico 33cm Redonda Decoração De Natal Ano",24.2,sem_match,MLB30953597,"Bandeja Plástico 33cm Redonda Decoração De Natal Ano",0,,,,0.5
+403,c7-drop,"Brinquedo Didático. Alfabeto Madeira 27 Peças Cores E Numeros",24,sem_match,MLB51345764,"Brinquedo didático de números de madeira e figuras geométricas",0,,,,0.333
+515,mirao,"Iluminação LED para Fotos e Vídeos Profissional 7W OBERON - OR-PL03",24,sem_match,MLB59630620,"Iluminação LED RGB flexível para fotos e vídeos em casa O E",4,2688,2999.76,3300,0.571
+642,onedrop,"Tapete De Yoga Profissional Antiderrapante Para Treinos",24,sem_match,MLB78465691,"Tapete de Yoga Profissional Antiderrapante para Treinos Marrom",0,,,,0.5
+643,onedrop,"Travesseiro Almofada De Pescoço Inflável E Portátil - Verde",24,sem_match,MLB43971540,"Travesseiro Almofada Inflavel Para Pescoco",0,,,,0.5
+640,onedrop,"Tapete Aquático Interativo Inflável Tummy Time Para Bebês Azul",23.9,sem_match,MLB38131965,"Tummytimefun, tapete aquático inflável para bebês",1,37.54,37.54,37.54,0.68
+641,onedrop,"Tapete De Yoga Profissional Antiderrapante Para Treinos - Marrom",23.9,sem_match,MLB78465691,"Tapete de Yoga Profissional Antiderrapante para Treinos Marrom",0,,,,0.5
+639,onedrop,"Tábua Inteligente Descongelamento Rápido Preto",23.5,sem_match,MLB28065968,"Tábua Inteligente Para Descongelar - Oikos Cor Preto Tamanho U",2,75.26,94.08000000000001,112.9,0.51
+402,c7-drop,"Caixa Bola Natal 07cm 05un Vermelho",23.3,sem_match,MLB72890271,"Caixa Bola Box Transparente para Doces e Lembrancinhas – BlueStar",2,16.79,17.59,18.39,0.283
+638,onedrop,"Travesseiro Almofada De Pescoço Inflável E Portátil - Rosa Pink",23.3,ok,MLB43971540,"Travesseiro Almofada Inflavel Para Pescoco",13,37.4,45.5,77,1
+514,mirao,"Splitter Hub de Vídeo VGA 1 Entrada e 2 Saídas KNUP - KP-AD139",23,sem_match,MLB35880791,"Divisor Splitter Vga 1 Entrada 2 Saídas",1,56,56,56,0.68
+637,onedrop,"Suporte Dipenser Com Esterilizador Uv Porta Escova E Pasta D",23,sem_match,MLB39212647,"Esterilizador De Escova Dipenser",0,,,,0.5
+636,onedrop,"Conjunto Vasos Plantas Decorativo Kit Moderno Japandi Canaletado",22.9,sem_match,MLB75120557,"Conjunto Vasos Cerâmica Enfeites Decoração Azul",0,,,,0.167
+401,c7-drop,"Kit 10 Peças De Laços De Natal E Suprimentos Para Festas De Natal",22,sem_match,MLB70077971,"Kit 10 Sacos Presente 25x37 Atacado + Laços Colorido Natal",1,29.9,29.9,29.9,0.34
+511,mirao,"Mini Ventilador De Mão Turbo Portatil Recarregavel DIsplay",22,ok,MLB68864939,"Mini ventilador portátil, ventilador portátil recarregável com display digital, 100 velocidades, ventilador turbo recarregável para viagens, acampamentos e atividades ao ar livre",4,59.9,121.71000000000001,129,0.857
+512,mirao,"Cabo Tipo C Turbo 240W Rocoren Retro Series Fast Charge 1M - RCPBTT2-RT0G",22,sem_match,MLB64377259,"Cabo Tipo C Turbo 240w Rocoren Retro Series Fast Charge 1m Preto",0,,,,0.455
+513,mirao,"Mouse Gamer 7D 3200 Dpi Led Gaming Usb Xtreme 03250 - MS-G260",22,ok,MLB28985707,"Mouse Gamer Led Usb 3200 Dpi",1,45,45,45,0.85
+635,onedrop,"Kit C/2 Suportes Carregador Sacola Alça Resistente Anatomico",22,sem_match,MLB79459934,"Kit 2 Suporte Carregadores Sacola Alça Resistente Anatômico",1,87.62,87.62,87.62,0.567
+400,c7-drop,"Meia de Natal vermelhas",21.9,sem_match,MLB32672838,"Meia Natal Hiperfesta 36cm Rena",3,645,649,649,0.667
+633,onedrop,"Hair Skins And Nails Natures Bounty Gumway Framboesa Morango",21.9,sem_match,MLB19707376,"Hair Skins And Nails Nature's Bounty 140 Gomas Morango",4,174.99,319,319,0.714
+634,onedrop,"Tapete Antiderrapante Para Banheiro Com Ventosas E Superfíci Bege",21.9,ok,MLB78975274,"Tapete Antiderrapante Para Banheiro Com Ventosas E Superfíci Bege",2,29.99,48.239999999999995,66.49,0.85
+742,smarke,"Frigideira antiaderente com cabo de madeira, ferramenta de",21.9,sem_match,MLB63140859,"Frigideira antiaderente de cerâmica Gipp Frigideira antiaderente",0,,,,0.25
+631,onedrop,"Kit 3 Cachepôs Decorativos para Plantas Suculentas Cactos Vasos Modernos com Prato",21.02,sem_match,MLB59309013,"Kit 3 Vasos Decorativos Ceramica Suculentas Cactos Preto",2,19.9,39.945,59.99,0.567
+632,onedrop,"Kit 3 Vasos Suculenta Com Prato Decorativo Plantas Natutais",21.02,sem_match,MLB53401559,"Kit 3 Vasos Para Plantas Decorativo Em Polietileno Escovados Com Prato - Bege",0,,,,0.333
+399,c7-drop,"Suporte De Alumínio Ajustável/Regulável Para Notebook E Macbook Escritório",21,sem_match,MLB41761675,"Suporte Aluminio Giratório Ajustável Para Notebook Macbook Cor Chumbo",1,140.69,140.69,140.69,0.607
+630,onedrop,"Brinquedo Queijo Sensorial Antiestresse Amarelo",21,ok,MLB78583720,"Brinquedo sensorial amarelo antiestresse que pode ser espremido com queijo Squishy Cheese",2,31.83,45.415,59,0.85
+629,onedrop,"Nossa Senhora Aparecida 3d 13cm Decorativa Fé Católica",20.96,ok,MLB28548218,"Naninha Católica - Nossa Senhora Aparecida",3,44.9,49.9,49.9,0.8
+627,onedrop,"Kit Organizador De Gavetas Dobrável Com Divisórias",20.9,sem_match,MLB29602353,"Kit Organizador de Gavetas Logic Ou, Chumbo, com Divisórias (3 Peças)",6,58.9,98.9,101.9,0.75
+628,onedrop,"Tapete De Yoga Profissional Antiderrapante Para Treinos (cin Cinza",20.9,sem_match,MLB78465691,"Tapete de Yoga Profissional Antiderrapante para Treinos Marrom",1,46.9,46.9,46.9,0.708
+397,c7-drop,"Fone de Ouvido Over-ear P47 Bluetooth sem Fio com Cancelamento de Ruído e Rádio FM",20,ok,MLB24448344,"Fone de Ouvido Over-ear P47 Bluetooth sem Fio Preto com Cancelamento de Ruído e Rádio FM",8,23.99,30.825000000000003,45.89,1
+398,c7-drop,"Tomada Carregador Veicular Usb Duplo 2.1a Rápido12/24v",20,sem_match,MLB53600270,"Tomada Carregador Veicular Usb Van Caminhão Barco 12v 24v Preto",0,,,,0.313
+510,mirao,"Cabo Tipo C Turbo 60W Rocoren Micai Series RGB 2M - RCXCTT-MCB01",20,sem_match,MLB60325578,"Cabo Turbo Tipo-C Para Tipo-C 60W de 2m, Preto",2,28.31,42.155,56,0.708
+626,onedrop,"Nossa Senhora Aparecida 3d 13cm Decorativa Religiosa Premium",20,ok,MLB74931758,"Nossa Senhora Aparecida 3d 13cm Decorativa Religiosa Cor Preto",13,16.9,24.9,59.99,0.875
+508,mirao,"Ring Light Profissional p/ Celular 20cm 8"" Led OBERON - OR-PL08",19.9,sem_match,MLB19851284,"Ring Light 8 20cm Iluminação Profissional Led Selfie Tripé",1,50,50,50,0.531
+509,mirao,"Cabo USB-C L USB-C p/ USB-C 60W 1M - RCXCTT-KJ0G",19.9,sem_match,MLB75972492,"Cabo Usb-C tipo C 60w 1m",2,20,29.12,38.24,0.68
+624,onedrop,"Bico Alta Pressão Jato Mangueira Água Kit 4 Pçs Lava Carro",19.9,ok,MLB48052350,"Bico Alta Pressão Jato Mangueira Água Kit 4 Pçs Lava Carro",5,35,37.42,69,1
+625,onedrop,"Máquina De Acabamento Profissional Transparente Sem Fio Led",19.9,sem_match,MLB35431327,"Poder Nas Suas Mãos: Máquina Acabamento Profissional Sem Fio",1,74,74,74,0.567
+507,mirao,"Calculadora Multifuncional Digital Visor Duplo Lehmox-1898",19.8,sem_match,MLB48007178,"Calculadora científica, calculadora multifuncional de 12 dígitos",1,26.72,26.72,26.72,0.425
+506,mirao,"Adaptador VGA para Type C KNUP - KP-AD116",19.76,sem_match,MLB38905114,"Adaptador Vga Para Hdmi Áudio E Video 1080p Knup Kp-3466",4,19.9,38.61,50,0.667
+505,mirao,"Hub Usb 3.0 E Usb Tipo C Leitor De Cartão SD Cinza",19.5,ok,MLB66351556,"Hub Usb 3.0 E Usb Tipo C Leitor De Cartão Sd Cinza",1,35.09,35.09,35.09,0.85
+504,mirao,"Carregador De Celular Veicular Usb + Type-C PD com Cabo 1m Branco",19.2,sem_match,MLB65608561,"Carregador Celular Veicular Carro Turbo 2 Usb C/ Cabo Tipo C Branco",1,24.51,24.51,24.51,0.567
+503,mirao,"Adaptador de Rede RJ45 Usb 10Mbps Knup - HB-T80",19,sem_match,MLB34203187,"Adaptador Usb Rede Rj45 Cabo De Rede Internet Knup Hb-t66",7,17.5,29.9,51.2,0.75
+623,onedrop,"Escultura Nossa Senhora Minimalista Decorativa 3d G",19,ok,MLB69389395,"Nossa Senhora Escultura 3d Decorativa Religiosa 19cm Luxo",19,15.51,36.9,66,0.833
+501,mirao,"Carregador Veicular 30w Entrada USB e Type-C LEHMOX - LE-507-4",18.9,sem_match,MLB68683805,"Carregador Veicular 30w Com Usb E Usb C Turbo",1,59,59,59,0.68
+502,mirao,"Carregador De Celular Turbo 30W Type-c Pd Com Cabo 1 Metro Lehmox - LE-490 PD",18.9,sem_match,MLB69086102,"Carregador Celular Turbo Power Delivery Pd + Cabo Cor Cabo Tipo C",1,44.9,44.9,44.9,0.472
+618,onedrop,"Body Splash Angelic Charme 200 Ml",18.9,ok,MLB74552489,"Body Splash Bourbon Bello Charme Masculino Amadeirado 200 mL",11,23.39,27.9,39,0.8
+619,onedrop,"Ventilador Portátil De Mão Recarregável Branco",18.9,sem_match,MLB79199233,"Ventilador portátil de mão recarregável",0,,,,0.5
+620,onedrop,"Ventilador Portátil De Mão Recarregável (lilás) Lilás",18.9,sem_match,MLB69562543,"Ventilador portátil, ventilador portátil recarregável",0,,,,0.5
+621,onedrop,"Ventilador Portátil De Mão Recarregável Rosa",18.9,sem_match,MLB50565109,"Ventilador portátil portátil recarregável rosa",0,,,,0.5
+622,onedrop,"Ventilador Portátil De Mão Recarregável Verde",18.9,sem_match,MLB69562543,"Ventilador portátil, ventilador portátil recarregável",0,,,,0.5
+741,smarke,"Depilador Elétrico de Cabeça Dupla Tomate MAG-045 Recarregável USB Sem Fio",18.9,sem_match,MLB75796755,"Depilador Elétrico Feminino 2 em 1 Recarregável USB Sem Fio com Dupla Cabeça Aparador e Barbeador Removedor de Pelos Facial e Corporal para Rosto Buço Sobrancelhas Axilas Virilha Braços e Pernas Windy",1,39.51,39.51,39.51,0.661
+617,onedrop,"Vaso Ilia Plantas Flores Decorativo 3d Moderno Premium",18.44,sem_match,MLB76734896,"Vaso Decorativo Moderno Minimalista Plantas Flores Decoração Marrom Moderno",1,98.4,98.4,98.4,0.531
+616,onedrop,"Kit 3 Mini Vasos Decorativos Cachepot Com Bandeja Para Suculentas e Plantas Artificiais",18.32,sem_match,MLB46170460,"Kit 3 Mini Arranjos Com Suculentas",0,,,,0.333
+615,onedrop,"Máquina De Barbear E Cortar Cabelo Profissional Recarregável Dourado",18.18,ok,MLB80743539,"Máquina Barbear Profissional; Maquininha Dragão Dourado Recarregável; Cortar Cabelo; Acabamento; Barba; Pé Dourado-escuro",1,44.7,44.7,44.7,0.85
+499,mirao,"Cabo Sata 7P/7P 45cm GRASEP - D-CIC01",17.9,sem_match,MLB67957503,"Cabo Dados Extensor Sata 22pin 7p + 15p 45cm Grasep -d-cic06",2,33.97,41.165,48.36,0.708
+500,mirao,"Fonte de Alimentação Universal com 6 Pinos e Regulagem de Tensão 3 á 12V LEHMOX",17.9,sem_match,MLB70645432,"Fonte Universal 312v Com 6 Pinos E Regulagem Lehmox Preto",4,40,55.254999999999995,79.78,0.714
+613,onedrop,"Jogo De Utensílios De Cozinha Em Silicone  5 Peças Azul",17.9,ok,MLB36787526,"Jogo Utensílios Cozinha 5 Peças Silicone",7,26.5,33.65,56.11,1
+614,onedrop,"Jogo De Utensílios De Cozinha Em Silicone  5 Peças Preto",17.9,ok,MLB36787526,"Jogo Utensílios Cozinha 5 Peças Silicone",1,54.9,54.9,54.9,0.85
+498,mirao,"Lampada Led 28W Dobrável Petalas Bivolt KAPBOM - KA-1881",17.75,sem_match,MLB34728494,"Lampada Bulbo Led Petalas 28w Dobravel Garage Bivolt Design",4,23.29,37.4,40.8,0.667
+497,mirao,"Suporte De Celular Para Bicicleta em Alumínio Até 7"" KA-C409",17.7,sem_match,MLB49078958,"Suporte Celular Universal Alumínio Rockbros Para Bicicleta",1,91.46,91.46,91.46,0.567
+610,onedrop,"Jogo De Utensílios De Cozinha Em Silicone  5 Peças Verde",17.5,ok,MLB37027349,"Jogo Utensílios Cozinha 5 Peças Silicone",7,26.5,33.65,56.11,1
+611,onedrop,"Luminária Led Inteligente Com Sensor De Movimento Recarregáv",17.5,sem_match,MLB37187726,"Luminária Led Recarregável Com Sensor De Movimento Knup",2,12,21.725,31.45,0.567
+612,onedrop,"Luminária Parede Solar 100 Leds Bateria Luz Balizador Jardim Preto",17.5,sem_match,MLB37781048,"Luminária Parede Solar 100 Leds Bateria Luz Balizador Jardim",0,,,,0.5
+495,mirao,"Kit Conjunto de Ferramentas 2 peças Estilete e Alicate ST623",17.3,sem_match,MLB68910715,"Kit Conjunto De Ferramentas 4 Peças Pincel Espátula Estilete Amarelo",4,12.99,20.445,27,0.667
+496,mirao,"Chave Inglesa e Estilete Profissional  ST-625",17.3,sem_match,MLB37819206,"Chave Inglesa 15'' Carbografite",1,186.89,186.89,186.89,0.567
+396,c7-drop,"Suporte Magnético Dobrável De 360° Para Celular Para Carro",17,sem_match,MLB76100725,"Suporte Magnético Veicular Para Celular Carro Vácuo 360° Preto,Suporte Celular Carro Magnético Rotativo 360dobrável Ventosa",1,17.99,17.99,17.99,0.68
+494,mirao,"Lanterna Sabre de Trilha Recarregável 2 Modos Type-C ON-LT036",17,sem_match,MLB38718004,"Lanterna Sabre De Luz 2000m",2,111.99,122.86500000000001,133.74,0.425
+608,onedrop,"Bico Mangueira Esguicho De Alta Pressão Em Latão",17,ok,MLB80187225,"Esguicho Bico Mangueira 1/2 Jato Reto Alta Pressão Latão",1,22.9,22.9,22.9,0.85

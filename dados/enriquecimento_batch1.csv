@@ -1,0 +1,41 @@
+id,fornecedor_id,titulo,custo,status,matched_id,matched_name,ofertas,min,mediana,max,confianca
+733,onedrop,"Mini Impressora Térmica De Etiquetas Portátil",149,sem_match,MLB51871094,"Aiyin Impressora De Etiquetas Portátil Bluetooth Térmica + 1 Rolo Papel Etiqueta Impressora Etiqueta Térmica Portátil Mini Impressora Compatível Android E Ios Escola Home Escritório",0,,,,0.5
+473,c7-drop,"Câmera De Segurança A'gold Plus Cam-10 Wi-fi C/visão Noturna",125,sem_match,MLB36738648,"Kit 2 Câmera Segurança Wi-fi Domo Visão Noturna",1,278.91,278.91,278.91,0.729
+753,smarke,"Kit 2 em 1 Furadeira e Parafusadeira Elétrica 127V 300W Bomvink BOM-9613 com Cabeça Trocável",120,sem_match,MLB50436977,"Furadeira Parafusadeira Elétrica Torkz de 300W com Kit de 10 Brocas",6,114.97,130.97,159.9,0.667
+472,c7-drop,"COIBEU Torre de Tomadas Branca 9+4+1 - 9 Tomadas + 4 USB + 1 Type-C Cabo 2m Proteção Contra Sobrecarga",115,sem_match,MLB47180537,"Extensão Torre Multicontato 12 Tomadas 2 Usb 1 Usb-c 2m",13,180,209.99,359,0.667
+730,onedrop,"Kit De Facas Marmorizado Rose Gold 9 Peças Branco",115,sem_match,MLB32435427,"Kit Facas Churrasco Antiaderente 6 Peças",0,,,,0.25
+731,onedrop,"Varal De Parede Retrátil Dobrável Branco",115,sem_match,MLB76730188,"Varal Parede Muro Retratil Dobravel Muro Reforçado Branco",0,,,,0.5
+751,smarke,"Secador de Cabelo 2000W Home Goods com Bico 127V",95,sem_match,MLB45423789,"Secador de cabelo Bluemos Secador de cabelo com difusor 2000w",3,194.9,299,330,0.6
+752,smarke,"Furadeira de Impacto 600W 10mm 220V Bomvink BOM-9670 com Rotação Reversível",95,sem_match,MLB65405341,"Furadeira De Impacto 10mm 600w Reversível Professional Amarelo",16,133.6,169.845,240.08,0.714
+466,c7-drop,"Lanterna Forte Recarregável 2000+ Metro 1000 Lúmens",94,sem_match,MLB29573855,"Lanterna LED recarregável Lanterna magnética de 1000 lúmens",5,64.71,117,128,0.667
+465,c7-drop,"Mouse Comfort Plus M280 para PC Escritório e Uso Doméstico",91,sem_match,MLB22637569,"Mouse óptico ergonômico para uso em escritório doméstico 306a",6,94.9,130.95,149.99,0.571
+464,c7-drop,"Almofada De Pescoço De Carro Para Dirigir De Cabeça Lombar",84,sem_match,MLB22752364,"Almofada Pescoço Mickey Infantil Apoio De Cabeça Carro Avião",2,89.9,119.95,150,0.567
+726,onedrop,"Conjunto De Yoga 5 Peças",81.9,sem_match,MLB38230157,"Conjunto Voit Yoga, 9 peças incluídas, cor verde claro",0,,,,0.5
+727,onedrop,"Esfregão Elétrico Versátil De Limpeza 360° Giratório",81.9,sem_match,MLB41414948,"Esfregão Elétrico Giratório 360 Versátil Perfeito Limpeza",0,,,,0.5
+724,onedrop,"Câmera De Carro Wi-fi Dvr Full Hd 1080p Frontal E Traseira",79.9,sem_match,MLB28450771,"Câmera DVR de carro HD 1080P frontal interna e traseira",1,109.6,109.6,109.6,0.744
+725,onedrop,"Mini Aquecedor Portátil Elétrico Com Display Digital E Timer Preto",79.9,sem_match,MLB44414918,"Mini aquecedor elétrico portátil preto para escritório",0,,,,0.417
+461,c7-drop,"Organizador De Madeira Para Mesa, Porta-arquivos Com Gaveta",77.8,sem_match,MLB55517485,"Organizador de mesa de madeira com gaveta, organizador M",0,,,,0.5
+722,onedrop,"Almofada Inteligente De Massagem Para Pescoço Azul",74.9,sem_match,MLB23210628,"Almofada inteligente de massagem quiroprática para pescoço cervical",0,,,,0.4
+723,onedrop,"Secadora De Roupa Portátil Com Ar Quente Branco",74.9,ok,MLB79677963,"Secadora De Roupa Portátil Com Ar Quente Branco",3,151.05,155.19,159.83,1
+459,c7-drop,"Power Bank Pro 10000mah Turbo 22.5w Com Tomada Cs-01w",74,sem_match,MLB36525442,"Carregador Portátil Power Bank 10000mah Turbo Com Display",0,,,,0.286
+721,onedrop,"Compressor De Ar Portátil Digital Sem Fio",74,sem_match,MLB41380219,"Mini Compressor Ar Portátil Lumi Tela Digital Sem Fio Preto 150psi",0,,,,0.5
+720,onedrop,"Kit Travesseiro Cervical Anatômico + Melatonina Gumway 30 Go Branco E Azul Marinho",73,sem_match,MLB65286196,"Kit 1 Travesseiro Cervical Anatômico E 1 Almofada De Joelho Cor Branco",0,,,,0.286
+458,c7-drop,"Kit Ferro de Solda Com Multímetro 60w Profissional Completo Ajustavel Completo Eletrônica 127v",72,ok,MLB79399699,"Kit Ferro De Solda 60w Profissional Completo Ajustavel",19,55.81,128.5,214.05,1
+719,onedrop,"Kit Utensílios De Cozinha Jogo Completo 19 Peças",71.9,sem_match,MLB79403139,"Kit Utensílios De Cozinha Jogo Completo 19 Peças Preto Original - Alta Qualidade",0,,,,0.5
+457,c7-drop,"Prancha Chapinha Profissional Cerâmica Bivolt 230° Visor Led",71,ok,MLB77285577,"Prancha Chapinha Profissional Cerâmica Bivolt 230° Visor Led Preto",13,42.9,127.9,181.9,1
+455,c7-drop,"Árvore Natal Verde 1,50m 220 Galhos Promoção",70,sem_match,MLB31795452,"Árvore Natal 150 Cm - 220 Galhos Pinheiro Verde Tradicional",2,92.9,95.9,98.9,0.567
+456,c7-drop,"Ventilador Recarregável Silencioso Dobrável Portátil Sem Fio Pás 19Cm Frequência 7200mah 110v/220v MING",70,sem_match,MLB46390839,"Ventilador Recarregável Portátil Sem Fio Pás 19Cm Frequência 7200mah",0,,,,0.5
+454,c7-drop,"Joelheira Com Aquecimento Massageador Joelho Alivia Dor",69,sem_match,MLB67694388,"Joelheira Ombreira Massageador Aquecimento Dor Joelho Alivio Preto Padrão",0,,,,0.417
+718,onedrop,"Luminária Projetor Carrossel Coelhinho Com Luz Noturna",67.9,ok,MLB81053685,"Luminária Projetor Infantil Estrelas Carrossel Multicontrol Luz Noturna LED com 12 Filmes 7 Cores 3 Níveis de Brilho e Controle Remoto USB para Quarto de Bebê Criança Presente Rosa",17,74.9,97.54,470,0.833
+453,c7-drop,"Mini Violão Acústico Infantil Cordas Aço Brinquedo Criança",67,ok,MLB36939753,"Mini Violão Acústico Infantil Cordas Aço Brinquedo Criança",1,33.38,33.38,33.38,0.85
+717,onedrop,"Massageador Elétrico Para Joelhos Com Vibração Preto",65,sem_match,MLB25960270,"Massageador Profissional Massageador Elétrico Vibração E",0,,,,0.375
+449,c7-drop,"Capa De Silicone Para Starlink Mini À Prova D'água",64,sem_match,MLB65227185,"Capa protetora de silicone à prova de choque para Starlink Mini",1,229,229,229,0.708
+450,c7-drop,"Pista De Carrinhos Construção Brinquedo Infantil 125 Peças Amarelo",64,ok,MLB55183121,"Pista De Carrinhos Construção Brinquedo Infantil 180 Peças Amarelo",3,49.9,66.3,119.9,1
+451,c7-drop,"Lanterna Led Portátil Usb-c Com Ímã E Luz Lateral",64,sem_match,MLB43734280,"Lanterna Led Portátil Magnética Imã Recarregável Usb Osram Lanterna Preto Luz Branco",0,,,,0.429
+452,c7-drop,"Carregador Sem Fio Magnetico 3 Em 1 15w Celular Fone Relogio",64,ok,MLB77524267,"Carregador Sem Fio Aitek 3 Em 1 Para Celular, Fone e Relógio",3,100,110,180,0.833
+715,onedrop,"Estrela Neon Led Rgb Com Controle Remoto E App Colorido",63.9,sem_match,MLB80807007,"Tira Led Neon Rgb Ic Usb App Con Controle Remoto 5m Ritmicas Rgb",1,428.5,428.5,428.5,0.637
+716,onedrop,"Papai Noel Neon Led Rgb Com Controle Remoto E App Colorido",63.9,sem_match,MLB24350851,"Papai Noel Lindt Papai Noel Lindt",0,,,,0.333
+448,c7-drop,"Escova De Limpeza Elétrica P/ Casa Multiuso Sem Fio Portátil 9 em 1",62,sem_match,MLB67692569,"Escova Limpeza Elétrica Giratória Sem Fio Multiuso Usb",0,,,,0.357
+447,c7-drop,"Caminhão Carretinha Leva Carros Dinossauro Com Carrinhos Cor Verde",61,sem_match,MLB62350230,"Caminhão Carretinha Dinossauro C/ Carrinhos Diversão Top Cor Verde Personagem Carreta Cegonha",12,59.9,102.45,129.99,0.75
+446,c7-drop,"Medidor De Pressão Arterial Aferidor Cardíaco Pulso Com Voz Cor Branco",60,ok,MLB36210643,"Medidor De Pressão Arterial Aferidor Cardíaco Pulso Com Voz Cor Branco/preto Kateluo",1,129.99,129.99,129.99,0.85
+713,onedrop,"Creatina Gummies Práttico Health Chocolate",59.9,sem_match,MLB50172756,"Creatina Gummies Ss Nutrition Sabor Uva",0,,,,0.2
