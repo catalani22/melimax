@@ -897,11 +897,14 @@ router.get('/export-csv', (req, res) => {
 });
 
 async function buildHighScoreMlAttributes(product, leafCategoryId) {
+  const gtin = String(product.gtin || product.ean || product.upc || '')
+    .replace(/\D/g, '')
+    .slice(0, 14);
+
   const attrMap = new Map([
     ['BRAND', { id: 'BRAND', value_name: product.marca || 'Genérica' }],
     ['MODEL', { id: 'MODEL', value_name: product.modelo || 'Padrão' }],
     ['SELLER_SKU', { id: 'SELLER_SKU', value_name: product.sku }],
-    ['EMPTY_GTIN_REASON', { id: 'EMPTY_GTIN_REASON', value_id: '17055160' }],
     ['SALE_FORMAT', { id: 'SALE_FORMAT', value_name: 'Unidade' }],
     ['UNITS_PER_PACK', { id: 'UNITS_PER_PACK', value_name: '1' }],
   ]);
@@ -909,17 +912,30 @@ async function buildHighScoreMlAttributes(product, leafCategoryId) {
   try {
     const catAttrs = await mlFetch(`/categories/${encodeURIComponent(leafCategoryId)}/attributes`);
     if (Array.isArray(catAttrs)) {
+      const byId = new Map(catAttrs.map((def) => [def.id, def]));
+      const colorDef = byId.get('COLOR') || byId.get('MAIN_COLOR');
+      if (colorDef) {
+        attrMap.set(colorDef.id, {
+          id: colorDef.id,
+          value_name: product.cor || product.color || 'Preto',
+        });
+      }
+
+      if (gtin) {
+        attrMap.set('GTIN', { id: 'GTIN', value_name: gtin });
+      } else if (byId.has('EMPTY_GTIN_REASON')) {
+        attrMap.set('EMPTY_GTIN_REASON', { id: 'EMPTY_GTIN_REASON', value_id: '17055160' });
+      }
+
       for (const def of catAttrs) {
         if (!def?.id || attrMap.has(def.id)) continue;
+        if (def.id === 'GTIN' || def.id === 'EMPTY_GTIN_REASON') continue;
+        if (def.id === 'COLOR' || def.id === 'MAIN_COLOR') continue;
+
         const isReq = Boolean(def.tags?.required || def.tags?.catalog_required || def.tags?.new_required);
         if (!isReq) continue;
 
-        if (def.id === 'COLOR' || def.id === 'MAIN_COLOR') {
-          attrMap.set(def.id, {
-            id: def.id,
-            value_name: def.values?.[0]?.name || 'Preto',
-          });
-        } else if (def.id === 'VOLTAGE') {
+        if (def.id === 'VOLTAGE') {
           attrMap.set(def.id, {
             id: def.id,
             value_name: /110|220|bivolt/i.test(product.titulo_ml) ? '110V/220V (Bivolt)' : 'Não aplica',
@@ -969,8 +985,12 @@ async function publishSingleProductToMl(product, options = {}) {
   const listingTypeId = options.listing_type_id || PREMIUM_LISTING_TYPE;
   const attributes = await buildHighScoreMlAttributes(product, leafCategoryId);
 
+  const familyName = String(
+    product.family_name || product.titulo_ml || product.modelo || 'Produto'
+  ).slice(0, 60);
+
   const payload = {
-    title: product.titulo_ml.slice(0, 60),
+    family_name: familyName,
     category_id: leafCategoryId,
     price: Number(product.preco_venda_ml_sugerido),
     currency_id: 'BRL',
@@ -999,7 +1019,24 @@ async function publishSingleProductToMl(product, options = {}) {
     attributes,
   };
 
-  const created = await mlFetch('/items', { method: 'POST', body: payload });
+  let created;
+  try {
+    created = await mlFetch('/items', { method: 'POST', body: payload });
+  } catch (err) {
+    const message = String(err?.message || '');
+    const legacyCategory =
+      err?.status === 400 &&
+      /title|family_name/i.test(message) &&
+      !/GTIN/i.test(message);
+    if (!legacyCategory) throw err;
+    const legacyPayload = {
+      ...payload,
+      title: product.titulo_ml.slice(0, 60),
+    };
+    delete legacyPayload.family_name;
+    created = await mlFetch('/items', { method: 'POST', body: legacyPayload });
+  }
+
   if (created?.id && product.descricao_ml_otimizada) {
     await mlFetch(`/items/${encodeURIComponent(created.id)}/description`, {
       method: 'POST',

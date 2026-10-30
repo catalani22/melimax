@@ -103,11 +103,18 @@ export async function refreshAccount(account) {
 }
 
 function mlError(status, data) {
-  const message =
+  const causes = Array.isArray(data?.cause)
+    ? data.cause.filter((cause) => cause?.message)
+    : [];
+  const causeText = causes
+    .map((cause) => (cause.type === 'warning' ? `Aviso: ${cause.message}` : cause.message))
+    .join(' | ');
+  const base =
     data?.message ||
     data?.error_description ||
     data?.error ||
     `Mercado Livre respondeu ${status}`;
+  const message = causeText ? `${base}: ${causeText}` : base;
   const err = new Error(message);
   err.status = status;
   err.code = data?.code || data?.error;

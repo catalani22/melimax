@@ -1723,14 +1723,17 @@ export default function App() {
                 {selectedSkus.length > 0 ? (
                   <button
                     type="button"
-                    disabled={uploadingBatch}
+                    disabled={uploadingBatch || !account}
                     onClick={() => handleBatchUploadMl(selectedSkus)}
+                    title={account ? undefined : 'Conecte a conta Mercado Livre para publicar'}
                     className="btn-accent py-1.5 text-xs"
                   >
                     <Icon name="upload" className="h-3.5 w-3.5" />
                     {uploadingBatch
                       ? 'Enviando ao ML...'
-                      : `Subir ${selectedSkus.length} Selecionado(s) no ML`}
+                      : account
+                        ? `Subir ${selectedSkus.length} Selecionado(s) no ML`
+                        : 'Conecte a conta ML'}
                   </button>
                 ) : null}
                 <span className="text-xs font-medium text-slate-600">Sobrepreço:</span>
@@ -2932,8 +2935,29 @@ export default function App() {
                 </button>
 
                 {lastUploadReport ? (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs font-mono">
-                    Enviados com sucesso: {lastUploadReport.enviados} · Falhas: {lastUploadReport.falhas}
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+                    <div className="font-mono font-semibold text-slate-800">
+                      Enviados com sucesso: {lastUploadReport.enviados} · Falhas: {lastUploadReport.falhas}
+                    </div>
+                    {Array.isArray(lastUploadReport.resultados) && lastUploadReport.falhas > 0 ? (
+                      <div className="mt-2 space-y-1.5">
+                        {(lastUploadReport.resultados || [])
+                          .filter((r) => !r.ok)
+                          .slice(0, 8)
+                          .map((r) => (
+                            <div key={r.sku} className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-800">
+                              <span className="font-mono font-semibold">{r.sku}</span>
+                              <span className="mx-1.5 text-red-400">·</span>
+                              <span className="break-words">{String(r.error || 'Erro desconhecido').slice(0, 220)}</span>
+                            </div>
+                          ))}
+                        {(lastUploadReport.falhas || 0) > 8 ? (
+                          <div className="text-[11px] font-medium text-slate-500">
+                            + {(lastUploadReport.falhas || 0) - 8} falha(s). Veja os detalhes no log do backend.
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -2941,17 +2965,20 @@ export default function App() {
               <div className="surface space-y-3 p-5 lg:col-span-6">
                 <div className="label">Quais Secrets São Estritamente Necessárias?</div>
                 <p className="text-xs leading-relaxed text-slate-700">
-                  <strong>Neste momento: NENHUMA secret é necessária</strong> para alimentar a base de produtos, minerar as 6 lojas brasileiras do AliExpress sem repetição ou baixar os CSVs completos. Removemos todas as variáveis antigas desnecessárias e mantivemos o painel sem senha por enquanto.
+                  <strong>Nenhuma secret adicional é necessária para alimentar a base</strong>, minerar as 6 lojas brasileiras do AliExpress sem repetição ou baixar os CSVs completos. As credenciais do Mercado Livre já estão configuradas no backend e a conta autorizada aparece acima; o painel é protegido por senha.
                 </p>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs space-y-2">
                   <div className="font-semibold text-slate-900">
-                    Apenas 2 chaves serão usadas depois que sair o novo CNAE da MeLi Max Shop:
+                    Credenciais já configuradas (não precisam ser coladas no painel):
                   </div>
                   <div className="text-slate-600">
-                    1. <code className="font-mono font-semibold text-slate-900">ML_APP_ID</code> — ID do seu aplicativo criado gratuitamente em <code className="font-mono">developers.mercadolivre.com.br</code>.
+                    1. <code className="font-mono font-semibold text-slate-900">ML_APP_ID</code> — ID do aplicativo do Mercado Livre.
                   </div>
                   <div className="text-slate-600">
-                    2. <code className="font-mono font-semibold text-slate-900">ML_CLIENT_SECRET</code> — Chave secreta desse mesmo aplicativo do Mercado Livre para autorizar o envio de anúncios em 1 clique direto na sua conta.
+                    2. <code className="font-mono font-semibold text-slate-900">ML_CLIENT_SECRET</code> — Chave secreta usada para renovar a autorização da conta conectada.
+                  </div>
+                  <div className="text-slate-600">
+                    3. <code className="font-mono font-semibold text-slate-900">DASHBOARD_AUTH_ENABLED</code> — Mantém o painel protegido pela senha configurada.
                   </div>
                 </div>
               </div>
