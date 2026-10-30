@@ -2,6 +2,27 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
 const API = (rawApiUrl || '/api').replace(/\/+$/, '');
+const SESSION_KEY = 'melimax_dashboard_token';
+
+function getSessionToken() {
+  try {
+    return window.localStorage.getItem(SESSION_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function saveSessionToken(token) {
+  try {
+    if (token) window.localStorage.setItem(SESSION_KEY, token);
+    else window.localStorage.removeItem(SESSION_KEY);
+  } catch {}
+}
+
+function authHeaders() {
+  const token = getSessionToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 async function request(path, options = {}) {
   const { body, headers, ...rest } = options;
@@ -9,6 +30,7 @@ async function request(path, options = {}) {
     ...rest,
     headers: {
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...authHeaders(),
       ...(headers || {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -20,6 +42,10 @@ async function request(path, options = {}) {
     : await res.text().catch(() => null);
 
   if (!res.ok) {
+    if (res.status === 401 && data && data.code === 'DASHBOARD_LOCKED') {
+      saveSessionToken('');
+      window.dispatchEvent(new Event('melimax:locked'));
+    }
     const error = new Error(
       (data && (data.error || data.message)) || `Erro ${res.status} ao comunicar com o servidor`
     );
@@ -689,6 +715,13 @@ export default function App() {
   const [activeNav, setActiveNav] = useState('catalogo');
   const [toast, setToast] = useState(null);
 
+  const [sessionUser, setSessionUser] = useState(null);
+  const [authState, setAuthState] = useState('loading');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginBusy, setLoginBusy] = useState(false);
+  const authReady = authState === 'ready' || authState === 'open';
+
   const [account, setAccount] = useState(null);
   const [authConfig, setAuthConfig] = useState(null);
 
@@ -819,19 +852,66 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const status = await request('/auth/painel');
+        if (!alive) return;
+        if (!status?.protected) {
+          setAuthState('open');
+          return;
+        }
+        if (!getSessionToken()) {
+          setAuthState('locked');
+          return;
+        }
+        try {
+          const me = await request('/auth/sessao');
+          if (!alive) return;
+          if (me?.user?.id) {
+            setSessionUser(me.user);
+            setAuthState('ready');
+          } else {
+            saveSessionToken('');
+            setAuthState('locked');
+          }
+        } catch {
+          saveSessionToken('');
+          if (alive) setAuthState('locked');
+        }
+      } catch {
+        if (alive) setAuthState('locked');
+      }
+    })();
+    const onLocked = () => {
+      saveSessionToken('');
+      setSessionUser(null);
+      setAuthState('locked');
+    };
+    window.addEventListener('melimax:locked', onLocked);
+    return () => {
+      alive = false;
+      window.removeEventListener('melimax:locked', onLocked);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authReady) return;
     loadAccount();
     loadApprovedStores();
-  }, [loadAccount, loadApprovedStores]);
+  }, [authReady, loadAccount, loadApprovedStores]);
 
   useEffect(() => {
+    if (!authReady) return;
     loadCatalog();
-  }, [loadCatalog]);
+  }, [authReady, loadCatalog]);
 
   useEffect(() => {
+    if (!authReady) return;
     if (activeNav === 'fornecedores') loadApprovedStores();
     if (activeNav === 'execucao') loadOrders();
     if (activeNav === 'anuncios') loadListings();
-  }, [activeNav, loadApprovedStores, loadOrders, loadListings]);
+  }, [authReady, activeNav, loadApprovedStores, loadOrders, loadListings]);
 
   const handleScrapeNew = async (e) => {
     e.preventDefault();
@@ -995,6 +1075,65 @@ export default function App() {
       notify(err.message, 'error');
     } finally {
       setSavingTracking(false);
+    }
+  };
+
+  const handleLogin = async (event) => {
+    event.preventDefault();
+    const password = loginPassword.trim();
+    if (!password) return;
+    setLoginBusy(true);
+    setLoginError('');
+    try {
+      const data = await request('/auth/painel', {
+        method: 'POST',
+        body: { password },
+      });
+      if (data?.token) {
+        saveSessionToken(data.token);
+        setSessionUser(data.user || { username: 'admin' });
+        setLoginPassword('');
+        setAuthState('ready');
+      } else {
+        setAuthState('open');
+      }
+    } catch (err) {
+      setLoginError(err.message || 'Senha inválida.');
+    } finally {
+      setLoginBusy(false);
+    }
+  };
+
+  const handleSessionLogout = () => {
+    saveSessionToken('');
+    setSessionUser(null);
+    setAuthState('locked');
+    setLoginPassword('');
+    setLoginError('');
+  };
+
+  const handleDownloadCsv = async (path, filename) => {
+    try {
+      const res = await fetch(`${API}${path}`, { headers: authHeaders() });
+      if (!res.ok) {
+        let message = `Erro ${res.status} ao baixar CSV`;
+        try {
+          const data = await res.json();
+          message = data?.error || message;
+        } catch {}
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      notify(err.message, 'error');
     }
   };
 
@@ -1178,6 +1317,75 @@ export default function App() {
     ? `&fornecedor=${encodeURIComponent(selectedSupplier)}`
     : '';
 
+  if (authState === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F4F5F7] text-slate-900">
+        <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-medium text-slate-600 shadow-sm">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-meli-blue" />
+          Verificando acesso ao painel...
+        </div>
+      </div>
+    );
+  }
+
+  if (authState === 'locked') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F4F5F7] px-4 text-slate-900">
+        <div className="w-full max-w-sm">
+          <div className="mb-5 flex items-center justify-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-meli-yellow text-lg font-bold text-meli-ink">
+              M
+            </div>
+            <div>
+              <div className="text-base font-bold leading-tight text-slate-900">MeLi Max Shop</div>
+              <div className="text-[11px] text-slate-500">AliExpress Brasil · Mercado Livre</div>
+            </div>
+          </div>
+
+          <form onSubmit={handleLogin} className="surface space-y-4 p-6">
+            <div>
+              <h1 className="text-lg font-bold tracking-tight text-slate-900">Acesso restrito</h1>
+              <p className="mt-1 text-xs text-slate-500">
+                Informe a senha do painel para liberar a base, os custos e a operação.
+              </p>
+            </div>
+
+            <div>
+              <label className="label" htmlFor="dashboard-password">
+                Senha de acesso
+              </label>
+              <input
+                id="dashboard-password"
+                type="password"
+                autoFocus
+                autoComplete="current-password"
+                value={loginPassword}
+                onChange={(event) => setLoginPassword(event.target.value)}
+                className="input mt-1"
+                placeholder="Digite sua senha"
+              />
+            </div>
+
+            {loginError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                {loginError}
+              </div>
+            ) : null}
+
+            <button type="submit" disabled={loginBusy} className="btn-primary w-full py-2">
+              {loginBusy ? 'Entrando...' : 'Entrar no painel'}
+            </button>
+
+            <p className="text-center text-[10px] leading-4 text-slate-400">
+              Sessão protegida por token assinado. Esqueceu a senha? Rode o script
+              {' '}<span className="font-mono">definir-senha-painel.mjs</span> no servidor.
+            </p>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F4F5F7] text-slate-900">
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
@@ -1216,22 +1424,34 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2.5">
-            <a
-              href={`${API}/aliexpress/export-csv?formato=completo${csvQuerySuffix}`}
+            <button
+              type="button"
+              onClick={() =>
+                handleDownloadCsv(
+                  `/aliexpress/export-csv?formato=completo${csvQuerySuffix}`,
+                  'mercadolivre_aliexpress_completo.csv'
+                )
+              }
               className="btn-primary py-1.5 text-xs"
             >
               <Icon name="download" className="h-3.5 w-3.5" />
               {selectedSupplier
                 ? `CSV ${selectedSupplier} (${catalogData.total_filtrado})`
                 : `CSV Completo (${resumo.total})`}
-            </a>
-            <a
-              href={`${API}/aliexpress/export-csv?formato=planilha_ml${csvQuerySuffix}`}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                handleDownloadCsv(
+                  `/aliexpress/export-csv?formato=planilha_ml${csvQuerySuffix}`,
+                  'mercadolivre_planilha_publicacao.csv'
+                )
+              }
               className="btn-ghost py-1.5 text-xs"
             >
               <Icon name="download" className="h-3.5 w-3.5" />
               Planilha ML (;)
-            </a>
+            </button>
 
             <div className="h-5 w-px bg-slate-200" />
 
@@ -1246,6 +1466,19 @@ export default function App() {
                 Aguardando CNAE / Conexão ML
               </button>
             )}
+
+            {sessionUser ? (
+              <>
+                <div className="h-5 w-px bg-slate-200" />
+                <button
+                  type="button"
+                  onClick={handleSessionLogout}
+                  className="text-xs font-medium text-slate-500 hover:text-red-600"
+                >
+                  Sair
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
       </header>
@@ -1270,13 +1503,19 @@ export default function App() {
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <a
-                  href={`${API}/aliexpress/export-csv?formato=completo&fornecedor=${encodeURIComponent('DropFacil Store')}`}
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleDownloadCsv(
+                      `/aliexpress/export-csv?formato=completo&fornecedor=${encodeURIComponent('DropFacil Store')}`,
+                      'mercadolivre_aliexpress_dropfacil_lote2.csv'
+                    )
+                  }
                   className="btn-ghost py-1.5 text-xs"
                 >
                   <Icon name="download" className="h-3.5 w-3.5" />
                   Baixar CSV Lote 2 · DropFacil Store
-                </a>
+                </button>
                 <button
                   type="button"
                   onClick={() => setActiveNav('fornecedores')}
@@ -1345,20 +1584,32 @@ export default function App() {
               <div className="surface flex flex-col justify-between p-4">
                 <div className="label">Exportar CSV (Geral ou Filtrado)</div>
                 <div className="mt-2 flex flex-col gap-2">
-                  <a
-                    href={`${API}/aliexpress/export-csv?formato=completo${csvQuerySuffix}`}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleDownloadCsv(
+                        `/aliexpress/export-csv?formato=completo${csvQuerySuffix}`,
+                        'mercadolivre_aliexpress_completo.csv'
+                      )
+                    }
                     className="btn-primary w-full py-1.5 text-xs"
                   >
                     <Icon name="download" className="h-3.5 w-3.5" />
                     {selectedSupplier ? `CSV Completo · ${selectedSupplier}` : 'CSV Completo Geral (66 Colunas)'}
-                  </a>
-                  <a
-                    href={`${API}/aliexpress/export-csv?formato=planilha_ml${csvQuerySuffix}`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleDownloadCsv(
+                        `/aliexpress/export-csv?formato=planilha_ml${csvQuerySuffix}`,
+                        'mercadolivre_planilha_publicacao.csv'
+                      )
+                    }
                     className="btn-ghost w-full py-1.5 text-xs"
                   >
                     <Icon name="download" className="h-3.5 w-3.5" />
                     {selectedSupplier ? `Planilha ML · ${selectedSupplier}` : 'Planilha Publicação ML (;)'}
-                  </a>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1707,13 +1958,19 @@ export default function App() {
                   <Icon name="refresh" className="h-3.5 w-3.5" />
                   Atualizar custos
                 </button>
-                <a
-                  href={`${API}/aliexpress/export-csv?formato=completo`}
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleDownloadCsv(
+                      '/aliexpress/export-csv?formato=completo',
+                      'custos_lucro_real_817.csv'
+                    )
+                  }
                   className="btn-primary py-1.5 text-xs"
                 >
                   <Icon name="download" className="h-3.5 w-3.5" />
                   Baixar CSV com custos
-                </a>
+                </button>
               </div>
             </div>
 
