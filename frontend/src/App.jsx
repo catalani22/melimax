@@ -70,6 +70,7 @@ async function copyText(text) {
 
 const NAV_ITEMS = [
   { id: 'catalogo', label: 'Base Pronta & CSV ML', icon: 'table' },
+  { id: 'custos', label: 'Custos & Lucro Real', icon: 'chart' },
   { id: 'fornecedores', label: '6 Fornecedores Brasil', icon: 'store' },
   { id: 'execucao', label: 'Execução & Rastreio', icon: 'truck' },
   { id: 'frete', label: 'Frete & Precificação', icon: 'globe' },
@@ -171,6 +172,14 @@ function Icon({ name, className = 'h-4 w-4' }) {
       <>
         <polyline points="23 4 23 10 17 10" />
         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+      </>
+    ),
+    chart: (
+      <>
+        <line x1="18" y1="20" x2="18" y2="10" />
+        <line x1="12" y1="20" x2="12" y2="4" />
+        <line x1="6" y1="20" x2="6" y2="14" />
+        <line x1="3" y1="20" x2="21" y2="20" />
       </>
     ),
   };
@@ -1031,12 +1040,139 @@ export default function App() {
     publicados_ml: 0,
     piso_79_90_count: 0,
     custo_medio: 0,
+    custo_produto_medio: 0,
+    custo_total_medio: 0,
+    comissao_media: 0,
+    imposto_medio: 0,
+    frete_medio: 0,
     venda_media: 0,
     lucro_liquido_medio: 0,
+    margem_liquida_pct: 0,
     roi_medio_pct: 0,
+    roi_medio_simples_pct: 0,
+    venda_total: 0,
+    custo_produto_total: 0,
+    comissao_total: 0,
+    imposto_total: 0,
+    frete_total: 0,
+    custo_total_operacao: 0,
+    lucro_liquido_total: 0,
     categorias: [],
     fornecedores: [],
   };
+
+  const costAudit = useMemo(() => {
+    const products = catalogData.produtos || [];
+    const r2 = (value) => Number((Number(value) || 0).toFixed(2));
+    const r1 = (value) => Number((Number(value) || 0).toFixed(1));
+    const totalSale = r2(products.reduce((acc, p) => acc + Number(p.preco_venda_ml_sugerido || 0), 0));
+    const totalProductCost = r2(
+      products.reduce(
+        (acc, p) => acc + Number(p.custo_produto_brl ?? p.preco_custo_aliexpress_brl ?? 0),
+        0
+      )
+    );
+    const totalFees = r2(
+      products.reduce(
+        (acc, p) => acc + Number(p.taxa_ml_estimada_brl || 0) + Number(p.custo_listagem_ml_brl || 0),
+        0
+      )
+    );
+    const totalTaxes = r2(
+      products.reduce((acc, p) => acc + Number(p.imposto_estimado_brl || 0), 0)
+    );
+    const totalShipping = r2(
+      products.reduce((acc, p) => acc + Number(p.custo_frete_vendedor_brl || 0), 0)
+    );
+    const totalOperational = r2(
+      products.reduce((acc, p) => acc + Number(p.custo_total_operacao_brl || 0), 0)
+    );
+    const totalNet = r2(
+      products.reduce((acc, p) => acc + Number(p.lucro_liquido_estimado_brl || 0), 0)
+    );
+
+    const feeMap = new Map();
+    const categoryMap = new Map();
+    for (const product of products) {
+      const feePct = Number(product.taxa_ml_pct ?? 19);
+      const fixed = Number(product.taxa_ml_fixa_brl || 0);
+      const feeKey = `${feePct}|${fixed.toFixed(2)}`;
+      const feeEntry = feeMap.get(feeKey) || {
+        taxa_ml_pct: feePct,
+        taxa_ml_fixa_brl: fixed,
+        produtos: 0,
+        total_comissao_brl: 0,
+      };
+      feeEntry.produtos += 1;
+      feeEntry.total_comissao_brl = r2(
+        feeEntry.total_comissao_brl + Number(product.taxa_ml_estimada_brl || 0)
+      );
+      feeMap.set(feeKey, feeEntry);
+
+      const catKey = product.categoria_ml_id || 'SEM_CATEGORIA';
+      const catEntry = categoryMap.get(catKey) || {
+        categoria_ml_id: catKey,
+        categoria_ml: product.categoria_ml || '—',
+        produtos: 0,
+        taxas: new Set(),
+        total_comissao_brl: 0,
+        total_impostos_brl: 0,
+        total_lucro_brl: 0,
+        total_custo_produto_brl: 0,
+      };
+      catEntry.produtos += 1;
+      catEntry.taxas.add(`${feePct}%`);
+      catEntry.total_comissao_brl = r2(
+        catEntry.total_comissao_brl + Number(product.taxa_ml_estimada_brl || 0)
+      );
+      catEntry.total_impostos_brl = r2(
+        catEntry.total_impostos_brl + Number(product.imposto_estimado_brl || 0)
+      );
+      catEntry.total_lucro_brl = r2(
+        catEntry.total_lucro_brl + Number(product.lucro_liquido_estimado_brl || 0)
+      );
+      catEntry.total_custo_produto_brl = r2(
+        catEntry.total_custo_produto_brl +
+          Number(product.custo_produto_brl ?? product.preco_custo_aliexpress_brl ?? 0)
+      );
+      categoryMap.set(catKey, catEntry);
+    }
+
+    return {
+      total: products.length,
+      totalSale,
+      totalProductCost,
+      totalFees,
+      totalTaxes,
+      totalShipping,
+      totalOperational,
+      totalNet,
+      marginPct: r1(totalSale > 0 ? (totalNet / totalSale) * 100 : 0),
+      roiPct: r1(totalProductCost > 0 ? (totalNet / totalProductCost) * 100 : 0),
+      fallback: products.filter(
+        (p) => p.taxa_ml_fonte && p.taxa_ml_fonte !== 'mercadolivre_api'
+      ).length,
+      negative: products.filter((p) => Number(p.lucro_liquido_estimado_brl) < 0).length,
+      withDetail: products.filter((p) => p.detalhamento_custos).length,
+      feeDistribution: [...feeMap.values()].sort((a, b) => b.produtos - a.produtos),
+      categories: [...categoryMap.values()]
+        .map((entry) => ({
+          ...entry,
+          taxas: [...entry.taxas].sort((a, b) => parseFloat(a) - parseFloat(b)),
+          roiPct: r1(
+            entry.total_custo_produto_brl > 0
+              ? (entry.total_lucro_brl / entry.total_custo_produto_brl) * 100
+              : 0
+          ),
+        }))
+        .sort((a, b) => b.produtos - a.produtos),
+      products: [...products].sort(
+        (a, b) =>
+          Number(b.lucro_liquido_estimado_brl || 0) -
+          Number(a.lucro_liquido_estimado_brl || 0)
+      ),
+    };
+  }, [catalogData.produtos]);
 
   const csvQuerySuffix = selectedSupplier
     ? `&fornecedor=${encodeURIComponent(selectedSupplier)}`
@@ -1185,18 +1321,24 @@ export default function App() {
               </div>
 
               <div className="surface p-4">
-                <div className="label">Custo Médio → Venda Média ML</div>
+                <div className="label">Custo Total Médio → Venda Média ML</div>
                 <div className="mt-1.5 flex items-baseline gap-2 font-mono tabular-nums">
                   <span className="text-lg font-semibold text-slate-600">
-                    {brl(resumo.custo_medio)}
+                    {brl(resumo.custo_total_medio ?? resumo.custo_medio)}
                   </span>
                   <span className="text-slate-400">→</span>
                   <span className="text-2xl font-bold text-meli-blue">
                     {brl(resumo.venda_media)}
                   </span>
                 </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  Lucro líquido médio: {brl(resumo.lucro_liquido_medio)} (ROI {resumo.roi_medio_pct}%)
+                <div className="mt-1 text-[11px] leading-4 text-slate-500">
+                  Produto {brl(resumo.custo_produto_medio ?? resumo.custo_medio)}
+                  {' + '}Taxas ML {brl(resumo.comissao_media ?? 0)}
+                  {' + '}Impostos {brl(resumo.imposto_medio ?? 0)}
+                  {' + '}Frete {brl(resumo.frete_medio ?? 0)}
+                </div>
+                <div className="mt-1 text-xs font-semibold text-emerald-700">
+                  Lucro líquido médio: {brl(resumo.lucro_liquido_medio)} · Margem {resumo.margem_liquida_pct ?? 0}% · ROI {resumo.roi_medio_pct}%
                 </div>
               </div>
 
@@ -1542,7 +1684,299 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 2: 6 FORNECEDORES HOMOLOGADOS ALIEXPRESS BRASIL */}
+        {/* VIEW 2: AUDITORIA DE CUSTOS E LUCRO REAL */}
+        {activeNav === 'custos' && (
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                  Custos & Lucro Real — {costAudit.total} produtos
+                </h1>
+                <p className="mt-0.5 max-w-3xl text-sm text-slate-600">
+                  Comissão Premium ML consultada na API do Mercado Livre por categoria e faixa de preço,
+                  impostos EI de 6% e frete R$ 0,00. Cada linha mostra o custo total da operação e o lucro
+                  líquido real após todas as taxas.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => loadCatalog()}
+                  className="btn-ghost py-1.5 text-xs"
+                >
+                  <Icon name="refresh" className="h-3.5 w-3.5" />
+                  Atualizar custos
+                </button>
+                <a
+                  href={`${API}/aliexpress/export-csv?formato=completo`}
+                  className="btn-primary py-1.5 text-xs"
+                >
+                  <Icon name="download" className="h-3.5 w-3.5" />
+                  Baixar CSV com custos
+                </a>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="surface p-4">
+                <div className="label">Vendas totais</div>
+                <div className="mt-1 font-mono text-xl font-bold text-slate-900 tabular-nums">
+                  {brl(costAudit.totalSale)}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  {costAudit.total} produtos · {costAudit.withDetail} com detalhamento
+                </div>
+              </div>
+              <div className="surface p-4">
+                <div className="label">Custo dos produtos</div>
+                <div className="mt-1 font-mono text-xl font-bold text-slate-900 tabular-nums">
+                  {brl(costAudit.totalProductCost)}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">AliExpress Brasil</div>
+              </div>
+              <div className="surface p-4">
+                <div className="label">Comissões ML Premium</div>
+                <div className="mt-1 font-mono text-xl font-bold text-meli-blue tabular-nums">
+                  {brl(costAudit.totalFees)}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  Taxa real por categoria · {costAudit.fallback} fallback
+                </div>
+              </div>
+              <div className="surface p-4">
+                <div className="label">Impostos EI (6%)</div>
+                <div className="mt-1 font-mono text-xl font-bold text-slate-900 tabular-nums">
+                  {brl(costAudit.totalTaxes)}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">Sobre o preço de venda</div>
+              </div>
+              <div className="surface p-4">
+                <div className="label">Frete do vendedor</div>
+                <div className="mt-1 font-mono text-xl font-bold text-emerald-700 tabular-nums">
+                  {brl(costAudit.totalShipping)}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">Frete grátis · por minha conta</div>
+              </div>
+              <div className="surface p-4">
+                <div className="label">Custo total da operação</div>
+                <div className="mt-1 font-mono text-xl font-bold text-slate-900 tabular-nums">
+                  {brl(costAudit.totalOperational)}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  Produto + comissão + impostos + frete
+                </div>
+              </div>
+              <div className="surface p-4">
+                <div className="label">Lucro líquido real</div>
+                <div className="mt-1 font-mono text-xl font-bold text-emerald-700 tabular-nums">
+                  {brl(costAudit.totalNet)}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  {costAudit.negative} produtos com lucro negativo
+                </div>
+              </div>
+              <div className="surface p-4">
+                <div className="label">Margem & ROI</div>
+                <div className="mt-1 font-mono text-xl font-bold text-slate-900 tabular-nums">
+                  {costAudit.marginPct}% <span className="text-sm text-slate-500">margem</span>
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  ROI {costAudit.roiPct}% sobre o custo dos produtos
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="surface overflow-hidden">
+                <div className="border-b border-slate-200 p-4">
+                  <div className="label">Distribuição das taxas ML Premium</div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">
+                    Percentual real retornado pela API do Mercado Livre
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-xs">
+                    <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+                      <tr>
+                        <th className="px-4 py-2.5 text-left">Taxa ML</th>
+                        <th className="px-4 py-2.5 text-right">Fixa</th>
+                        <th className="px-4 py-2.5 text-right">Produtos</th>
+                        <th className="px-4 py-2.5 text-right">Comissão total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {costAudit.feeDistribution.map((fee) => (
+                        <tr key={`${fee.taxa_ml_pct}-${fee.taxa_ml_fixa_brl}`}>
+                          <td className="px-4 py-2 font-mono font-semibold text-slate-800">
+                            {fee.taxa_ml_pct}%
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-slate-600">
+                            {brl(fee.taxa_ml_fixa_brl)}
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-slate-700">
+                            {fee.produtos}
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono font-semibold text-slate-900">
+                            {brl(fee.total_comissao_brl)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="surface overflow-hidden">
+                <div className="border-b border-slate-200 p-4">
+                  <div className="label">Custos por categoria</div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">
+                    Comissão, impostos e lucro real por categoria do Mercado Livre
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-xs">
+                    <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+                      <tr>
+                        <th className="px-4 py-2.5 text-left">Categoria</th>
+                        <th className="px-4 py-2.5 text-right">Prod.</th>
+                        <th className="px-4 py-2.5 text-right">Taxas</th>
+                        <th className="px-4 py-2.5 text-right">Comissão</th>
+                        <th className="px-4 py-2.5 text-right">Lucro</th>
+                        <th className="px-4 py-2.5 text-right">ROI</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {costAudit.categories.map((category) => (
+                        <tr key={category.categoria_ml_id}>
+                          <td className="px-4 py-2">
+                            <div className="max-w-[260px] truncate font-medium text-slate-800" title={category.categoria_ml}>
+                              {category.categoria_ml}
+                            </div>
+                            <div className="font-mono text-[10px] text-slate-500">
+                              {category.categoria_ml_id}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-slate-700">
+                            {category.produtos}
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-slate-600">
+                            {category.taxas.join(' / ')}
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-slate-800">
+                            {brl(category.total_comissao_brl)}
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono font-semibold text-emerald-700">
+                            {brl(category.total_lucro_brl)}
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-slate-600">
+                            {category.roiPct}%
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="surface overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 p-4">
+                <div>
+                  <div className="label">Detalhamento por produto</div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">
+                    Todos os {costAudit.total} produtos com taxa real, impostos, frete, custo total, lucro, margem e ROI.
+                  </div>
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Ordenado pelo maior lucro líquido
+                </div>
+              </div>
+              <div className="overflow-x-auto scrollbar-thin">
+                <table className="w-full border-collapse text-left text-xs">
+                  <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+                    <tr>
+                      <th className="px-4 py-2.5">Produto / SKU</th>
+                      <th className="px-3 py-2.5">Categoria</th>
+                      <th className="px-3 py-2.5 text-right">Venda</th>
+                      <th className="px-3 py-2.5 text-right">Custo produto</th>
+                      <th className="px-3 py-2.5 text-right">Taxa ML</th>
+                      <th className="px-3 py-2.5 text-right">Comissão ML</th>
+                      <th className="px-3 py-2.5 text-right">Impostos</th>
+                      <th className="px-3 py-2.5 text-right">Frete</th>
+                      <th className="px-3 py-2.5 text-right">Custo total</th>
+                      <th className="px-3 py-2.5 text-right">Lucro líquido</th>
+                      <th className="px-3 py-2.5 text-right">Margem / ROI</th>
+                      <th className="px-3 py-2.5 text-right">Fonte</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {costAudit.products.map((item) => (
+                      <tr key={item.sku} className="hover:bg-slate-50/80">
+                        <td className="px-4 py-2.5">
+                          <div className="max-w-[260px] truncate font-semibold text-slate-900" title={item.titulo_ml}>
+                            {item.titulo_ml}
+                          </div>
+                          <div className="font-mono text-[10px] text-slate-500">{item.sku}</div>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <div className="max-w-[220px] truncate text-[11px] text-slate-700" title={item.categoria_ml}>
+                            {item.categoria_ml}
+                          </div>
+                          <div className="font-mono text-[10px] text-slate-500">{item.categoria_ml_id}</div>
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-800">
+                          {brl(item.preco_venda_ml_sugerido)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700">
+                          {brl(item.custo_produto_brl ?? item.preco_custo_aliexpress_brl)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700">
+                          <div className="font-semibold">{item.taxa_ml_pct ?? 19}%</div>
+                          <div className="text-[10px] text-slate-500">fixa {brl(item.taxa_ml_fixa_brl || 0)}</div>
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-800">
+                          {brl(item.taxa_ml_estimada_brl)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700">
+                          {brl(item.imposto_estimado_brl)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-600">
+                          {brl(item.custo_frete_vendedor_brl || 0)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono font-semibold tabular-nums text-slate-900">
+                          {brl(item.custo_total_operacao_brl)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono font-bold tabular-nums text-emerald-700">
+                          {brl(item.lucro_liquido_estimado_brl)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-600">
+                          <div>{item.margem_liquida_pct}% margem</div>
+                          <div className="text-[10px]">ROI {item.roi_sobre_custo_pct}%</div>
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              item.taxa_ml_fonte === 'mercadolivre_api'
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : 'bg-amber-50 text-amber-700'
+                            }`}
+                          >
+                            {item.taxa_ml_fonte === 'mercadolivre_api' ? 'API ML' : 'Estimada'}
+                          </span>
+                          <div className="mt-0.5 text-[10px] text-slate-500">
+                            {item.tipo_anuncio_ml === 'premium' ? 'Premium' : item.tipo_anuncio || 'Premium'}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 3: 6 FORNECEDORES HOMOLOGADOS ALIEXPRESS BRASIL */}
         {activeNav === 'fornecedores' && (
           <div className="space-y-6">
             <div className="flex flex-wrap items-end justify-between gap-4">

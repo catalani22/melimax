@@ -308,9 +308,23 @@ function summarizeCatalog(products) {
       publicados_ml: 0,
       piso_79_90_count: 0,
       custo_medio: 0,
+      custo_produto_medio: 0,
+      custo_total_medio: 0,
+      comissao_media: 0,
+      imposto_medio: 0,
+      frete_medio: 0,
       venda_media: 0,
       lucro_liquido_medio: 0,
+      margem_liquida_pct: 0,
       roi_medio_pct: 0,
+      roi_medio_simples_pct: 0,
+      venda_total: 0,
+      custo_produto_total: 0,
+      comissao_total: 0,
+      imposto_total: 0,
+      frete_total: 0,
+      custo_total_operacao: 0,
+      lucro_liquido_total: 0,
       categorias: [],
       fornecedores: [],
       lotes: [],
@@ -332,10 +346,23 @@ function summarizeCatalog(products) {
     (p) => p.piso_79_90_aplicado || Number(p.preco_venda_ml_sugerido) <= 79.91
   ).length;
 
-  const sumCost = products.reduce((acc, p) => acc + (Number(p.preco_custo_aliexpress_brl) || 0), 0);
+  const productCostOf = (p) =>
+    Number(p.custo_produto_brl ?? p.detalhamento_custos?.custo_produto_brl ?? p.preco_custo_aliexpress_brl) || 0;
+  const sumCost = products.reduce((acc, p) => acc + productCostOf(p), 0);
   const sumPrice = products.reduce((acc, p) => acc + (Number(p.preco_venda_ml_sugerido) || 0), 0);
   const sumProfit = products.reduce((acc, p) => acc + (Number(p.lucro_liquido_estimado_brl) || 0), 0);
   const sumRoi = products.reduce((acc, p) => acc + (Number(p.roi_sobre_custo_pct) || 0), 0);
+  const sumFees = products.reduce(
+    (acc, p) =>
+      acc + (Number(p.taxa_ml_estimada_brl) || 0) + (Number(p.custo_listagem_ml_brl) || 0),
+    0
+  );
+  const sumTaxes = products.reduce((acc, p) => acc + (Number(p.imposto_estimado_brl) || 0), 0);
+  const sumShipping = products.reduce((acc, p) => acc + (Number(p.custo_frete_vendedor_brl) || 0), 0);
+  const sumTotalCost = products.reduce((acc, p) => {
+    const fallback = productCostOf(p) + (Number(p.taxa_ml_estimada_brl) || 0) + (Number(p.imposto_estimado_brl) || 0) + (Number(p.custo_frete_vendedor_brl) || 0);
+    return acc + (Number(p.custo_total_operacao_brl) || fallback);
+  }, 0);
   const categorias = [...new Set(products.map((p) => p.categoria_ml).filter(Boolean))].sort();
 
   const supplierCounts = new Map();
@@ -356,9 +383,23 @@ function summarizeCatalog(products) {
     publicados_ml: publicadosCount,
     piso_79_90_count: pisoCount,
     custo_medio: Number((sumCost / total).toFixed(2)),
+    custo_produto_medio: Number((sumCost / total).toFixed(2)),
+    custo_total_medio: Number((sumTotalCost / total).toFixed(2)),
+    comissao_media: Number((sumFees / total).toFixed(2)),
+    imposto_medio: Number((sumTaxes / total).toFixed(2)),
+    frete_medio: Number((sumShipping / total).toFixed(2)),
     venda_media: Number((sumPrice / total).toFixed(2)),
     lucro_liquido_medio: Number((sumProfit / total).toFixed(2)),
-    roi_medio_pct: Number((sumRoi / total).toFixed(1)),
+    margem_liquida_pct: Number((sumPrice > 0 ? (sumProfit / sumPrice) * 100 : 0).toFixed(1)),
+    roi_medio_pct: Number((sumCost > 0 ? (sumProfit / sumCost) * 100 : 0).toFixed(1)),
+    roi_medio_simples_pct: Number((sumRoi / total).toFixed(1)),
+    venda_total: Number(sumPrice.toFixed(2)),
+    custo_produto_total: Number(sumCost.toFixed(2)),
+    comissao_total: Number(sumFees.toFixed(2)),
+    imposto_total: Number(sumTaxes.toFixed(2)),
+    frete_total: Number(sumShipping.toFixed(2)),
+    custo_total_operacao: Number(sumTotalCost.toFixed(2)),
+    lucro_liquido_total: Number(sumProfit.toFixed(2)),
     categorias,
     fornecedores: [...supplierCounts.entries()].map(([nome, qtd]) => ({ nome, qtd })),
     lotes: [...loteCounts.entries()].map(([nome, qtd]) => ({ nome, qtd })),
