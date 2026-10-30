@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -216,6 +217,98 @@ function nextInternalCode(products) {
   return `AE-${String(maxNum + 1).padStart(4, '0')}`;
 }
 
+const ML_MIN_INTERNAL_SCORE = 85;
+const ML_MIN_IMAGES = 4;
+const ML_MIN_PRICE = 79.9;
+const ML_REVIEW_CHECKS = ['categoria', 'fotos', 'titulo_fotos', 'preco_frete'];
+
+export function getProductImages(product) {
+  const fromArray = Array.isArray(product?.imagens) ? product.imagens : [];
+  const fromFields = [
+    product?.imagem_1,
+    product?.imagem_2,
+    product?.imagem_3,
+    product?.imagem_4,
+    product?.imagem_5,
+    product?.imagem_6,
+  ];
+  return [...new Set([...fromArray, ...fromFields].map((u) => String(u || '').trim()).filter(Boolean))];
+}
+
+export function getInternalQualityScore(product) {
+  return typeof product?.qualidade_score === 'number'
+    ? product.qualidade_score
+    : computeMlQualityScore(product || {}).score;
+}
+
+export function buildMlReviewFingerprint(product, categoryOverride = null) {
+  const payload = {
+    sku: product?.sku || null,
+    titulo_ml: product?.titulo_ml || null,
+    imagens: getProductImages(product),
+    preco_venda_ml_sugerido: Number(product?.preco_venda_ml_sugerido) || 0,
+    categoria_ml_id: categoryOverride || product?.categoria_ml_id || null,
+    marca: product?.marca || null,
+    modelo: product?.modelo || null,
+    estoque_disponivel: Number(product?.estoque_disponivel) || 0,
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+export function getMlReviewGate(product) {
+  const review = product?.ml_revisao || null;
+  const preflight = product?.ml_preflight || null;
+  const score = getInternalQualityScore(product);
+  const images = getProductImages(product);
+  const price = Number(product?.preco_venda_ml_sugerido) || 0;
+  const missing = [];
+  const categoryId = preflight?.categoria_ml_id || review?.categoria_ml_id || null;
+  const currentFingerprint = buildMlReviewFingerprint(product, categoryId);
+
+  if (!preflight?.ok) {
+    missing.push('pré-publicação automática aprovada');
+  } else if (preflight.fingerprint !== currentFingerprint) {
+    missing.push('pré-publicação desatualizada após alteração do produto');
+  }
+
+  if (!review?.aprovado) {
+    missing.push('revisão manual aprovada');
+  } else {
+    if (review.fingerprint !== currentFingerprint) {
+      missing.push('revisão manual desatualizada após alteração do produto');
+    }
+    if (!/^MLB\d+$/i.test(String(categoryId || ''))) {
+      missing.push('categoria folha MLB confirmada');
+    }
+    const pendingChecks = ML_REVIEW_CHECKS.filter((key) => review.checks?.[key] !== true);
+    if (pendingChecks.length) {
+      missing.push(`checklist obrigatório (${pendingChecks.join(', ')})`);
+    }
+  }
+
+  if (score < ML_MIN_INTERNAL_SCORE) {
+    missing.push(`score interno ≥${ML_MIN_INTERNAL_SCORE} (atual ${score})`);
+  }
+  if (images.length < ML_MIN_IMAGES) {
+    missing.push(`mínimo de ${ML_MIN_IMAGES} imagens (atual ${images.length})`);
+  }
+  if (price < ML_MIN_PRICE) {
+    missing.push(`preço ≥ R$ ${ML_MIN_PRICE.toFixed(2)}`);
+  }
+
+  return {
+    ok: missing.length === 0,
+    missing,
+    score,
+    imagens: images.length,
+    preco: price,
+    preflight_ok: Boolean(preflight?.ok),
+    preflight_em: preflight?.checked_at || null,
+    aprovado_em: review?.aprovado_em || null,
+    categoria_ml_id: categoryId,
+  };
+}
+
 function writeLocalSnapshot(products) {
   try {
     const dadosDir = path.join(REPO_ROOT, 'dados');
@@ -306,6 +399,8 @@ function summarizeCatalog(products) {
       qualidade_media_pct: 0,
       prontos_para_subir: 0,
       publicados_ml: 0,
+      revisao_aprovada: 0,
+      revisao_pendente: 0,
       piso_79_90_count: 0,
       custo_medio: 0,
       custo_produto_medio: 0,
@@ -342,6 +437,8 @@ function summarizeCatalog(products) {
     (p) => !p.ml_item_id && p.status_anuncio !== 'verificar_estoque_fornecedor'
   ).length;
   const publicadosCount = products.filter((p) => Boolean(p.ml_item_id)).length;
+  const revisaoAprovada = products.filter((p) => getMlReviewGate(p).ok).length;
+  const revisaoPendente = products.filter((p) => !p.ml_item_id && !getMlReviewGate(p).ok).length;
   const pisoCount = products.filter(
     (p) => p.piso_79_90_aplicado || Number(p.preco_venda_ml_sugerido) <= 79.91
   ).length;
@@ -381,6 +478,8 @@ function summarizeCatalog(products) {
     qualidade_media_pct: avgQual,
     prontos_para_subir: prontosCount,
     publicados_ml: publicadosCount,
+    revisao_aprovada: revisaoAprovada,
+    revisao_pendente: revisaoPendente,
     piso_79_90_count: pisoCount,
     custo_medio: Number((sumCost / total).toFixed(2)),
     custo_produto_medio: Number((sumCost / total).toFixed(2)),
@@ -649,6 +748,8 @@ router.patch('/produtos/:sku', async (req, res, next) => {
 
   const current = { ...products[idx] };
   const body = req.body || {};
+  const reviewCategoryId = current.ml_preflight?.categoria_ml_id || null;
+  const beforeFingerprint = buildMlReviewFingerprint(current, reviewCategoryId);
 
   if (typeof body.titulo_ml === 'string' && body.titulo_ml.trim()) {
     current.titulo_ml = body.titulo_ml.trim().slice(0, 60);
@@ -715,8 +816,13 @@ router.patch('/produtos/:sku', async (req, res, next) => {
   const q = computeMlQualityScore(current);
   current.qualidade_score = q.score;
   current.qualidade_pronto_85 = q.ready;
-  current.qualidade_anuncio_meta = `${q.score}% (Meta 85%+)`;
+  current.qualidade_anuncio_meta = `${q.score}% (score interno; não é nota do ML)`;
   current.atualizado_em = new Date().toISOString();
+
+  if (buildMlReviewFingerprint(current, reviewCategoryId) !== beforeFingerprint) {
+    current.ml_preflight = null;
+    current.ml_revisao = null;
+  }
 
   products[idx] = current;
   await persistCatalog(products);
@@ -896,6 +1002,339 @@ router.get('/export-csv', (req, res) => {
   return res.send(csv);
 });
 
+export function sanitizeMlTitle(value) {
+  let title = String(value || '')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const prohibited = [
+    /\bfrete\s+gr[áa]tis\b/gi,
+    /\benvio\s+(?:imediato|r[áa]pido)\b/gi,
+    /\bmelhor\s+pre[çc]o\b/gi,
+    /\bpromo[çc][ãa]o\b/gi,
+    /\bwhatsapp\b/gi,
+    /\baliexpress\b/gi,
+    /\bmercadolivre\b/gi,
+  ];
+  for (const pattern of prohibited) title = title.replace(pattern, ' ');
+  return title.replace(/\s+/g, ' ').trim().slice(0, 60);
+}
+
+export function sanitizeMlDescription(value) {
+  return String(value || '')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/\bwww\.\S+/gi, ' ')
+    .replace(/[\w.+-]+@[\w.-]+\.\w+/g, ' ')
+    .replace(/(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[-\s]?\d{4}/g, ' ')
+    .replace(/\bwhatsapp\b/gi, ' ')
+    .replace(/\baliexpress\b/gi, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+    .slice(0, 5000);
+}
+
+function extractDetectionNames(diagnostic) {
+  const raw =
+    diagnostic?.detections ||
+    diagnostic?.result?.detections ||
+    diagnostic?.results ||
+    diagnostic?.data?.detections ||
+    [];
+  const list = Array.isArray(raw) ? raw : [];
+  return [
+    ...new Set(
+      list
+        .map((item) =>
+          String(item?.name || item?.id || item?.label || item?.type || item || '').toLowerCase()
+        )
+        .filter(Boolean)
+    ),
+  ];
+}
+
+async function inspectImageUrl(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MelimaxPreflight/1.0)' },
+    });
+    if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length < 12 * 1024) return { ok: false, error: 'arquivo pequeno demais' };
+    const sharpModule = await import('sharp');
+    const sharp = sharpModule.default || sharpModule;
+    const meta = await sharp(buffer).metadata();
+    if (!meta.width || !meta.height) return { ok: false, error: 'dimensões inválidas' };
+    if (Math.min(meta.width, meta.height) < 500) {
+      return { ok: false, error: `resolução baixa (${meta.width}x${meta.height})` };
+    }
+    return { ok: true, width: meta.width, height: meta.height, bytes: buffer.length };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || 'falha ao baixar/inspecionar') };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function runMlPreflight(product, options = {}) {
+  const prepared = {
+    ...product,
+    imagens: getProductImages(product).slice(0, 8),
+    titulo_ml: product?.titulo_ml || '',
+    descricao_ml_otimizada: product?.descricao_ml_otimizada || '',
+    preco_venda_ml_sugerido: Number(product?.preco_venda_ml_sugerido) || 0,
+  };
+  const blockers = [];
+  const warnings = [];
+  const adjustments = [];
+  const checks = {};
+
+  const cleanTitle = sanitizeMlTitle(prepared.titulo_ml);
+  if (!cleanTitle || cleanTitle.length < 10) {
+    blockers.push('Título inválido: menos de 10 caracteres úteis após a limpeza.');
+    checks.titulo = false;
+  } else {
+    if (cleanTitle !== prepared.titulo_ml) {
+      adjustments.push('Título limpo: emojis/termos proibidos removidos e limite de 60 caracteres aplicado.');
+      prepared.titulo_ml = cleanTitle;
+    }
+    checks.titulo = true;
+  }
+
+  const cleanDescription = sanitizeMlDescription(prepared.descricao_ml_otimizada);
+  if (cleanDescription.length < 100) {
+    blockers.push('Descrição inválida: mínimo de 100 caracteres úteis.');
+    checks.descricao = false;
+  } else {
+    if (cleanDescription !== prepared.descricao_ml_otimizada) {
+      adjustments.push('Descrição limpa: links, e-mail, telefone e termos externos removidos.');
+      prepared.descricao_ml_otimizada = cleanDescription;
+    }
+    checks.descricao = true;
+  }
+
+  const nextPrice = Math.max(Number(prepared.preco_venda_ml_sugerido) || 0, ML_MIN_PRICE);
+  if (nextPrice !== Number(prepared.preco_venda_ml_sugerido)) {
+    adjustments.push(`Preço ajustado para o piso de R$ ${ML_MIN_PRICE.toFixed(2)}.`);
+    prepared.preco_venda_ml_sugerido = Number(nextPrice.toFixed(2));
+  }
+  checks.preco = prepared.preco_venda_ml_sugerido >= ML_MIN_PRICE;
+  if (!checks.preco) blockers.push(`Preço abaixo do piso de R$ ${ML_MIN_PRICE.toFixed(2)}.`);
+
+  if (prepared.imagens.length < ML_MIN_IMAGES) {
+    blockers.push(`Imagens insuficientes: ${prepared.imagens.length}/${ML_MIN_IMAGES} mínimas.`);
+    checks.imagens = false;
+  } else {
+    checks.imagens = true;
+  }
+
+  const imageReports = [];
+  for (let index = 0; index < prepared.imagens.length; index += 1) {
+    const url = prepared.imagens[index];
+    if (!/^https:\/\//i.test(url)) {
+      blockers.push(`Imagem ${index + 1}: URL não HTTPS.`);
+      imageReports.push({ index: index + 1, url, ok: false, error: 'URL não HTTPS' });
+      continue;
+    }
+    const meta = await inspectImageUrl(url);
+    if (!meta.ok) {
+      blockers.push(`Imagem ${index + 1}: ${meta.error}.`);
+      imageReports.push({ index: index + 1, url, ...meta });
+    } else {
+      imageReports.push({ index: index + 1, url, ...meta });
+    }
+  }
+
+  let categoryId = String(options.category_id || product?.ml_revisao?.categoria_ml_id || '').trim();
+  let categoryCandidates = [];
+  if (categoryId && !/^MLB\d+$/i.test(categoryId)) {
+    blockers.push(`Categoria inválida: "${categoryId}". Use o ID folha MLB.`);
+    categoryId = '';
+  }
+  if (!categoryId) {
+    try {
+      const discovery = await mlFetch(
+        `/sites/MLB/domain_discovery/search?limit=10&q=${encodeURIComponent(prepared.titulo_ml)}`
+      );
+      const seen = new Set();
+      categoryCandidates = (Array.isArray(discovery) ? discovery : [])
+        .filter((candidate) => candidate?.category_id && !seen.has(candidate.category_id))
+        .map((candidate) => {
+          seen.add(candidate.category_id);
+          return {
+            category_id: candidate.category_id,
+            category_name: candidate.category_name || candidate.domain_name || candidate.category_id,
+            domain_name: candidate.domain_name || null,
+          };
+        });
+      if (categoryCandidates.length === 1) {
+        categoryId = categoryCandidates[0].category_id;
+        warnings.push(
+          `Categoria resolvida automaticamente: ${categoryCandidates[0].category_id} (${categoryCandidates[0].category_name}).`
+        );
+      } else if (categoryCandidates.length > 1) {
+        blockers.push(
+          `Categoria ambígua (${categoryCandidates.length} candidatas). Selecione a categoria folha correta antes de publicar.`
+        );
+      } else {
+        blockers.push('Categoria não encontrada no Mercado Livre.');
+      }
+    } catch (err) {
+      blockers.push(`Falha ao resolver categoria: ${err.message}`);
+    }
+  }
+  checks.categoria = Boolean(categoryId) && !blockers.some((item) => item.startsWith('Categoria'));
+
+  if (categoryId) {
+    try {
+      const category = await mlFetch(`/categories/${encodeURIComponent(categoryId)}`);
+      if (Array.isArray(category?.children_categories) && category.children_categories.length > 0) {
+        blockers.push(`Categoria ${categoryId} não é folha (possui subcategorias).`);
+        checks.categoria = false;
+      }
+    } catch (err) {
+      blockers.push(`Falha ao validar categoria ${categoryId}: ${err.message}`);
+      checks.categoria = false;
+    }
+  }
+
+  let attributes = [];
+  if (categoryId) {
+    try {
+      attributes = await buildHighScoreMlAttributes(prepared, categoryId);
+    } catch (err) {
+      blockers.push(`Falha ao montar atributos obrigatórios: ${err.message}`);
+    }
+  }
+
+  const shipping = {
+    mode: 'not_specified',
+    local_pick_up: false,
+    free_shipping: true,
+    costs: [{ description: 'Todo o Brasil — Entrega de 5 a 10 dias', cost: 0 }],
+  };
+  const shippingOk =
+    shipping.free_shipping === true &&
+    shipping.mode === 'not_specified' &&
+    shipping.costs.every((cost) => Number(cost.cost) === 0);
+  checks.frete = shippingOk;
+  if (!shippingOk) blockers.push('Frete inválido: deve ser grátis, sem etiqueta e com custo zero.');
+
+  const payload = {
+    family_name: prepared.titulo_ml.slice(0, 60),
+    category_id: categoryId || null,
+    price: Number(prepared.preco_venda_ml_sugerido),
+    currency_id: 'BRL',
+    available_quantity: Math.max(Number(prepared.estoque_disponivel) || 10, 1),
+    buying_mode: 'buy_it_now',
+    condition: 'new',
+    listing_type_id: PREMIUM_LISTING_TYPE,
+    status: 'paused',
+    pictures: prepared.imagens.map((source) => ({ source })),
+    shipping,
+    sale_terms: [
+      { id: 'WARRANTY_TYPE', value_name: 'Garantia do vendedor' },
+      { id: 'WARRANTY_TIME', value_name: '30 dias' },
+      { id: 'MANUFACTURING_TIME', value_name: '1 dias' },
+    ],
+    attributes,
+  };
+
+  let validation = null;
+  if (categoryId) {
+    try {
+      validation = await mlFetch('/items/validate', { method: 'POST', body: payload });
+      const causes = Array.isArray(validation?.cause) ? validation.cause : [];
+      for (const cause of causes) {
+        const message = `${cause.code || 'VALIDACAO'}: ${cause.message || 'erro de validação'}`;
+        if (String(cause.type || '').toLowerCase() === 'error') {
+          blockers.push(`Validação ML: ${message}`);
+        } else {
+          warnings.push(`Aviso ML: ${message}`);
+        }
+      }
+    } catch (err) {
+      blockers.push(`Falha na validação oficial do ML: ${err.message}`);
+    }
+  }
+
+  const anchorItemId = String(
+    options.anchor_item_id || product?.ml_item_id || process.env.ML_DIAGNOSTIC_ANCHOR_ITEM_ID || ''
+  ).trim();
+  const diagnosticReports = [];
+  if (prepared.imagens.length > 0) {
+    if (!anchorItemId) {
+      blockers.push(
+        'Diagnóstico de imagens não configurado: defina ML_DIAGNOSTIC_ANCHOR_ITEM_ID com um anúncio válido da conta.'
+      );
+      checks.fotos = false;
+    } else {
+      checks.fotos = true;
+      for (let index = 0; index < prepared.imagens.length; index += 1) {
+        const pictureUrl = prepared.imagens[index];
+        try {
+          const diagnostic = await mlFetch('/moderations/pictures/diagnostic', {
+            method: 'POST',
+            body: {
+              element_id: anchorItemId,
+              picture_url: pictureUrl,
+              context: {
+                category_id: categoryId,
+                title: prepared.titulo_ml,
+                picture_type: 'thumbnail',
+                language: 'pt',
+              },
+            },
+          });
+          const detectionNames = extractDetectionNames(diagnostic);
+          const imageBlockers = detectionNames.filter((name) =>
+            ['text_logo', 'watermark', 'logo', 'text'].includes(name)
+          );
+          if (imageBlockers.length > 0) {
+            blockers.push(
+              `Imagem ${index + 1}: conteúdo bloqueante detectado (${imageBlockers.join(', ')}).`
+            );
+            checks.fotos = false;
+          }
+          if (detectionNames.includes('white_background')) {
+            warnings.push(`Imagem ${index + 1}: fundo branco detectado (alerta de qualidade).`);
+          }
+          diagnosticReports.push({ index: index + 1, url: pictureUrl, detections: detectionNames });
+        } catch (err) {
+          blockers.push(`Imagem ${index + 1}: falha no diagnóstico ML (${err.message}).`);
+          checks.fotos = false;
+          diagnosticReports.push({ index: index + 1, url: pictureUrl, error: err.message });
+        }
+      }
+    }
+  }
+
+  const ok = blockers.length === 0;
+  const fingerprint = buildMlReviewFingerprint(prepared, categoryId);
+  return {
+    prepared,
+    report: {
+      ok,
+      checked_at: new Date().toISOString(),
+      blockers,
+      warnings,
+      adjustments,
+      checks,
+      categoria_ml_id: categoryId || null,
+      categoria_candidatas: categoryCandidates,
+      imagens: imageReports,
+      diagnosticos_imagem: diagnosticReports,
+      validacao_ml: validation,
+      payload,
+      fingerprint,
+    },
+  };
+}
+
 async function buildHighScoreMlAttributes(product, leafCategoryId) {
   const gtin = String(product.gtin || product.ean || product.upc || '')
     .replace(/\D/g, '')
@@ -957,85 +1396,32 @@ async function buildHighScoreMlAttributes(product, leafCategoryId) {
   return [...attrMap.values()];
 }
 
-async function publishSingleProductToMl(product, options = {}) {
-  let leafCategoryId = options.category_id || null;
-  if (!leafCategoryId) {
-    try {
-      const discovery = await mlFetch(
-        `/sites/MLB/domain_discovery/search?limit=1&q=${encodeURIComponent(product.titulo_ml)}`
-      );
-      if (Array.isArray(discovery) && discovery[0]?.category_id) {
-        leafCategoryId = discovery[0].category_id;
-      }
-    } catch {}
-  }
-
-  if (!leafCategoryId) {
-    throw new Error(
-      'Conecte a conta Mercado Livre da MeLi Max Shop (ML_APP_ID e ML_CLIENT_SECRET) para publicar via API.'
+async function publishSingleProductToMl(product) {
+  const gate = getMlReviewGate(product);
+  if (!gate.ok) {
+    const err = new Error(
+      `Publicação bloqueada: ${gate.missing.join('; ')}. Nada foi enviado ao Mercado Livre.`
     );
+    err.status = 409;
+    err.code = 'ML_PREFLIGHT_REQUIRED';
+    err.missing = gate.missing;
+    throw err;
   }
 
-  const pictures = (product.imagens || [])
-    .filter(Boolean)
-    .slice(0, 8)
-    .map((url) => ({ source: url }));
-
-  const status = options.status === 'active' ? 'active' : 'paused';
-  const listingTypeId = options.listing_type_id || PREMIUM_LISTING_TYPE;
-  const attributes = await buildHighScoreMlAttributes(product, leafCategoryId);
-
-  const familyName = String(
-    product.family_name || product.titulo_ml || product.modelo || 'Produto'
-  ).slice(0, 60);
+  const preflight = product?.ml_preflight;
+  if (!preflight?.payload || !preflight?.categoria_ml_id) {
+    const err = new Error('Pré-publicação ausente ou incompleta. Rode a verificação novamente.');
+    err.status = 409;
+    err.code = 'ML_PREFLIGHT_REQUIRED';
+    throw err;
+  }
 
   const payload = {
-    family_name: familyName,
-    category_id: leafCategoryId,
-    price: Number(product.preco_venda_ml_sugerido),
-    currency_id: 'BRL',
-    available_quantity: Math.max(Number(product.estoque_disponivel) || 10, 1),
-    buying_mode: 'buy_it_now',
-    condition: 'new',
-    listing_type_id: listingTypeId,
-    status,
-    pictures,
-    shipping: {
-      mode: 'not_specified',
-      local_pick_up: false,
-      free_shipping: true,
-      costs: [
-        {
-          description: 'Todo o Brasil — Entrega de 5 a 10 dias',
-          cost: 0,
-        },
-      ],
-    },
-    sale_terms: [
-      { id: 'WARRANTY_TYPE', value_name: 'Garantia do vendedor' },
-      { id: 'WARRANTY_TIME', value_name: '30 dias' },
-      { id: 'MANUFACTURING_TIME', value_name: '1 dias' },
-    ],
-    attributes,
+    ...preflight.payload,
+    status: 'paused',
   };
 
-  let created;
-  try {
-    created = await mlFetch('/items', { method: 'POST', body: payload });
-  } catch (err) {
-    const message = String(err?.message || '');
-    const legacyCategory =
-      err?.status === 400 &&
-      /title|family_name/i.test(message) &&
-      !/GTIN/i.test(message);
-    if (!legacyCategory) throw err;
-    const legacyPayload = {
-      ...payload,
-      title: product.titulo_ml.slice(0, 60),
-    };
-    delete legacyPayload.family_name;
-    created = await mlFetch('/items', { method: 'POST', body: legacyPayload });
-  }
+  const created = await mlFetch('/items', { method: 'POST', body: payload });
 
   if (created?.id && product.descricao_ml_otimizada) {
     await mlFetch(`/items/${encodeURIComponent(created.id)}/description`, {
@@ -1056,15 +1442,15 @@ async function publishSingleProductToMl(product, options = {}) {
       created.title || product.titulo_ml,
       created.price || product.preco_venda_ml_sugerido,
       product.fornecedor_nome || 'AliExpress Brasil',
-      created.status || status,
-      product.qualidade_score || 98,
+      created.status || 'paused',
+      getInternalQualityScore(product),
       product.aliexpress_item_id,
       product.preco_custo_aliexpress_brl,
       product.fornecedor_loja_id || 'aliexpress-brasil',
       created.permalink || null,
       (product.margem_liquida_pct || 0) / 100,
-      product.imagem_1 || null,
-      listingTypeId,
+      getProductImages(product)[0] || null,
+      PREMIUM_LISTING_TYPE,
       product.preco_custo_aliexpress_brl,
       product.taxa_ml_estimada_brl,
       product.imposto_estimado_brl,
@@ -1076,6 +1462,120 @@ async function publishSingleProductToMl(product, options = {}) {
   return created;
 }
 
+router.post('/preflight/:sku', async (req, res, next) => {
+  try {
+    const products = getAliExpressCatalog();
+    const idx = products.findIndex(
+      (p) => String(p.sku || '').toUpperCase() === String(req.params.sku || '').toUpperCase()
+    );
+    if (idx < 0) {
+      return res.status(404).json({ error: 'Produto não encontrado no catálogo.' });
+    }
+
+    const { prepared, report } = await runMlPreflight(products[idx], {
+      category_id: req.body?.category_id,
+      anchor_item_id: req.body?.anchor_item_id,
+    });
+
+    const next = {
+      ...products[idx],
+      titulo_ml: prepared.titulo_ml,
+      descricao_ml_otimizada: prepared.descricao_ml_otimizada,
+      preco_venda_ml_sugerido: prepared.preco_venda_ml_sugerido,
+      imagens: prepared.imagens,
+      qtd_imagens: prepared.imagens.length,
+      imagem_1: prepared.imagens[0] || '',
+      imagem_2: prepared.imagens[1] || '',
+      imagem_3: prepared.imagens[2] || '',
+      imagem_4: prepared.imagens[3] || '',
+      imagem_5: prepared.imagens[4] || '',
+      imagem_6: prepared.imagens[5] || '',
+      urls_imagens: prepared.imagens.join(' | '),
+      ml_preflight: report,
+      ml_revisao: null,
+      atualizado_em: new Date().toISOString(),
+    };
+    const quality = computeMlQualityScore(next);
+    next.qualidade_score = quality.score;
+    next.qualidade_pronto_85 = quality.ready;
+    next.qualidade_anuncio_meta = `${quality.score}% (score interno; não é nota do ML)`;
+
+    products[idx] = next;
+    await persistCatalog(products);
+
+    res.status(report.ok ? 200 : 422).json({
+      ok: report.ok,
+      produto: next,
+      preflight: report,
+      gate: getMlReviewGate(next),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/revisao-ml/:sku', async (req, res, next) => {
+  try {
+    const products = getAliExpressCatalog();
+    const idx = products.findIndex(
+      (p) => String(p.sku || '').toUpperCase() === String(req.params.sku || '').toUpperCase()
+    );
+    if (idx < 0) {
+      return res.status(404).json({ error: 'Produto não encontrado no catálogo.' });
+    }
+
+    const product = products[idx];
+    if (req.body?.aprovado === false) {
+      product.ml_revisao = null;
+      products[idx] = product;
+      await persistCatalog(products);
+      return res.json({ ok: true, produto: product, gate: getMlReviewGate(product) });
+    }
+
+    const preflight = product.ml_preflight;
+    if (!preflight?.ok) {
+      return res.status(409).json({
+        error: 'Rode a pré-publicação automática e resolva todos os bloqueios antes de aprovar.',
+        preflight,
+      });
+    }
+    const expectedFingerprint = buildMlReviewFingerprint(product, preflight.categoria_ml_id);
+    if (preflight.fingerprint !== expectedFingerprint) {
+      return res.status(409).json({
+        error: 'A pré-publicação está desatualizada. Rode a verificação novamente.',
+      });
+    }
+
+    const checks = req.body?.checks || {};
+    const pendingChecks = ML_REVIEW_CHECKS.filter((key) => checks[key] !== true);
+    if (pendingChecks.length) {
+      return res.status(400).json({
+        error: `Confirme todos os itens da revisão: ${pendingChecks.join(', ')}.`,
+        faltando: pendingChecks,
+      });
+    }
+    if (!/^MLB\d+$/i.test(String(preflight.categoria_ml_id || ''))) {
+      return res.status(400).json({ error: 'Categoria folha MLB ausente na pré-publicação.' });
+    }
+
+    product.ml_revisao = {
+      aprovado: true,
+      aprovado_em: new Date().toISOString(),
+      aprovado_por: 'painel',
+      categoria_ml_id: preflight.categoria_ml_id,
+      checks: Object.fromEntries(ML_REVIEW_CHECKS.map((key) => [key, true])),
+      observacoes: String(req.body?.observacoes || '').trim().slice(0, 500),
+      fingerprint: expectedFingerprint,
+    };
+    products[idx] = product;
+    await persistCatalog(products);
+
+    res.json({ ok: true, produto: product, gate: getMlReviewGate(product) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/publicar-ml', async (req, res, next) => {
   try {
     const sku = req.body?.sku;
@@ -1084,18 +1584,22 @@ router.post('/publicar-ml', async (req, res, next) => {
       return res.status(404).json({ error: 'Produto AliExpress não encontrado no catálogo.' });
     }
 
-    const created = await publishSingleProductToMl(product, {
-      category_id: req.body?.category_id,
-      status: req.body?.status,
-      listing_type_id: req.body?.listing_type_id,
-    });
+    const gate = getMlReviewGate(product);
+    if (!gate.ok) {
+      return res.status(409).json({
+        error: `Publicação bloqueada: ${gate.missing.join('; ')}. Nada foi enviado ao Mercado Livre.`,
+        missing: gate.missing,
+      });
+    }
+
+    const created = await publishSingleProductToMl(product);
 
     const products = getAliExpressCatalog();
     const idx = products.findIndex((p) => p.sku === product.sku);
     if (idx >= 0) {
       products[idx] = {
         ...products[idx],
-        status_anuncio: created.status || req.body?.status || 'paused',
+        status_anuncio: created.status || 'paused',
         ml_item_id: created.id,
         ml_permalink: created.permalink || null,
         tipo_anuncio: 'Premium (gold_pro)',
@@ -1119,33 +1623,43 @@ router.post('/publicar-lote', async (req, res, next) => {
   try {
     const requestedSkus = Array.isArray(req.body?.skus) ? req.body.skus : [];
     const limite = Math.min(Math.max(Number(req.body?.limite) || 15, 1), 50);
-    const status = req.body?.status === 'active' ? 'active' : 'paused';
-    const listingTypeId = req.body?.listing_type_id || PREMIUM_LISTING_TYPE;
     const fornecedor = String(req.body?.fornecedor || '').trim();
 
     const products = getAliExpressCatalog();
     let targets = [];
+    const bloqueados = [];
 
     if (requestedSkus.length > 0) {
       const skuSet = new Set(requestedSkus.map((s) => String(s).trim().toUpperCase()));
-      targets = products.filter((p) => skuSet.has(String(p.sku || '').toUpperCase())).slice(0, limite);
+      const requestedProducts = products
+        .filter((p) => skuSet.has(String(p.sku || '').toUpperCase()))
+        .slice(0, limite);
+      for (const product of requestedProducts) {
+        const gate = getMlReviewGate(product);
+        if (gate.ok) {
+          targets.push(product);
+        } else {
+          bloqueados.push({ sku: product.sku, missing: gate.missing });
+        }
+      }
     } else {
       targets = products
         .filter((p) => {
           if (p.ml_item_id) return false;
           if (p.status_anuncio === 'verificar_estoque_fornecedor') return false;
-          if ((p.qualidade_score || computeMlQualityScore(p).score) < 85) return false;
           if (fornecedor && p.fornecedor_nome !== fornecedor && String(p.fornecedor_loja_id) !== fornecedor) {
             return false;
           }
-          return true;
+          return getMlReviewGate(p).ok;
         })
         .slice(0, limite);
     }
 
     if (!targets.length) {
-      return res.status(400).json({
-        error: 'Nenhum produto pendente elegível (Qualidade 85%+) encontrado para o lote informado.',
+      return res.status(409).json({
+        error:
+          'Nenhum produto com pré-publicação automática e revisão manual aprovadas. Nada foi enviado ao Mercado Livre.',
+        bloqueados,
       });
     }
 
@@ -1155,16 +1669,13 @@ router.post('/publicar-lote', async (req, res, next) => {
 
     for (const item of targets) {
       try {
-        const created = await publishSingleProductToMl(item, {
-          status,
-          listing_type_id: listingTypeId,
-        });
+        const created = await publishSingleProductToMl(item);
         enviados += 1;
         const idx = products.findIndex((p) => p.sku === item.sku);
         if (idx >= 0) {
           products[idx] = {
             ...products[idx],
-            status_anuncio: created.status || status,
+            status_anuncio: created.status || 'paused',
             ml_item_id: created.id,
             ml_permalink: created.permalink || null,
             tipo_anuncio: 'Premium (gold_pro)',
@@ -1176,7 +1687,7 @@ router.post('/publicar-lote', async (req, res, next) => {
           ok: true,
           ml_item_id: created.id,
           permalink: created.permalink,
-          status: created.status || status,
+          status: created.status || 'paused',
         });
       } catch (err) {
         falhas += 1;
@@ -1200,7 +1711,8 @@ router.post('/publicar-lote', async (req, res, next) => {
       ok: enviados > 0,
       enviados,
       falhas,
-      status_inicial: status,
+      bloqueados,
+      status_inicial: 'paused',
       resultados,
     });
   } catch (err) {

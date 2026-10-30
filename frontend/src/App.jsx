@@ -236,6 +236,37 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [descTab, setDescTab] = useState('otimizada');
+  const [preflightBusy, setPreflightBusy] = useState(false);
+  const [preflight, setPreflight] = useState(product.ml_preflight || null);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [approved, setApproved] = useState(Boolean(product.ml_revisao?.aprovado));
+  const [reviewCategory, setReviewCategory] = useState(
+    product.ml_preflight?.categoria_ml_id || product.ml_revisao?.categoria_ml_id || product.categoria_ml_id || ''
+  );
+  const [anchorItemId, setAnchorItemId] = useState(product.ml_item_id || '');
+  const [reviewNotes, setReviewNotes] = useState(product.ml_revisao?.observacoes || '');
+  const [reviewChecks, setReviewChecks] = useState(() => ({
+    categoria: Boolean(product.ml_revisao?.checks?.categoria),
+    fotos: Boolean(product.ml_revisao?.checks?.fotos),
+    titulo_fotos: Boolean(product.ml_revisao?.checks?.titulo_fotos),
+    preco_frete: Boolean(product.ml_revisao?.checks?.preco_frete),
+  }));
+
+  useEffect(() => {
+    setPreflight(product.ml_preflight || null);
+    setApproved(Boolean(product.ml_revisao?.aprovado));
+    setReviewCategory(
+      product.ml_preflight?.categoria_ml_id || product.ml_revisao?.categoria_ml_id || product.categoria_ml_id || ''
+    );
+    setAnchorItemId(product.ml_item_id || '');
+    setReviewNotes(product.ml_revisao?.observacoes || '');
+    setReviewChecks({
+      categoria: Boolean(product.ml_revisao?.checks?.categoria),
+      fotos: Boolean(product.ml_revisao?.checks?.fotos),
+      titulo_fotos: Boolean(product.ml_revisao?.checks?.titulo_fotos),
+      preco_frete: Boolean(product.ml_revisao?.checks?.preco_frete),
+    });
+  }, [product.sku, product.ml_preflight, product.ml_revisao]);
   const [feeInfo, setFeeInfo] = useState(() => ({
     percentage: Number(product.taxa_ml_pct ?? 19) / 100,
     fixedFee: Number(product.taxa_ml_fixa_brl || 0),
@@ -327,17 +358,68 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
     }
   };
 
-  const handlePublishMl = async (statusMode = 'paused') => {
+  const handlePreflight = async () => {
+    setPreflightBusy(true);
+    try {
+      const res = await request(`/aliexpress/preflight/${encodeURIComponent(product.sku)}`, {
+        method: 'POST',
+        body: {
+          category_id: reviewCategory.trim() || undefined,
+          anchor_item_id: anchorItemId.trim() || undefined,
+        },
+      });
+      setPreflight(res.preflight);
+      setApproved(false);
+      setReviewChecks({ categoria: false, fotos: false, titulo_fotos: false, preco_frete: false });
+      notify(
+        res.ok
+          ? 'Pré-publicação aprovada. Nada foi enviado ao ML; confira o relatório e faça a revisão manual.'
+          : 'Pré-publicação bloqueada. Corrija os itens apontados; nada foi enviado ao ML.',
+        res.ok ? 'success' : 'error'
+      );
+      onSaved?.(res.produto);
+    } catch (err) {
+      if (err?.data?.preflight) setPreflight(err.data.preflight);
+      notify(err.message, 'error');
+    } finally {
+      setPreflightBusy(false);
+    }
+  };
+
+  const handleReview = async (aprovado) => {
+    setReviewBusy(true);
+    try {
+      const res = await request(`/aliexpress/revisao-ml/${encodeURIComponent(product.sku)}`, {
+        method: 'POST',
+        body: {
+          aprovado,
+          checks: reviewChecks,
+          observacoes: reviewNotes,
+        },
+      });
+      setApproved(Boolean(res.produto?.ml_revisao?.aprovado));
+      notify(
+        aprovado
+          ? 'Revisão manual aprovada. O anúncio está liberado para envio pausado.'
+          : 'Aprovação revogada. O anúncio voltou a ficar bloqueado.',
+        'success'
+      );
+      onSaved?.(res.produto);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
+  const handlePublishMl = async () => {
     setPublishing(true);
     try {
       const res = await request('/aliexpress/publicar-ml', {
         method: 'POST',
-        body: { sku: product.sku, status: statusMode },
+        body: { sku: product.sku },
       });
-      notify(
-        `Anúncio publicado (${statusMode === 'active' ? 'Ativo' : 'Pausado'}) no Mercado Livre: ${res.ml_item_id}.`,
-        'success'
-      );
+      notify(`Anúncio enviado PAUSADO ao Mercado Livre: ${res.ml_item_id}.`, 'success');
       onPublished?.(res);
     } catch (err) {
       notify(err.message, 'error');
@@ -345,6 +427,9 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
       setPublishing(false);
     }
   };
+
+  const allReviewChecks = Object.values(reviewChecks).every(Boolean);
+  const canPublish = Boolean(preflight?.ok && approved && !product.ml_item_id);
 
   const images = product.imagens?.length
     ? product.imagens
@@ -365,7 +450,7 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
               <span>{images.length} imagens HD</span>
               <span>·</span>
               <span className="font-mono font-semibold text-emerald-700">
-                Qualidade ML {product.qualidade_score || 98}%
+                Score interno {product.qualidade_score || 0}%
               </span>
             </div>
             <h2 className="mt-0.5 truncate text-base font-bold text-slate-900">{product.titulo_ml}</h2>
@@ -496,7 +581,7 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
           <div className="space-y-4 lg:col-span-7">
             <div>
               <div className="flex items-center justify-between">
-                <label className="label">Título Otimizado Mercado Livre (SEO 85%+)</label>
+                <label className="label">Título para o Mercado Livre (máx. 60 caracteres)</label>
                 <span
                   className={`font-mono text-xs ${
                     tituloMl.length > 60 ? 'font-semibold text-red-600' : 'text-slate-500'
@@ -672,34 +757,226 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
                 </div>
               )}
             </div>
+
+            <div className="space-y-3 rounded-xl border border-amber-300 bg-amber-50/70 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold text-slate-900">Pré-publicação obrigatória</div>
+                  <p className="mt-1 max-w-xl text-[11px] leading-relaxed text-slate-700">
+                    Nada é enviado ao Mercado Livre nesta etapa. O sistema baixa e inspeciona as fotos,
+                    limpa título/descrição, aplica o piso de preço, valida categoria, atributos, frete
+                    grátis sem etiqueta e a payload oficial do ML. Só depois da revisão manual o envio
+                    pausado é liberado.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={preflightBusy}
+                  onClick={handlePreflight}
+                  className="btn-primary text-xs"
+                >
+                  {preflightBusy ? 'Verificando sem publicar...' : '1. Preparar e verificar'}
+                </button>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <label className="label text-[11px]">Categoria folha MLB</label>
+                  <input
+                    type="text"
+                    value={reviewCategory}
+                    onChange={(e) => setReviewCategory(e.target.value.toUpperCase())}
+                    placeholder="MLB1234"
+                    className="input mt-1 font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="label text-[11px]">Anúncio âncora p/ diagnóstico de fotos</label>
+                  <input
+                    type="text"
+                    value={anchorItemId}
+                    onChange={(e) => setAnchorItemId(e.target.value.toUpperCase())}
+                    placeholder="MLB1234567890"
+                    className="input mt-1 font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              {Array.isArray(preflight?.categoria_candidatas) && preflight.categoria_candidatas.length > 0 ? (
+                <div className="space-y-1.5 rounded-lg border border-slate-200 bg-white p-2.5">
+                  <div className="text-[11px] font-semibold text-slate-700">Candidatas de categoria:</div>
+                  {preflight.categoria_candidatas.map((candidate) => (
+                    <button
+                      key={candidate.category_id}
+                      type="button"
+                      onClick={() => {
+                        setReviewCategory(candidate.category_id);
+                        notify('Categoria selecionada. Clique em "Preparar e verificar" novamente.', 'info');
+                      }}
+                      className={`block w-full rounded border px-2 py-1.5 text-left text-[11px] ${
+                        reviewCategory === candidate.category_id
+                          ? 'border-meli-blue bg-blue-50 text-meli-blue'
+                          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="font-mono font-semibold">{candidate.category_id}</span>
+                      <span className="mx-1.5">·</span>
+                      {candidate.category_name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {preflight ? (
+                <div className="space-y-2 text-[11px]">
+                  <div
+                    className={`rounded-lg border px-2.5 py-2 font-semibold ${
+                      preflight.ok
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                        : 'border-red-200 bg-red-50 text-red-800'
+                    }`}
+                  >
+                    {preflight.ok
+                      ? 'Pré-publicação aprovada: nenhum bloqueio automático encontrado.'
+                      : 'Pré-publicação bloqueada: corrija os itens abaixo e verifique novamente.'}
+                  </div>
+
+                  {Array.isArray(preflight.blockers) && preflight.blockers.length > 0 ? (
+                    <div className="rounded-lg border border-red-200 bg-white p-2.5">
+                      <div className="font-semibold text-red-700">Bloqueios</div>
+                      <ul className="mt-1 list-disc space-y-1 pl-4 text-red-700">
+                        {preflight.blockers.map((item, idx) => (
+                          <li key={`${item}-${idx}`}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {Array.isArray(preflight.adjustments) && preflight.adjustments.length > 0 ? (
+                    <div className="rounded-lg border border-blue-200 bg-white p-2.5">
+                      <div className="font-semibold text-blue-700">Ajustes seguros aplicados</div>
+                      <ul className="mt-1 list-disc space-y-1 pl-4 text-blue-700">
+                        {preflight.adjustments.map((item, idx) => (
+                          <li key={`${item}-${idx}`}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {Array.isArray(preflight.warnings) && preflight.warnings.length > 0 ? (
+                    <div className="rounded-lg border border-amber-200 bg-white p-2.5">
+                      <div className="font-semibold text-amber-700">Avisos</div>
+                      <ul className="mt-1 list-disc space-y-1 pl-4 text-amber-700">
+                        {preflight.warnings.map((item, idx) => (
+                          <li key={`${item}-${idx}`}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  <div className="grid grid-cols-2 gap-1.5 text-[11px] sm:grid-cols-3">
+                    {[
+                      ['Título', preflight.checks?.titulo],
+                      ['Descrição', preflight.checks?.descricao],
+                      ['Preço', preflight.checks?.preco],
+                      ['Imagens', preflight.checks?.imagens],
+                      ['Fotos sem texto', preflight.checks?.fotos],
+                      ['Categoria', preflight.checks?.categoria],
+                      ['Frete grátis', preflight.checks?.frete],
+                    ].map(([label, value]) => (
+                      <div
+                        key={label}
+                        className={`rounded border px-2 py-1 ${
+                          value
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : 'border-red-200 bg-red-50 text-red-700'
+                        }`}
+                      >
+                        {label}: {value ? 'OK' : 'Pendente'}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-slate-200 bg-white p-2.5 text-[11px] text-slate-600">
+                  Rode a pré-publicação para ver os bloqueios reais. Nenhuma chamada de criação é feita.
+                </div>
+              )}
+
+              <div className="space-y-2 border-t border-amber-200 pt-3">
+                <div className="text-xs font-bold text-slate-900">2. Revisão manual obrigatória</div>
+                {[
+                  ['categoria', 'Categoria folha conferida no Mercado Livre.'],
+                  ['fotos', 'Fotos conferidas: sem texto, marca d’água, logo ou faixa promocional.'],
+                  ['titulo_fotos', 'Título corresponde exatamente ao produto e às fotos.'],
+                  ['preco_frete', 'Preço, custo, frete grátis sem etiqueta e estoque conferidos.'],
+                ].map(([key, label]) => (
+                  <label key={key} className="flex items-start gap-2 text-[11px] text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(reviewChecks[key])}
+                      onChange={(e) =>
+                        setReviewChecks((prev) => ({ ...prev, [key]: e.target.checked }))
+                      }
+                      className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-meli-blue"
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+                <textarea
+                  rows={2}
+                  value={reviewNotes}
+                  onChange={(e) => setReviewNotes(e.target.value)}
+                  placeholder="Observações da conferência (opcional)"
+                  className="input text-[11px]"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={!preflight?.ok || !allReviewChecks || reviewBusy}
+                    onClick={() => handleReview(true)}
+                    className="btn-accent text-xs"
+                  >
+                    {reviewBusy ? 'Salvando revisão...' : approved ? 'Revisão aprovada' : 'Aprovar revisão'}
+                  </button>
+                  {approved ? (
+                    <button
+                      type="button"
+                      disabled={reviewBusy}
+                      onClick={() => handleReview(false)}
+                      className="btn-ghost text-xs"
+                    >
+                      Revogar aprovação
+                    </button>
+                  ) : null}
+                  <span className="text-[11px] text-slate-600">
+                    {canPublish
+                      ? 'Liberado apenas para envio PAUSADO.'
+                      : 'Envio bloqueado até pré-publicação + revisão.'}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-6 py-3.5">
           <div className="text-xs text-slate-600">
-            Qualidade estimada ML:{' '}
-            <strong className="font-mono text-emerald-700">{product.qualidade_score || 98}%</strong> (Meta 85%+) · Frete Grátis Brasil Confirmado · Sem etiquetas
+            Score interno:{' '}
+            <strong className="font-mono text-emerald-700">{product.qualidade_score || 0}%</strong> ·
+            mínimo 85% · frete e etiquetas precisam ser confirmados no ML
           </div>
           <div className="flex items-center gap-2.5">
             {accountConnected ? (
-              <>
-                <button
-                  type="button"
-                  disabled={publishing}
-                  onClick={() => handlePublishMl('paused')}
-                  className="btn-ghost text-xs"
-                >
-                  {publishing ? 'Enviando...' : 'Subir Pausado (1 Clique)'}
-                </button>
-                <button
-                  type="button"
-                  disabled={publishing}
-                  onClick={() => handlePublishMl('active')}
-                  className="btn-accent text-xs"
-                >
-                  {publishing ? 'Publicando...' : 'Subir Ativo no ML'}
-                </button>
-              </>
+              <button
+                type="button"
+                disabled={publishing || !canPublish}
+                onClick={handlePublishMl}
+                className="btn-accent text-xs"
+                title={canPublish ? 'Enviar pausado ao ML' : 'Aprove a pré-publicação e a revisão manual primeiro'}
+              >
+                {publishing ? 'Enviando...' : '3. Enviar PAUSADO ao ML'}
+              </button>
             ) : null}
             <button type="button" disabled={saving} onClick={handleSave} className="btn-primary text-xs">
               {saving ? 'Salvando...' : 'Salvar Alterações & Atualizar CSV'}
@@ -754,7 +1031,6 @@ export default function App() {
 
   // Automated ML Batch Upload
   const [uploadBatchSize, setUploadBatchSize] = useState('20');
-  const [uploadStatusMode, setUploadStatusMode] = useState('paused');
   const [uploadSupplierFilter, setUploadSupplierFilter] = useState('');
   const [uploadingBatch, setUploadingBatch] = useState(false);
   const [lastUploadReport, setLastUploadReport] = useState(null);
@@ -993,11 +1269,9 @@ export default function App() {
           ? {
               skus: customSkus,
               limite: customSkus.length,
-              status: uploadStatusMode,
             }
           : {
               limite: Number(uploadBatchSize) || 20,
-              status: uploadStatusMode,
               fornecedor: uploadSupplierFilter,
             };
 
@@ -1008,13 +1282,20 @@ export default function App() {
       setLastUploadReport(res);
       if (res.enviados > 0) {
         setSelectedSkus([]);
-        if (res.falhas > 0) {
-          notify(`${res.enviados} enviado(s) e ${res.falhas} falha(s). Veja o relatório abaixo.`, 'error');
+        const bloqueados = Array.isArray(res.bloqueados) ? res.bloqueados.length : 0;
+        if (res.falhas > 0 || bloqueados > 0) {
+          notify(
+            `${res.enviados} enviado(s) pausado(s), ${res.falhas} falha(s) e ${bloqueados} bloqueado(s) sem pré-publicação/revisão. Veja o relatório.`,
+            'error'
+          );
         } else {
-          notify(`${res.enviados} anúncios enviados ao Mercado Livre com qualidade 85%+!`, 'success');
+          notify(`${res.enviados} anúncio(s) aprovado(s) enviados PAUSADOS ao Mercado Livre.`, 'success');
         }
       } else {
-        const firstErr = res.resultados?.[0]?.error || 'Conecte a conta Mercado Livre para iniciar a carga.';
+        const firstErr =
+          res.bloqueados?.[0]?.missing?.join('; ') ||
+          res.resultados?.[0]?.error ||
+          'Nenhum item passou pela pré-publicação e revisão. Nada foi enviado.';
         notify(firstErr, 'error');
       }
       await Promise.all([loadCatalog(), loadListings()]);
@@ -1500,10 +1781,10 @@ export default function App() {
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
                 <h1 className="text-xl font-bold tracking-tight text-slate-900">
-                  Base de Produtos Prontos para Subir em 1 Clique (Qualidade ML 85%+)
+                  Base de Produtos para Pré-Publicação (score interno ≥85 + revisão)
                 </h1>
                 <p className="mt-0.5 text-sm text-slate-600">
-                  Catálogo deduplicado com estoque no Brasil e Frete Totalmente Grátis confirmado, 4+ fotos HD, título SEO até 60 caracteres e sobrepreço 2.8x (piso R$ 79,90).
+                  Catálogo deduplicado com estoque no Brasil, 4+ fotos, título até 60 caracteres e sobrepreço 2.8x (piso R$ 79,90). Nenhum item vai ao ML sem pré-publicação automática e revisão manual.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1549,17 +1830,17 @@ export default function App() {
               </div>
 
               <div className="surface p-4">
-                <div className="label">Qualidade Interna Mercado Livre</div>
+                <div className="label">Score Interno (não é nota do ML)</div>
                 <div className="mt-1.5 flex items-baseline gap-2 font-mono tabular-nums">
                   <span className="text-2xl font-bold text-emerald-700">
-                    {resumo.qualidade_media_pct || 99}%
+                    {resumo.qualidade_media_pct || 0}%
                   </span>
                   <span className="text-xs font-semibold text-slate-600">
-                    {resumo.acima_85_qualidade}/{resumo.total} acima de 85%
+                    {resumo.acima_85_qualidade}/{resumo.total} com score ≥85
                   </span>
                 </div>
                 <div className="mt-1 text-xs text-slate-500">
-                  Título SEO + Ficha Técnica + 4–10 fotos + Frete R$ 0,00
+                  {resumo.revisao_aprovada || 0} liberados após revisão · {resumo.revisao_pendente || 0} pendentes
                 </div>
               </div>
 
@@ -1736,7 +2017,7 @@ export default function App() {
                     {uploadingBatch
                       ? 'Enviando ao ML...'
                       : account
-                        ? `Subir ${selectedSkus.length} Selecionado(s) no ML`
+                        ? `Enviar ${selectedSkus.length} Aprovado(s) (Pausado)`
                         : 'Conecte a conta ML'}
                   </button>
                 ) : null}
@@ -1898,9 +2179,12 @@ export default function App() {
 
                           <td className="px-3 py-3 text-[11px]">
                             <div className="font-mono font-semibold text-emerald-700">
-                              Qualidade {item.qualidade_score || 98}% · Premium {item.taxa_ml_pct ?? 19}% · Frete Grátis BR
+                              Score {item.qualidade_score || 0}% · Revisão{' '}
+                              {item.ml_revisao?.aprovado ? 'aprovada' : 'pendente'}
                             </div>
-                            <div className="text-slate-500">Por minha conta · R$ 0,00 · 5–10d</div>
+                            <div className="text-slate-500">
+                              {item.ml_preflight?.ok ? 'Pré-publicação OK' : 'Pré-publicação pendente'} · Pausado
+                            </div>
                           </td>
 
                           <td className="py-3 pl-3 pr-4 text-right">
@@ -2844,10 +3128,11 @@ export default function App() {
             <div className="surface flex flex-wrap items-center justify-between gap-4 p-5">
               <div>
                 <h1 className="text-lg font-bold text-slate-900">
-                  Carga Automatizada em Lote (Qualidade 85%+) & Conexão MeLi Max Shop
+                  Carga em Lote — Somente Pré-Publicados e Revisados
                 </h1>
                 <p className="mt-0.5 text-xs text-slate-600">
-                  Base atual com <strong className="font-mono">{resumo.prontos_para_subir}</strong> produtos prontos para subir via API assim que o CNPJ concluir a atualização do CNAE.
+                  <strong className="font-mono">{resumo.revisao_aprovada || 0}</strong> liberados para envio pausado ·{' '}
+                  <strong className="font-mono">{resumo.revisao_pendente || 0}</strong> pendentes de pré-publicação/revisão.
                 </p>
               </div>
               <div>
@@ -2877,9 +3162,9 @@ export default function App() {
 
             <div className="grid gap-6 lg:grid-cols-12">
               <div className="surface space-y-4 p-5 lg:col-span-6">
-                <div className="label">Subir Produtos em Lote para o Mercado Livre (1 Clique)</div>
+                <div className="label">Enviar Lote Pausado Após Verificação</div>
                 <p className="text-xs leading-relaxed text-slate-600">
-                  O motor publica cada anúncio resolvendo automaticamente a categoria folha oficial do ML, preenchendo os atributos obrigatórios da ficha técnica (para atingir 85%+ de qualificação interna), fotos HD, sobrepreço 2.8x e modalidade <strong>Vou enviar por minha conta (R$ 0,00 · Sem etiquetas)</strong>.
+                  O motor só envia itens que passaram pela pré-publicação automática (fotos, título, descrição, preço, categoria, atributos, frete grátis sem etiqueta e validação oficial do ML) e pela revisão manual. Itens sem essa dupla aprovação são bloqueados e não saem daqui.
                 </p>
 
                 <div className="grid gap-3 sm:grid-cols-3">
@@ -2913,14 +3198,9 @@ export default function App() {
                   </div>
                   <div>
                     <label className="text-xs font-medium text-slate-700">Status Inicial</label>
-                    <select
-                      value={uploadStatusMode}
-                      onChange={(e) => setUploadStatusMode(e.target.value)}
-                      className="input mt-1 text-xs"
-                    >
-                      <option value="paused">Pausado (Conferir)</option>
-                      <option value="active">Ativo (Venda Imediata)</option>
-                    </select>
+                    <div className="input mt-1 flex items-center bg-slate-50 font-mono text-xs text-slate-700">
+                      Pausado (obrigatório)
+                    </div>
                   </div>
                 </div>
 
@@ -2934,7 +3214,7 @@ export default function App() {
                   {uploadingBatch
                     ? 'Subindo Lote Automatizado para o Mercado Livre...'
                     : account
-                      ? `Subir Lote de ${uploadBatchSize} Produtos (Qualidade 85%+)`
+                      ? `Enviar até ${uploadBatchSize} Aprovados (Pausado)`
                       : 'Conecte a Conta Mercado Livre da MeLi Max Shop para Disparar Lote'}
                 </button>
 
@@ -2960,6 +3240,23 @@ export default function App() {
                             + {(lastUploadReport.falhas || 0) - 8} falha(s). Veja os detalhes no log do backend.
                           </div>
                         ) : null}
+                      </div>
+                    ) : null}
+                    {Array.isArray(lastUploadReport.bloqueados) && lastUploadReport.bloqueados.length > 0 ? (
+                      <div className="mt-2 space-y-1.5">
+                        <div className="text-[11px] font-semibold text-amber-800">
+                          Bloqueados sem pré-publicação + revisão (não enviados):
+                        </div>
+                        {lastUploadReport.bloqueados.slice(0, 8).map((item) => (
+                          <div
+                            key={item.sku}
+                            className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900"
+                          >
+                            <span className="font-mono font-semibold">{item.sku}</span>
+                            <span className="mx-1.5">·</span>
+                            <span className="break-words">{item.missing?.join('; ') || 'pendente'}</span>
+                          </div>
+                        ))}
                       </div>
                     ) : null}
                   </div>
