@@ -1,0 +1,252 @@
+{
+  "gerado_em": "2026-10-30T07:41:33.523Z",
+  "fonte": "app_state.aliexpress_catalog",
+  "catalogo_atualizado_em": "2026-10-29T13:29:01.920Z",
+  "modelo": {
+    "anuncio": "Premium (gold_pro)",
+    "comissao_ml": "taxa real consultada na API do Mercado Livre por categoria e faixa de preço",
+    "impostos": "percentual configurado em ML_TAX_RATE",
+    "frete_vendedor": "R$ 0,00"
+  },
+  "resumo": {
+    "produtos": 817,
+    "total_preco_venda_brl": 121145.97,
+    "total_custo_produtos_brl": 41544.19,
+    "total_comissoes_ml_brl": 19986.52,
+    "total_impostos_brl": 7267.56,
+    "total_frete_brl": 0,
+    "total_custo_operacao_brl": 68798.27,
+    "total_lucro_liquido_brl": 52347.7,
+    "margem_liquida_media_pct": 43.2,
+    "roi_medio_sobre_custo_pct": 126,
+    "produtos_com_taxa_real_ml": 817,
+    "produtos_com_fallback": 0,
+    "produtos_com_lucro_negativo": 0,
+    "distribuicao_taxas": [
+      {
+        "taxa_ml_pct": 16.5,
+        "taxa_ml_fixa_brl": 0,
+        "produtos": 267,
+        "total_comissao_brl": 5440.78
+      },
+      {
+        "taxa_ml_pct": 18,
+        "taxa_ml_fixa_brl": 0,
+        "produtos": 266,
+        "total_comissao_brl": 7996.36
+      },
+      {
+        "taxa_ml_pct": 17,
+        "taxa_ml_fixa_brl": 0,
+        "produtos": 108,
+        "total_comissao_brl": 1632.59
+      },
+      {
+        "taxa_ml_pct": 13.5,
+        "taxa_ml_fixa_brl": 0,
+        "produtos": 76,
+        "total_comissao_brl": 2385.28
+      },
+      {
+        "taxa_ml_pct": 15,
+        "taxa_ml_fixa_brl": 0,
+        "produtos": 27,
+        "total_comissao_brl": 1059.18
+      },
+      {
+        "taxa_ml_pct": 17.5,
+        "taxa_ml_fixa_brl": 0,
+        "produtos": 24,
+        "total_comissao_brl": 378.17
+      },
+      {
+        "taxa_ml_pct": 16,
+        "taxa_ml_fixa_brl": 0,
+        "produtos": 18,
+        "total_comissao_brl": 237.75
+      },
+      {
+        "taxa_ml_pct": 14,
+        "taxa_ml_fixa_brl": 0,
+        "produtos": 18,
+        "total_comissao_brl": 596.36
+      },
+      {
+        "taxa_ml_pct": 19,
+        "taxa_ml_fixa_brl": 0,
+        "produtos": 11,
+        "total_comissao_brl": 178.23
+      },
+      {
+        "taxa_ml_pct": 14.5,
+        "taxa_ml_fixa_brl": 0,
+        "produtos": 2,
+        "total_comissao_brl": 81.82
+      }
+    ],
+    "por_categoria": [
+      {
+        "categoria_ml_id": "MLB1574",
+        "categoria_ml": "Casa, Móveis e Decoração > Utilidades e Acessórios",
+        "produtos": 321,
+        "taxas_encontradas": [
+          "13.5%",
+          "16.5%"
+        ],
+        "total_comissao_brl": 7482.67,
+        "total_impostos_brl": 2913.41,
+        "total_lucro_brl": 21471.13,
+        "total_custo_produto_brl": 16697.5,
+        "roi_sobre_custo_pct": 128.6
+      },
+      {
+        "categoria_ml_id": "MLB5092",
+        "categoria_ml": "Celulares e Telefones > Acessórios para Celulares",
+        "produtos": 155,
+        "taxas_encontradas": [
+          "18%"
+        ],
+        "total_comissao_brl": 4177,
+        "total_impostos_brl": 1392.14,
+        "total_lucro_brl": 9701.87,
+        "total_custo_produto_brl": 7934.68,
+        "roi_sobre_custo_pct": 122.3
+      },
+      {
+        "categoria_ml_id": "MLB1246",
+        "categoria_ml": "Beleza e Cuidado Pessoal > Cuidados Pessoais",
+        "produtos": 89,
+        "taxas_encontradas": [
+          "15%",
+          "17%"
+        ],
+        "total_comissao_brl": 1930.34,
+        "total_impostos_brl": 724.74,
+        "total_lucro_brl": 5305.76,
+        "total_custo_produto_brl": 4120.48,
+        "roi_sobre_custo_pct": 128.8
+      },
+      {
+        "categoria_ml_id": "MLB1000",
+        "categoria_ml": "Eletrônicos, Áudio e Vídeo > Áudio",
+        "produtos": 65,
+        "taxas_encontradas": [
+          "18%"
+        ],
+        "total_comissao_brl": 1976.19,
+        "total_impostos_brl": 658.65,
+        "total_lucro_brl": 4538.75,
+        "total_custo_produto_brl": 3805.48,
+        "roi_sobre_custo_pct": 119.3
+      },
+      {
+        "categoria_ml_id": "MLB1648",
+        "categoria_ml": "Informática > Acessórios para PC",
+        "produtos": 46,
+        "taxas_encontradas": [
+          "18%"
+        ],
+        "total_comissao_brl": 1843.17,
+        "total_impostos_brl": 614.36,
+        "total_lucro_brl": 4183.73,
+        "total_custo_produto_brl": 3598.69,
+        "roi_sobre_custo_pct": 116.3
+      },
+      {
+        "categoria_ml_id": "MLB263532",
+        "categoria_ml": "Ferramentas > Ferramentas Manuais e Elétricas",
+        "produtos": 33,
+        "taxas_encontradas": [
+          "14%",
+          "17%"
+        ],
+        "total_comissao_brl": 709.08,
+        "total_impostos_brl": 280.33,
+        "total_lucro_brl": 2064.08,
+        "total_custo_produto_brl": 1619.15,
+        "roi_sobre_custo_pct": 127.5
+      },
+      {
+        "categoria_ml_id": "MLB5672",
+        "categoria_ml": "Acessórios para Veículos > Acessórios de Carros e Caminhonetes",
+        "produtos": 27,
+        "taxas_encontradas": [
+          "14%",
+          "17%"
+        ],
+        "total_comissao_brl": 514.88,
+        "total_impostos_brl": 196.7,
+        "total_lucro_brl": 1479.38,
+        "total_custo_produto_brl": 1088.39,
+        "roi_sobre_custo_pct": 135.9
+      },
+      {
+        "categoria_ml_id": "MLB1132",
+        "categoria_ml": "Brinquedos e Hobbies > Brinquedos",
+        "produtos": 24,
+        "taxas_encontradas": [
+          "14.5%",
+          "16.5%"
+        ],
+        "total_comissao_brl": 425.21,
+        "total_impostos_brl": 158.68,
+        "total_lucro_brl": 1159.36,
+        "total_custo_produto_brl": 902.28,
+        "roi_sobre_custo_pct": 128.5
+      },
+      {
+        "categoria_ml_id": "MLB135384",
+        "categoria_ml": "Celulares e Telefones > Smartwatches e Acessórios",
+        "produtos": 18,
+        "taxas_encontradas": [
+          "16%"
+        ],
+        "total_comissao_brl": 237.75,
+        "total_impostos_brl": 89.13,
+        "total_lucro_brl": 701.83,
+        "total_custo_produto_brl": 457.48,
+        "roi_sobre_custo_pct": 153.4
+      },
+      {
+        "categoria_ml_id": "MLB1430",
+        "categoria_ml": "Calçados, Roupas e Bolsas > Acessórios de Moda",
+        "produtos": 15,
+        "taxas_encontradas": [
+          "15%",
+          "19%"
+        ],
+        "total_comissao_brl": 312.06,
+        "total_impostos_brl": 109.8,
+        "total_lucro_brl": 785.54,
+        "total_custo_produto_brl": 622.94,
+        "roi_sobre_custo_pct": 126.1
+      },
+      {
+        "categoria_ml_id": "MLB1071",
+        "categoria_ml": "Animais > Cães e Gatos",
+        "produtos": 13,
+        "taxas_encontradas": [
+          "17.5%"
+        ],
+        "total_comissao_brl": 203.56,
+        "total_impostos_brl": 69.77,
+        "total_lucro_brl": 532.38,
+        "total_custo_produto_brl": 357.61,
+        "roi_sobre_custo_pct": 148.9
+      },
+      {
+        "categoria_ml_id": "MLB1276",
+        "categoria_ml": "Esportes e Fitness > Acessórios Esportivos",
+        "produtos": 11,
+        "taxas_encontradas": [
+          "17.5%"
+        ],
+        "total_comissao_brl": 174.61,
+        "total_impostos_brl": 59.85,
+        "total_lucro_brl": 423.89,
+        "total_custo_produto_brl": 339.51,
+        "roi_sobre_custo_pct": 124.9
+      }
+    ]
+  }
+}
