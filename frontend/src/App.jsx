@@ -1008,7 +1008,11 @@ export default function App() {
       setLastUploadReport(res);
       if (res.enviados > 0) {
         setSelectedSkus([]);
-        notify(`${res.enviados} anúncios enviados ao Mercado Livre com qualidade 85%+!`, 'success');
+        if (res.falhas > 0) {
+          notify(`${res.enviados} enviado(s) e ${res.falhas} falha(s). Veja o relatório abaixo.`, 'error');
+        } else {
+          notify(`${res.enviados} anúncios enviados ao Mercado Livre com qualidade 85%+!`, 'success');
+        }
       } else {
         const firstErr = res.resultados?.[0]?.error || 'Conecte a conta Mercado Livre para iniciar a carga.';
         notify(firstErr, 'error');
