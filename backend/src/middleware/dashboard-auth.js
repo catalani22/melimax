@@ -71,18 +71,15 @@ export async function dashboardAuth(req, res, next) {
       const payload = verifySession(key);
       if (payload) {
         if (payload.uid === 0) {
-          const count = await dashboardUserCount();
-          if (count === 0) {
-            req.dashboardUser = {
-              id: 0,
-              username: 'admin',
-              name: 'Administrador',
-              role: 'admin',
-              active: true,
-              legacy: true,
-            };
-            return next();
-          }
+          req.dashboardUser = {
+            id: 0,
+            username: 'admin',
+            name: 'Administrador',
+            role: 'admin',
+            active: true,
+            legacy: true,
+          };
+          return next();
         } else {
           const { rows } = await query(
             `SELECT id, username, name, role, active, token_version
@@ -115,8 +112,7 @@ export async function dashboardAuth(req, res, next) {
       });
     }
 
-    const count = await dashboardUserCount();
-    if (count === 0 && verifyDashboardKey(key)) {
+    if (verifyDashboardKey(key)) {
       req.dashboardUser = {
         id: 0,
         username: 'admin',

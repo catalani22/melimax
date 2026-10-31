@@ -13,7 +13,10 @@ router.get('/health', async (req, res) => {
     db = { driver: 'postgres', ok: false, error: err.message };
   }
 
-  res.status(db.ok ? 200 : 503).json({
+  const strict = req.query.strict === '1' || req.query.strict === 'true';
+  const httpCode = db.ok || !strict ? 200 : 503;
+
+  res.status(httpCode).json({
     status: db.ok ? 'ok' : 'degraded',
     service: 'melimax-backend',
     db,

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
@@ -66,6 +67,30 @@ app.use(
 );
 
 app.use(express.json({ limit: '4mb' }));
+
+// Built-in gzip compression for large JSON payloads (keeps 1,050-item catalog fast & well under serverless limits)
+app.use('/api', (req, res, next) => {
+  const acceptEncoding = String(req.headers['accept-encoding'] || '');
+  if (!/\bgzip\b/i.test(acceptEncoding)) return next();
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    try {
+      const jsonStr = JSON.stringify(body);
+      if (jsonStr && jsonStr.length > 2048 && !res.headersSent) {
+        const compressed = zlib.gzipSync(Buffer.from(jsonStr, 'utf8'));
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Vary', 'Accept-Encoding');
+        res.setHeader('Content-Length', String(compressed.length));
+        return res.end(compressed);
+      }
+    } catch {
+      // Fall back to standard res.json
+    }
+    return originalJson(body);
+  };
+  next();
+});
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -142,13 +167,21 @@ app.get('/mercadolivre_planilha_publicacao.csv', async (req, res, next) => {
   }
 });
 
-if (fs.existsSync(frontendDist)) {
-  app.use(express.static(frontendDist));
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api')) return next();
-    res.sendFile(path.join(frontendDist, 'index.html'));
-  });
-}
+app.use(express.static(frontendDist));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next();
+  const indexHtml = path.join(frontendDist, 'index.html');
+  if (fs.existsSync(indexHtml)) {
+    return res.sendFile(indexHtml);
+  }
+  if (process.env.VERCEL) return next();
+  res
+    .status(200)
+    .setHeader('Content-Type', 'text/html; charset=utf-8')
+    .send(
+      '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta http-equiv="refresh" content="2"><title>MeLi Max Shop</title></head><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#F4F5F7;color:#1e293b">Preparando painel MeLi Max Shop...</body></html>'
+    );
+});
 
 app.use(errorHandler);
 

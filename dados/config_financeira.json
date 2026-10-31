@@ -1,0 +1,15 @@
+{
+  "empresa_nome": "MeLi Max - Shop",
+  "natureza_juridica": "Empresa Individual (EI)",
+  "regime_tributario": "Simples Nacional - Anexo I (Comércio)",
+  "faixa_simples_atual": "Provisão EI Anexo I (Até R$ 360 mil/ano)",
+  "listing_type_id": "gold_pro",
+  "modalidade_anuncio": "Premium (gold_pro)",
+  "taxa_ml_premium_pct": 19,
+  "aliquota_imposto_ei_pct": 6,
+  "multiplicador_padrao": 2.8,
+  "preco_minimo_brl": 79.9,
+  "custo_frete_vendedor_brl": 0,
+  "meta_pedidos_dia": 12,
+  "atualizado_em": "2026-10-31T05:18:16.405Z"
+}

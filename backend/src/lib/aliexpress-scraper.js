@@ -799,6 +799,106 @@ const CATEGORY_MAP = [
   },
 ];
 
+export const OUTROS_OUTROS_LEAF_ID = 'MLB3530';
+export const OUTROS_OUTROS_LEAF_NAME = 'Mais Categorias > Outros';
+
+export const NON_ME2_DEPARTMENTAL_LEAVES = [
+  {
+    id: 'MLB1275',
+    name: 'Beleza e Cuidado Pessoal > Outros',
+    matchCatId: /^(MLB1246|MLB1275)$/i,
+    keywords: /beleza|cuidado|barbeador|aparador|depilador|escova|secador|chapinha|maquiagem|massageador|cabelo|unha|manicure|pele|facial/i,
+  },
+  {
+    id: 'MLB5236',
+    name: 'Ferramentas > Outros',
+    matchCatId: /^(MLB263532|MLB5236)$/i,
+    keywords: /ferramenta|chave|parafusadeira|furadeira|lanterna|alicate|trena|mult[ií]metro|solda|serra|broca|esmerilhadeira|nivel laser/i,
+  },
+  {
+    id: 'MLB1912',
+    name: 'Informática > Outros',
+    matchCatId: /^(MLB1648|MLB1000|MLB5092|MLB135384|MLB1912)$/i,
+    keywords: /mouse|teclado|hub|usb|webcam|notebook|ssd|pendrive|inform[aá]tica|cooler|wifi|roteador|fone|headset|earphone|caixa de som|speaker|microfone|carregador|cabo|power bank|suporte celular|adaptador|smartwatch|rel[oó]gio/i,
+  },
+  {
+    id: 'MLB5802',
+    name: 'Acessórios para Veículos > Outros',
+    matchCatId: /^(MLB5672|MLB5802)$/i,
+    keywords: /carro|automotivo|moto|veicular|pneu|compressor|farol|limpador|retrovisor|capacete/i,
+  },
+  {
+    id: 'MLB1126',
+    name: 'Animais > Outros (Pet Shop)',
+    matchCatId: /^(MLB1071|MLB1126)$/i,
+    keywords: /pet|cachorro|c[aã]es|gato|coleira|comedouro|brinquedo pet|tosa/i,
+  },
+  {
+    id: 'MLB1358',
+    name: 'Esportes e Fitness > Outros',
+    matchCatId: /^(MLB1276|MLB1358)$/i,
+    keywords: /esporte|academia|fitness|bicicleta|bike|camping|pesca|joelheira|el[aá]stico|garrafa esportiva/i,
+  },
+  {
+    id: 'MLB6156',
+    name: 'Bebês > Outros',
+    matchCatId: /^MLB6156$/i,
+    keywords: /\bbeb[eê]\b|mamadeira|chupeta|maternidade|ber[cç]o/i,
+  },
+  {
+    id: 'MLB1910',
+    name: 'Brinquedos e Hobbies > Outros',
+    matchCatId: /^(MLB1132|MLB1910)$/i,
+    keywords: /brinquedo|infantil|jogo|educativo|boneco|pel[uú]cia|montar|hobby/i,
+  },
+  {
+    id: 'MLB1911',
+    name: 'Calçados, Roupas e Bolsas > Outros',
+    matchCatId: /^(MLB1430|MLB1911)$/i,
+    keywords: /bolsa|mochila|carteira|[oó]culos|bon[eé]|cinto|meia|roupa|moda|cal[cç]ado/i,
+  },
+  {
+    id: 'MLB1899',
+    name: 'Eletrodomésticos > Outros',
+    matchCatId: /^MLB1899$/i,
+    keywords: /aspirador|umidificador|ventilador|liquidificador|processador de alimentos|ferro de passar|airfryer|cafeteira/i,
+  },
+  {
+    id: 'MLB1893',
+    name: 'Indústria e Comércio > Outros',
+    matchCatId: /^MLB1893$/i,
+    keywords: /embalagem comercial|etiquetadora|balan[cç]a comercial|epi\b/i,
+  },
+  {
+    id: 'MLB1902',
+    name: 'Casa, Móveis e Decoração > Outros',
+    matchCatId: /^(MLB1574|MLB1902)$/i,
+    keywords: /cozinha|panela|faca|amolador|pote|garrafa|t[eé]rmica|copo|escorredor|torneira|dispensador|organizador|limpeza|esfreg[aã]o|vassoura|lumin[aá]ria|l[aâ]mpada|led|abajur|casa|decora/i,
+  },
+];
+
+export const VERIFIED_NON_ME2_CATEGORY_IDS = new Set([
+  ...NON_ME2_DEPARTMENTAL_LEAVES.map((item) => item.id),
+  OUTROS_OUTROS_LEAF_ID,
+]);
+
+export function resolveNonMe2DepartmentCategory(productOrFields = {}) {
+  const catId = String(productOrFields.categoria_ml_id || '').trim();
+  const text = `${productOrFields.titulo_ml || ''} ${productOrFields.categoria_ml || ''} ${productOrFields.titulo_aliexpress_original || ''}`;
+
+  for (const entry of NON_ME2_DEPARTMENTAL_LEAVES) {
+    if (catId && entry.matchCatId.test(catId)) {
+      return { id: entry.id, name: entry.name };
+    }
+  }
+  for (const entry of NON_ME2_DEPARTMENTAL_LEAVES) {
+    if (entry.keywords.test(text)) {
+      return { id: entry.id, name: entry.name };
+    }
+  }
+  return { id: 'MLB1902', name: 'Casa, Móveis e Decoração > Outros' };
+}
+
 function inferCategoryAndDimensions(title, attrsText, descText) {
   const combined = `${title} ${attrsText} ${descText}`;
   const matched = CATEGORY_MAP.find((entry) => entry.keywords.test(combined)) || {
@@ -1455,6 +1555,13 @@ export async function scrapeAliExpressProduct({
   });
 
   const pricing = calculateMlPricing(effectiveCostBrl, multiplier, minPrice);
+  const nonMe2Dept = resolveNonMe2DepartmentCategory({
+    categoria_ml_id: catAndDims.mlCategoryId,
+    categoria_ml: catAndDims.mlCategory,
+    titulo_ml: cleanTitle,
+    titulo_aliexpress_original: rawTitle,
+  });
+  const clampedStock = Math.min(Math.max(inventory, 1), 3);
 
   const baseProduct = {
     sku: fullSku,
@@ -1466,10 +1573,15 @@ export async function scrapeAliExpressProduct({
     titulo_aliexpress_original: rawTitle || cleanTitle,
     categoria_ml: catAndDims.mlCategory,
     categoria_ml_id: catAndDims.mlCategoryId,
+    categoria_sem_me2_id: nonMe2Dept.id,
+    categoria_sem_me2_nome: nonMe2Dept.name,
+    categoria_outros_outros_id: OUTROS_OUTROS_LEAF_ID,
+    categoria_outros_outros_nome: OUTROS_OUTROS_LEAF_NAME,
+    estrategia_envio_anti_me2: 'cascata_me1_outros_mlb3530',
     condicao: 'Novo',
     tipo_anuncio: 'Premium (gold_pro)',
     tipo_anuncio_ml: 'premium',
-    estoque_disponivel: inventory,
+    estoque_disponivel: clampedStock,
     preco_custo_aliexpress_brl: pricing.cost,
     preco_tabela_aliexpress_brl: Number(effectiveOrigBrl.toFixed(2)),
     preco_live_aliexpress_brl: liveSalePriceBrl ? Number(liveSalePriceBrl.toFixed(2)) : pricing.cost,
@@ -1571,6 +1683,9 @@ export const COMPLETE_CSV_COLUMNS = [
   'descricao_aliexpress_original',
   'categoria_ml',
   'categoria_ml_id',
+  'categoria_sem_me2_id',
+  'categoria_sem_me2_nome',
+  'categoria_outros_outros_id',
   'condicao',
   'tipo_anuncio',
   'estoque_disponivel',
@@ -1654,6 +1769,9 @@ export function buildMercadoLivreBulkCsv(products) {
     'Título do Anúncio (Máx 60)',
     'Categoria Mercado Livre',
     'ID Categoria ML',
+    'ID Categoria Sem ME2 (Departamental)',
+    'Nome Categoria Sem ME2',
+    'ID Fallback Outros/Outros (MLB3530)',
     'Preço de Venda (R$)',
     'Moeda',
     'Quantidade em Estoque',
@@ -1698,6 +1816,9 @@ export function buildMercadoLivreBulkCsv(products) {
       p.titulo_ml,
       p.categoria_ml,
       p.categoria_ml_id,
+      p.categoria_sem_me2_id || resolveNonMe2DepartmentCategory(p).id,
+      p.categoria_sem_me2_nome || resolveNonMe2DepartmentCategory(p).name,
+      p.categoria_outros_outros_id || OUTROS_OUTROS_LEAF_ID,
       fmtCommaNumber(p.preco_venda_ml_sugerido, 2),
       'BRL',
       p.estoque_disponivel,

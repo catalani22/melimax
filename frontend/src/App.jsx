@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
 const API = (rawApiUrl || '/api').replace(/\/+$/, '');
@@ -235,6 +235,7 @@ function Icon({ name, className = 'h-4 w-4' }) {
 function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, accountConnected }) {
   const [tituloMl, setTituloMl] = useState(product.titulo_ml || '');
   const [descricaoMl, setDescricaoMl] = useState(product.descricao_ml_otimizada || '');
+  const [origDesc, setOrigDesc] = useState(product.descricao_aliexpress_original || '');
   const [custoBrl, setCustoBrl] = useState(String(product.preco_custo_aliexpress_brl || ''));
   const [multiplicador, setMultiplicador] = useState(String(product.multiplicador_venda || 2.8));
   const [marca, setMarca] = useState(product.marca || 'Genérica');
@@ -248,8 +249,9 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
   const [reviewBusy, setReviewBusy] = useState(false);
   const [approved, setApproved] = useState(Boolean(product.ml_revisao?.aprovado));
   const [reviewCategory, setReviewCategory] = useState(
-    product.ml_preflight?.categoria_ml_id || product.ml_revisao?.categoria_ml_id || product.categoria_ml_id || ''
+    product.ml_preflight?.categoria_ml_id || product.ml_revisao?.categoria_ml_id || product.categoria_sem_me2_id || ''
   );
+  const [modalStrategy, setModalStrategy] = useState('cascata');
   const [anchorItemId, setAnchorItemId] = useState(product.ml_item_id || '');
   const [reviewNotes, setReviewNotes] = useState(product.ml_revisao?.observacoes || '');
   const [reviewChecks, setReviewChecks] = useState(() => ({
@@ -263,7 +265,7 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
     setPreflight(product.ml_preflight || null);
     setApproved(Boolean(product.ml_revisao?.aprovado));
     setReviewCategory(
-      product.ml_preflight?.categoria_ml_id || product.ml_revisao?.categoria_ml_id || product.categoria_ml_id || ''
+      product.ml_preflight?.categoria_ml_id || product.ml_revisao?.categoria_ml_id || product.categoria_sem_me2_id || ''
     );
     setAnchorItemId(product.ml_item_id || '');
     setReviewNotes(product.ml_revisao?.observacoes || '');
@@ -274,6 +276,25 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
       preco_frete: Boolean(product.ml_revisao?.checks?.preco_frete),
     });
   }, [product.sku, product.ml_preflight, product.ml_revisao]);
+
+  useEffect(() => {
+    if (product.descricao_ml_otimizada) {
+      setDescricaoMl(product.descricao_ml_otimizada);
+      setOrigDesc(product.descricao_aliexpress_original || '');
+      return undefined;
+    }
+    let cancelled = false;
+    request(`/aliexpress/produtos/${encodeURIComponent(product.sku)}`)
+      .then((full) => {
+        if (cancelled || !full) return;
+        if (full.descricao_ml_otimizada) setDescricaoMl(full.descricao_ml_otimizada);
+        if (full.descricao_aliexpress_original) setOrigDesc(full.descricao_aliexpress_original);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [product.sku, product.descricao_ml_otimizada, product.descricao_aliexpress_original]);
   const [feeInfo, setFeeInfo] = useState(() => ({
     percentage: Number(product.taxa_ml_pct ?? 19) / 100,
     fixedFee: Number(product.taxa_ml_fixa_brl || 0),
@@ -373,9 +394,13 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
         body: {
           category_id: reviewCategory.trim() || undefined,
           anchor_item_id: anchorItemId.trim() || undefined,
+          estrategia: modalStrategy,
         },
       });
       setPreflight(res.preflight);
+      if (res.preflight?.categoria_ml_id) {
+        setReviewCategory(res.preflight.categoria_ml_id);
+      }
       setApproved(false);
       setReviewChecks({ categoria: false, fotos: false, titulo_fotos: false, preco_frete: false });
       notify(
@@ -737,7 +762,7 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
                 <textarea
                   rows={12}
                   readOnly
-                  value={product.descricao_aliexpress_original || ''}
+                  value={origDesc}
                   className="input mt-2 bg-slate-50 font-mono text-xs leading-relaxed text-slate-600"
                 />
               )}
@@ -786,27 +811,64 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
                 </button>
               </div>
 
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-3">
                 <div>
-                  <label className="label text-[11px]">Categoria folha MLB</label>
+                  <label className="label text-[11px]">Estratégia Anti-ME2</label>
+                  <select
+                    value={modalStrategy}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setModalStrategy(val);
+                      if (val === 'forcar_mlb3530') setReviewCategory('MLB3530');
+                      else if (product.categoria_sem_me2_id) setReviewCategory(product.categoria_sem_me2_id);
+                    }}
+                    className="input mt-1 text-xs"
+                  >
+                    <option value="cascata">1º ME1 → 2º Outros Depto → 3º MLB3530</option>
+                    <option value="forcar_departamental">Outros do Departamento (Sem ME2)</option>
+                    <option value="forcar_mlb3530">Mais Categorias &gt; Outros (MLB3530)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label text-[11px]">Categoria folha MLB (Sem ME2)</label>
                   <input
                     type="text"
                     value={reviewCategory}
                     onChange={(e) => setReviewCategory(e.target.value.toUpperCase())}
-                    placeholder="MLB1234"
+                    placeholder="MLB1902 / MLB3530"
                     className="input mt-1 font-mono text-xs"
                   />
                 </div>
                 <div>
-                  <label className="label text-[11px]">Anúncio âncora p/ diagnóstico de fotos</label>
+                  <label className="label text-[11px]">Anúncio âncora (opcional)</label>
                   <input
                     type="text"
                     value={anchorItemId}
                     onChange={(e) => setAnchorItemId(e.target.value.toUpperCase())}
-                    placeholder="MLB1234567890"
+                    placeholder="Auto (usa anúncio já criado)"
                     className="input mt-1 font-mono text-xs"
                   />
                 </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="font-semibold text-slate-600">Atalhos Sem ME2:</span>
+                {product.categoria_sem_me2_id ? (
+                  <button
+                    type="button"
+                    onClick={() => setReviewCategory(product.categoria_sem_me2_id)}
+                    className="rounded border border-slate-300 bg-white px-2 py-0.5 font-mono text-slate-700 hover:border-meli-blue hover:text-meli-blue"
+                  >
+                    {product.categoria_sem_me2_id} · {product.categoria_sem_me2_nome}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setReviewCategory('MLB3530')}
+                  className="rounded border border-slate-300 bg-white px-2 py-0.5 font-mono text-slate-700 hover:border-meli-blue hover:text-meli-blue"
+                >
+                  MLB3530 · Mais Categorias &gt; Outros
+                </button>
               </div>
 
               {Array.isArray(preflight?.categoria_candidatas) && preflight.categoria_candidatas.length > 0 ? (
@@ -938,6 +1000,22 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
                   className="input text-[11px]"
                 />
                 <div className="flex flex-wrap items-center gap-2">
+                  {preflight?.ok && !allReviewChecks ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setReviewChecks({
+                          categoria: true,
+                          fotos: true,
+                          titulo_fotos: true,
+                          preco_frete: true,
+                        })
+                      }
+                      className="btn-ghost text-xs"
+                    >
+                      Marcar os 4 itens conferidos
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     disabled={!preflight?.ok || !allReviewChecks || reviewBusy}
@@ -1001,6 +1079,7 @@ export default function App() {
 
   const [sessionUser, setSessionUser] = useState(null);
   const [authState, setAuthState] = useState('loading');
+  const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginBusy, setLoginBusy] = useState(false);
@@ -1020,6 +1099,9 @@ export default function App() {
   const [selectedSupplier, setSelectedSupplier] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [pisoFilter, setPisoFilter] = useState('');
+  const [catalogPage, setCatalogPage] = useState(1);
+  const [catalogPageSize, setCatalogPageSize] = useState(50);
+  const [costPage, setCostPage] = useState(1);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedSkus, setSelectedSkus] = useState([]);
 
@@ -1036,13 +1118,18 @@ export default function App() {
   const [mineLimit, setMineLimit] = useState('25');
   const [lastMineReport, setLastMineReport] = useState(null);
 
-  // Automated ML Batch Upload
+  // Automated ML Batch Upload & Anti-ME2 Command Center
   const [uploadBatchSize, setUploadBatchSize] = useState('20');
   const [uploadSupplierFilter, setUploadSupplierFilter] = useState('');
   const [uploadingBatch, setUploadingBatch] = useState(false);
   const [lastUploadReport, setLastUploadReport] = useState(null);
   const [statusBusy, setStatusBusy] = useState(null);
   const [lastStatusReport, setLastStatusReport] = useState(null);
+  const [antiMe2Strategy, setAntiMe2Strategy] = useState('cascata');
+  const [antiMe2Diag, setAntiMe2Diag] = useState(null);
+  const [antiMe2Busy, setAntiMe2Busy] = useState(null);
+  const [antiMe2Progress, setAntiMe2Progress] = useState(null);
+  const stopLoopRef = useRef(false);
 
   // Order Execution & Manual Tracking
   const [ordersState, setOrdersState] = useState({
@@ -1136,38 +1223,47 @@ export default function App() {
     } catch {}
   }, []);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
+  const verifyPanelAccess = useCallback(async () => {
+    setAuthState('loading');
+    try {
+      let status;
       try {
-        const status = await request('/auth/painel');
-        if (!alive) return;
-        if (!status?.protected) {
-          setAuthState('open');
-          return;
-        }
-        if (!getSessionToken()) {
-          setAuthState('locked');
-          return;
-        }
-        try {
-          const me = await request('/auth/sessao');
-          if (!alive) return;
-          if (me?.user?.id) {
-            setSessionUser(me.user);
-            setAuthState('ready');
-          } else {
-            saveSessionToken('');
-            setAuthState('locked');
-          }
-        } catch {
+        status = await request('/auth/painel');
+      } catch {
+        await new Promise((r) => setTimeout(r, 900));
+        status = await request('/auth/painel');
+      }
+      if (!status?.protected) {
+        setAuthState('open');
+        return;
+      }
+      if (!getSessionToken()) {
+        setAuthState('locked');
+        return;
+      }
+      try {
+        const me = await request('/auth/sessao');
+        const hasValidUser =
+          me?.user && ((me.user.id !== undefined && me.user.id !== null) || Boolean(me.user.username));
+        if (hasValidUser) {
+          setSessionUser(me.user);
+          setAuthState('ready');
+        } else {
           saveSessionToken('');
-          if (alive) setAuthState('locked');
+          setAuthState('locked');
         }
       } catch {
-        if (alive) setAuthState('locked');
+        saveSessionToken('');
+        setAuthState('locked');
       }
-    })();
+    } catch (err) {
+      setLoginError(err?.message || 'Servidor em inicialização.');
+      setAuthState('offline');
+    }
+  }, []);
+
+  useEffect(() => {
+    verifyPanelAccess();
     const onLocked = () => {
       saveSessionToken('');
       setSessionUser(null);
@@ -1175,10 +1271,13 @@ export default function App() {
     };
     window.addEventListener('melimax:locked', onLocked);
     return () => {
-      alive = false;
       window.removeEventListener('melimax:locked', onLocked);
     };
-  }, []);
+  }, [verifyPanelAccess]);
+
+  useEffect(() => {
+    setCatalogPage(1);
+  }, [searchQuery, selectedSupplier, selectedCategory, pisoFilter, catalogPageSize]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -1191,12 +1290,29 @@ export default function App() {
     loadCatalog();
   }, [authReady, loadCatalog]);
 
+  const loadAntiMe2Diag = useCallback(async (silent = false) => {
+    if (!silent) setAntiMe2Busy('diag');
+    try {
+      const data = await request('/aliexpress/diagnostico-geral-envio');
+      setAntiMe2Diag(data);
+      return data;
+    } catch (err) {
+      if (!silent) notify(err.message, 'error');
+      return null;
+    } finally {
+      if (!silent) setAntiMe2Busy(null);
+    }
+  }, [notify]);
+
   useEffect(() => {
     if (!authReady) return;
     if (activeNav === 'fornecedores') loadApprovedStores();
     if (activeNav === 'execucao') loadOrders();
-    if (activeNav === 'anuncios') loadListings();
-  }, [authReady, activeNav, loadApprovedStores, loadOrders, loadListings]);
+    if (activeNav === 'anuncios') {
+      loadListings();
+      loadAntiMe2Diag(true);
+    }
+  }, [authReady, activeNav, loadApprovedStores, loadOrders, loadListings, loadAntiMe2Diag]);
 
   const handleScrapeNew = async (e) => {
     e.preventDefault();
@@ -1362,6 +1478,231 @@ export default function App() {
     }
   };
 
+  const handleStopAntiMe2Loop = () => {
+    stopLoopRef.current = true;
+    notify('Solicitação de parada enviada; concluindo o micro-lote atual...', 'info');
+  };
+
+  const handleMigrateUploadedMe2Loop = async () => {
+    stopLoopRef.current = false;
+    setAntiMe2Busy('migrar');
+    let totalConvertidos = 0;
+    let totalRecriados = 0;
+    let totalFalhas = 0;
+    let consecutiveAllFailed = 0;
+    const logs = [];
+
+    try {
+      const initialDiag = await loadAntiMe2Diag(true);
+      const initialTarget = Number(initialDiag?.subidos_ml?.em_me2 || 0);
+      setAntiMe2Progress({
+        mode: 'migrar',
+        label: 'Migrando anúncios já subidos de ME2 → Envio Próprio Sem Etiqueta...',
+        done: 0,
+        total: Math.max(initialTarget, 1),
+        summary: 'Iniciando micro-lotes seguros (5 por requisição)...',
+        logs: [],
+      });
+
+      while (!stopLoopRef.current) {
+        const res = await request('/aliexpress/migrar-subidos-me2', {
+          method: 'POST',
+          body: { limite: 5, estrategia: antiMe2Strategy },
+        });
+        totalConvertidos += Number(res.convertidos_in_place || 0);
+        totalRecriados += Number(res.recriados_sem_me2 || 0);
+        totalFalhas += Number(res.falhas || 0);
+
+        for (const item of res.resultados || []) {
+          logs.unshift(
+            item.ok
+              ? `OK: ${item.ml_item_id_antigo} → ${item.ml_item_id_novo} (${item.categoria_aplicada} · ${item.modo_envio})`
+              : `ERRO: ${item.ml_item_id_antigo} — ${item.error}`
+          );
+        }
+
+        const fixedSoFar = totalConvertidos + totalRecriados;
+        const estTotal = Math.max(initialTarget, fixedSoFar + Number(res.restantes_em_me2 || 0), 1);
+
+        setAntiMe2Progress({
+          mode: 'migrar',
+          label: 'Migrando anúncios já subidos de ME2 → Envio Próprio Sem Etiqueta',
+          done: fixedSoFar,
+          total: estTotal,
+          summary: `Convertidos direto: ${totalConvertidos} · Fechados ME2 & Recriados: ${totalRecriados} · Restantes em ME2: ${res.restantes_em_me2} · Falhas: ${totalFalhas}`,
+          logs: logs.slice(0, 14),
+        });
+
+        if (res.processados === 0 || Number(res.restantes_em_me2 || 0) === 0) {
+          break;
+        }
+        if (res.falhas > 0 && res.convertidos_in_place === 0 && res.recriados_sem_me2 === 0) {
+          consecutiveAllFailed += 1;
+          if (consecutiveAllFailed >= 2) break;
+        } else {
+          consecutiveAllFailed = 0;
+        }
+      }
+
+      notify(
+        `Migração Anti-ME2 concluída: ${totalConvertidos + totalRecriados} anúncio(s) migrado(s) para envio próprio (${totalFalhas} falha(s)).`,
+        totalFalhas > 0 ? 'info' : 'success'
+      );
+      await Promise.all([loadCatalog(), loadListings(), loadAntiMe2Diag(true)]);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setAntiMe2Busy(null);
+    }
+  };
+
+  const handlePrepareAll1000Loop = async () => {
+    stopLoopRef.current = false;
+    setAntiMe2Busy('preparar');
+    let totalOk = 0;
+    let totalBlocked = 0;
+    let consecutiveAllBlocked = 0;
+    const logs = [];
+
+    try {
+      const initialDiag = await loadAntiMe2Diag(true);
+      const initialPending = Number(
+        initialDiag?.catalogo_1000?.pendentes_preparacao_anti_me2 || resumo.revisao_pendente || 1
+      );
+      setAntiMe2Progress({
+        mode: 'preparar',
+        label: 'Preparando e validando na API do ML os 1.000+ produtos pendentes (Sem ME2)...',
+        done: 0,
+        total: Math.max(initialPending, 1),
+        summary: 'Iniciando validação em micro-lotes (16 por chamada)...',
+        logs: [],
+      });
+
+      while (!stopLoopRef.current) {
+        const res = await request('/aliexpress/preparar-lote-catalogo', {
+          method: 'POST',
+          body: {
+            limite: 16,
+            estrategia: antiMe2Strategy,
+            aprovar_revisao: true,
+            fornecedor: uploadSupplierFilter || '',
+          },
+        });
+        totalOk += Number(res.preparados_ok || 0);
+        totalBlocked += Number(res.com_bloqueio || 0);
+
+        for (const r of res.resultados || []) {
+          logs.unshift(
+            r.ok
+              ? `PRONTO: ${r.sku} → ${r.categoria_ml_id} (${r.modo_envio})`
+              : `PENDENTE: ${r.sku} — ${r.error}`
+          );
+        }
+
+        const processedSoFar = totalOk + totalBlocked;
+        const estTotal = Math.max(initialPending, processedSoFar + Number(res.restantes_pendentes || 0), 1);
+
+        setAntiMe2Progress({
+          mode: 'preparar',
+          label: 'Preparando e aprovando base 1.000+ com Cascata Anti-ME2',
+          done: processedSoFar,
+          total: estTotal,
+          summary: `Aprovados Gate OK: ${totalOk} · Com bloqueio: ${totalBlocked} · Restantes na fila: ${res.restantes_pendentes} · Total prontos p/ subir: ${res.total_aprovados_prontos_para_subir}`,
+          logs: logs.slice(0, 14),
+        });
+
+        if (res.processados === 0 || Number(res.restantes_pendentes || 0) === 0) {
+          break;
+        }
+        if (res.preparados_ok === 0 && res.com_bloqueio > 0) {
+          consecutiveAllBlocked += 1;
+          if (consecutiveAllBlocked >= 3) break;
+        } else {
+          consecutiveAllBlocked = 0;
+        }
+      }
+
+      notify(
+        `Preparação em massa finalizada: ${totalOk} produto(s) validados sem ME2 e liberados para envio pausado.`,
+        'success'
+      );
+      await Promise.all([loadCatalog(), loadAntiMe2Diag(true)]);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setAntiMe2Busy(null);
+    }
+  };
+
+  const handleAutoUploadAllPrepared = async () => {
+    stopLoopRef.current = false;
+    setAntiMe2Busy('subir_auto');
+    let sentTotal = 0;
+    let failTotal = 0;
+    let consecutiveZero = 0;
+    const logs = [];
+
+    try {
+      const diag = await loadAntiMe2Diag(true);
+      const readyCount = Number(diag?.catalogo_1000?.prontos_anti_me2_gate_ok || resumo.revisao_aprovada || 1);
+      setAntiMe2Progress({
+        mode: 'subir_auto',
+        label: 'Subindo produtos aprovados PAUSADOS e SEM ME2 em lotes de 8...',
+        done: 0,
+        total: Math.max(readyCount, 1),
+        summary: 'Disparando lotes pausados com proteção Anti-ME2 pós-criação...',
+        logs: [],
+      });
+
+      while (!stopLoopRef.current) {
+        const res = await request('/aliexpress/publicar-lote', {
+          method: 'POST',
+          body: {
+            limite: 8,
+            fornecedor: uploadSupplierFilter || '',
+          },
+        });
+        sentTotal += Number(res.enviados || 0);
+        failTotal += Number(res.falhas || 0);
+
+        for (const r of res.resultados || []) {
+          logs.unshift(
+            r.ok
+              ? `CRIADO PAUSADO: ${r.sku} → ${r.ml_item_id}`
+              : `FALHA: ${r.sku} — ${r.error}`
+          );
+        }
+
+        setAntiMe2Progress({
+          mode: 'subir_auto',
+          label: 'Subindo produtos aprovados PAUSADOS e SEM ME2',
+          done: sentTotal + failTotal,
+          total: Math.max(readyCount, sentTotal + failTotal),
+          summary: `Criados pausados sem ME2: ${sentTotal} · Falhas: ${failTotal}`,
+          logs: logs.slice(0, 14),
+        });
+
+        if (Number(res.enviados || 0) === 0) {
+          consecutiveZero += 1;
+          if (consecutiveZero >= 1) break;
+        } else {
+          consecutiveZero = 0;
+        }
+        if (sentTotal + failTotal >= readyCount) break;
+      }
+
+      notify(
+        `Carga sequencial concluída: ${sentTotal} anúncio(s) enviados PAUSADOS sem ME2 (${failTotal} falha(s)).`,
+        failTotal > 0 ? 'info' : 'success'
+      );
+      await Promise.all([loadCatalog(), loadListings(), loadAntiMe2Diag(true)]);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setAntiMe2Busy(null);
+    }
+  };
+
   const toggleSkuSelection = (sku) => {
     setSelectedSkus((prev) =>
       prev.includes(sku) ? prev.filter((item) => item !== sku) : [...prev, sku]
@@ -1428,18 +1769,21 @@ export default function App() {
     try {
       const data = await request('/auth/painel', {
         method: 'POST',
-        body: { password },
+        body: {
+          ...(loginUsername.trim() ? { username: loginUsername.trim() } : {}),
+          password,
+        },
       });
       if (data?.token) {
         saveSessionToken(data.token);
-        setSessionUser(data.user || { username: 'admin' });
+        setSessionUser(data.user || { id: 0, username: 'admin' });
         setLoginPassword('');
         setAuthState('ready');
       } else {
         setAuthState('open');
       }
     } catch (err) {
-      setLoginError(err.message || 'Senha inválida.');
+      setLoginError(err.message || 'Usuário ou senha inválidos.');
     } finally {
       setLoginBusy(false);
     }
@@ -1658,12 +2002,49 @@ export default function App() {
     ? `&fornecedor=${encodeURIComponent(selectedSupplier)}`
     : '';
 
+  const totalCatalogItems = catalogData.produtos?.length || 0;
+  const totalCatalogPages = Math.max(Math.ceil(totalCatalogItems / catalogPageSize), 1);
+  const safeCatalogPage = Math.min(catalogPage, totalCatalogPages);
+  const pagedCatalogProducts = useMemo(() => {
+    const start = (safeCatalogPage - 1) * catalogPageSize;
+    return (catalogData.produtos || []).slice(start, start + catalogPageSize);
+  }, [catalogData.produtos, safeCatalogPage, catalogPageSize]);
+
+  const costPageSize = 50;
+  const totalCostPages = Math.max(Math.ceil((costAudit.products?.length || 0) / costPageSize), 1);
+  const safeCostPage = Math.min(costPage, totalCostPages);
+  const pagedCostProducts = useMemo(() => {
+    const start = (safeCostPage - 1) * costPageSize;
+    return (costAudit.products || []).slice(start, start + costPageSize);
+  }, [costAudit.products, safeCostPage]);
+
   if (authState === 'loading') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F4F5F7] text-slate-900">
         <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-medium text-slate-600 shadow-sm">
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-meli-blue" />
-          Verificando acesso ao painel...
+          Carregando painel MeLi Max Shop...
+        </div>
+      </div>
+    );
+  }
+
+  if (authState === 'offline') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F4F5F7] px-4 text-slate-900">
+        <div className="surface w-full max-w-sm space-y-4 p-6 text-center">
+          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-meli-yellow text-lg font-bold text-meli-ink">
+            M
+          </div>
+          <div>
+            <h1 className="text-base font-bold text-slate-900">Conectando ao servidor MeLi Max</h1>
+            <p className="mt-1 text-xs text-slate-500">
+              {loginError || 'O backend está acordando ou reconectando. Clique abaixo para abrir o painel.'}
+            </p>
+          </div>
+          <button type="button" onClick={verifyPanelAccess} className="btn-primary w-full py-2 text-xs">
+            Tentar novamente agora
+          </button>
         </div>
       </div>
     );
@@ -1689,6 +2070,21 @@ export default function App() {
               <p className="mt-1 text-xs text-slate-500">
                 Informe a senha do painel para liberar a base, os custos e a operação.
               </p>
+            </div>
+
+            <div>
+              <label className="label" htmlFor="dashboard-username">
+                Usuário (opcional — padrão admin)
+              </label>
+              <input
+                id="dashboard-username"
+                type="text"
+                autoComplete="username"
+                value={loginUsername}
+                onChange={(event) => setLoginUsername(event.target.value)}
+                className="input mt-1"
+                placeholder="admin ou seu usuário"
+              />
             </div>
 
             <div>
@@ -2140,7 +2536,7 @@ export default function App() {
                         </td>
                       </tr>
                     ) : (
-                      catalogData.produtos.map((item) => (
+                      pagedCatalogProducts.map((item) => (
                         <tr key={item.sku} className="transition hover:bg-slate-50/80">
                           <td className="py-3 pl-4 pr-1">
                             <input
@@ -2269,14 +2665,41 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-500">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-600">
                 <span>
-                  Exibindo <strong className="text-slate-800">{catalogData.produtos.length}</strong> de{' '}
-                  <strong className="text-slate-800">{resumo.total}</strong> produtos únicos prontos
+                  Página <strong className="text-slate-900">{safeCatalogPage}</strong> de{' '}
+                  <strong className="text-slate-900">{totalCatalogPages}</strong> · Exibindo{' '}
+                  <strong className="text-slate-900">{pagedCatalogProducts.length}</strong> de{' '}
+                  <strong className="text-slate-900">{totalCatalogItems}</strong> filtrados (total na base:{' '}
+                  <strong className="text-slate-900">{resumo.total}</strong>)
                 </span>
-                <span>
-                  Trava anti-repetição ativa · Somente estoque Brasil com Frete Totalmente Grátis
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={catalogPageSize}
+                    onChange={(e) => setCatalogPageSize(Number(e.target.value) || 50)}
+                    className="input w-auto py-1 text-xs"
+                  >
+                    <option value={50}>50 / pág.</option>
+                    <option value={100}>100 / pág.</option>
+                    <option value={250}>250 / pág.</option>
+                  </select>
+                  <button
+                    type="button"
+                    disabled={safeCatalogPage <= 1}
+                    onClick={() => setCatalogPage((p) => Math.max(1, p - 1))}
+                    className="btn-ghost px-2.5 py-1 text-xs disabled:opacity-40"
+                  >
+                    Anterior
+                  </button>
+                  <button
+                    type="button"
+                    disabled={safeCatalogPage >= totalCatalogPages}
+                    onClick={() => setCatalogPage((p) => Math.min(totalCatalogPages, p + 1))}
+                    className="btn-ghost px-2.5 py-1 text-xs disabled:opacity-40"
+                  >
+                    Próxima
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -2514,7 +2937,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {costAudit.products.map((item) => (
+                    {pagedCostProducts.map((item) => (
                       <tr key={item.sku} className="hover:bg-slate-50/80">
                         <td className="px-4 py-2.5">
                           <div className="max-w-[260px] truncate font-semibold text-slate-900" title={item.titulo_ml}>
@@ -2575,6 +2998,31 @@ export default function App() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-600">
+                <span>
+                  Página <strong className="text-slate-900">{safeCostPage}</strong> de{' '}
+                  <strong className="text-slate-900">{totalCostPages}</strong> ({costAudit.products.length}{' '}
+                  produtos auditados)
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={safeCostPage <= 1}
+                    onClick={() => setCostPage((p) => Math.max(1, p - 1))}
+                    className="btn-ghost px-2.5 py-1 text-xs disabled:opacity-40"
+                  >
+                    Anterior
+                  </button>
+                  <button
+                    type="button"
+                    disabled={safeCostPage >= totalCostPages}
+                    onClick={() => setCostPage((p) => Math.min(totalCostPages, p + 1))}
+                    className="btn-ghost px-2.5 py-1 text-xs disabled:opacity-40"
+                  >
+                    Próxima
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -3216,9 +3664,194 @@ export default function App() {
               </div>
             </div>
 
+            {/* CENTRAL ANTI-ME2 PARA OS JÁ SUBIDOS + 1.000+ PENDENTES */}
+            <div className="surface space-y-4 border-2 border-meli-blue/30 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-md bg-blue-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-meli-blue">
+                    Motor Anti-ME2 · Envio Próprio Sem Etiquetas (1.000+ Produtos)
+                  </div>
+                  <h2 className="mt-2 text-base font-bold text-slate-900">
+                    Central de Migração dos Já Subidos + Preparação Automatizada da Base Completa
+                  </h2>
+                  <p className="mt-0.5 max-w-4xl text-xs leading-relaxed text-slate-600">
+                    Resolve automaticamente o bloqueio de categorias que forçam ME2: <strong>1º tenta manter ME1</strong> na categoria SEO se habilitado na conta; <strong>2º aplica a categoria folha &ldquo;Outros&rdquo; do departamento</strong> (homologada na API do ML sem <code className="font-mono">carrier</code>/ME2); <strong>3º aplica o fallback garantido <code className="font-mono">MLB3530</code> (Mais Categorias &gt; Outros &gt; Outros)</strong> com frete grátis R$ 0,00 para todo o Brasil (5 a 10 dias) e estoque travado em 1–3 unidades.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={Boolean(antiMe2Busy)}
+                  onClick={() => loadAntiMe2Diag(false)}
+                  className="btn-ghost py-1.5 text-xs"
+                >
+                  <Icon name="refresh" className="h-3.5 w-3.5" />
+                  {antiMe2Busy === 'diag' ? 'Diagnosticando...' : 'Atualizar Diagnóstico ML'}
+                </button>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                  <div className="text-[11px] font-semibold uppercase text-slate-500">Modos da Conta ML</div>
+                  <div className="mt-1 font-mono text-sm font-bold text-slate-900">
+                    {antiMe2Diag?.conta_ml?.connected
+                      ? antiMe2Diag.conta_ml.me1_enabled
+                        ? 'ME1 Habilitado na Conta'
+                        : 'Sem ME1 · Modo Outros Ativo'
+                      : account
+                        ? 'Clique em Atualizar Diagnóstico'
+                        : 'Conta ML Desconectada'}
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">
+                    Modos: {(antiMe2Diag?.conta_ml?.shipping_modes || []).join(', ') || 'custom / not_specified'}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                  <div className="text-[11px] font-semibold uppercase text-slate-500">Anúncios Já Subidos no ML</div>
+                  <div className="mt-1 flex items-baseline gap-2 font-mono">
+                    <span className="text-lg font-bold text-red-600">
+                      {antiMe2Diag?.subidos_ml?.em_me2 ?? '—'} em ME2
+                    </span>
+                    <span className="text-xs font-semibold text-emerald-700">
+                      · {antiMe2Diag?.subidos_ml?.sem_me2_ok ?? '—'} sem ME2
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">
+                    Total abertos na conta: {antiMe2Diag?.subidos_ml?.total_encontrados ?? listings.length}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                  <div className="text-[11px] font-semibold uppercase text-slate-500">Base Total no Repositório/DB</div>
+                  <div className="mt-1 font-mono text-lg font-bold text-slate-900">
+                    {antiMe2Diag?.catalogo_1000?.total ?? resumo.total} produtos
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">
+                    {antiMe2Diag?.catalogo_1000?.ja_publicados ?? resumo.publicados_ml} já subidos ·{' '}
+                    {antiMe2Diag?.catalogo_1000?.nao_publicados ?? resumo.prontos_para_subir} para subir
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                  <div className="text-[11px] font-semibold uppercase text-slate-500">Fila Pronta Sem ME2 (Gate OK)</div>
+                  <div className="mt-1 flex items-baseline gap-2 font-mono">
+                    <span className="text-lg font-bold text-emerald-700">
+                      {antiMe2Diag?.catalogo_1000?.prontos_anti_me2_gate_ok ?? resumo.anti_me2_prontos ?? 0} prontos
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">
+                    {antiMe2Diag?.catalogo_1000?.pendentes_preparacao_anti_me2 ?? resumo.revisao_pendente ?? 0} aguardando preparo em lote
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-12">
+                <div className="lg:col-span-5">
+                  <label className="text-xs font-semibold text-slate-700">
+                    Regra de Categoria & Envio para Migração e Preparação:
+                  </label>
+                  <select
+                    value={antiMe2Strategy}
+                    onChange={(e) => setAntiMe2Strategy(e.target.value)}
+                    disabled={Boolean(antiMe2Busy)}
+                    className="input mt-1 text-xs font-medium"
+                  >
+                    <option value="cascata">
+                      Cascata Completa: 1º Manter ME1 → 2º Outros do Departamento → 3º Outros/Outros (MLB3530)
+                    </option>
+                    <option value="forcar_departamental">
+                      Direto em Outros do Departamento (MLB1902/1275/5236/1912) → Fallback MLB3530
+                    </option>
+                    <option value="forcar_mlb3530">
+                      Forçar Mais Categorias &gt; Outros &gt; Outros (MLB3530) em 100% dos itens
+                    </option>
+                  </select>
+                </div>
+
+                <div className="flex flex-wrap items-end gap-2 lg:col-span-7">
+                  <button
+                    type="button"
+                    disabled={!account || Boolean(antiMe2Busy)}
+                    onClick={handleMigrateUploadedMe2Loop}
+                    className="btn-dark flex-1 py-2 text-xs"
+                  >
+                    {antiMe2Busy === 'migrar'
+                      ? 'Migrando Já Subidos (ME2 → Sem ME2)...'
+                      : '1. Migrar Já Subidos de ME2 → Envio Próprio'}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!account || Boolean(antiMe2Busy)}
+                    onClick={handlePrepareAll1000Loop}
+                    className="btn-primary flex-1 py-2 text-xs"
+                  >
+                    {antiMe2Busy === 'preparar'
+                      ? 'Preparando 1.000+ na API ML...'
+                      : '2. Preparar & Aprovar os 1.000+ Pendentes'}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!account || Boolean(antiMe2Busy)}
+                    onClick={handleAutoUploadAllPrepared}
+                    className="btn-accent flex-1 py-2 text-xs"
+                  >
+                    {antiMe2Busy === 'subir_auto'
+                      ? 'Subindo Sequência Pausada...'
+                      : '3. Subir Todos Aprovados (Pausado s/ ME2)'}
+                  </button>
+
+                  {antiMe2Busy && antiMe2Busy !== 'diag' ? (
+                    <button
+                      type="button"
+                      onClick={handleStopAntiMe2Loop}
+                      className="btn-danger py-2 text-xs"
+                    >
+                      Parar Lote
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              {antiMe2Progress ? (
+                <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-900">{antiMe2Progress.label}</span>
+                    <span className="font-mono font-bold text-meli-blue">
+                      {antiMe2Progress.done} / {antiMe2Progress.total} (
+                      {Math.min(100, Math.round((antiMe2Progress.done / Math.max(antiMe2Progress.total, 1)) * 100))}
+                      %)
+                    </span>
+                  </div>
+                  <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className="h-full rounded-full bg-meli-blue transition-all duration-300"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.max(4, Math.round((antiMe2Progress.done / Math.max(antiMe2Progress.total, 1)) * 100))
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="font-mono text-[11px] text-slate-700">{antiMe2Progress.summary}</div>
+                  {Array.isArray(antiMe2Progress.logs) && antiMe2Progress.logs.length > 0 ? (
+                    <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 font-mono text-[11px] text-slate-700">
+                      {antiMe2Progress.logs.map((line, i) => (
+                        <div key={`${line}-${i}`} className="truncate">
+                          {line}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
             <div className="grid gap-6 lg:grid-cols-12">
               <div className="surface space-y-4 p-5 lg:col-span-6">
-                <div className="label">Enviar Lote Pausado Após Verificação</div>
+                <div className="label">Enviar Lote Individual Pausado Após Verificação</div>
                 <p className="text-xs leading-relaxed text-slate-600">
                   O motor só envia itens que passaram pela pré-publicação automática (fotos, título, descrição, preço, categoria, atributos, frete grátis sem etiqueta e validação oficial do ML) e pela revisão manual. Itens sem essa dupla aprovação são bloqueados e não saem daqui.
                 </p>

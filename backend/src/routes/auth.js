@@ -2,7 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import fetch from 'node-fetch';
 import rateLimit from 'express-rate-limit';
-import { dashboardUserCount, query } from '../lib/db.js';
+import { query } from '../lib/db.js';
 import { getAccount } from '../lib/ml.js';
 import { normalizePassword, verifyPassword } from '../lib/password.js';
 import { signSession } from '../lib/session.js';
@@ -20,11 +20,11 @@ const STATE_TTL_MS = 10 * 60 * 1000;
 
 const painelLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 40,
   skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Muitas tentativas de senha. Aguarde 15 minutos.' },
+  message: { error: 'Muitas tentativas de senha. Aguarde alguns minutos.' },
 });
 
 function normalizeUsername(value) {
@@ -36,10 +36,10 @@ function normalizeUsername(value) {
 
 function publicUser(user) {
   return {
-    id: user.id,
-    username: user.username,
-    name: user.name || user.username,
-    role: user.role,
+    id: user.id ?? 0,
+    username: user.username || 'admin',
+    name: user.name || user.username || 'Administrador',
+    role: user.role || 'admin',
     active: user.active !== false,
     legacy: Boolean(user.legacy),
   };
@@ -59,32 +59,40 @@ router.post('/painel', painelLimiter, async (req, res, next) => {
       return res.json({ ok: true, protected: false });
     }
 
-    const username = normalizeUsername(req.body?.username);
+    const explicitUsername = String(req.body?.username || '').trim();
+    const username = normalizeUsername(explicitUsername);
     const password = normalizePassword(req.body?.password);
 
     if (password) {
       const { rows } = await query(
         `SELECT id, username, name, role, active, password_hash, token_version
          FROM dashboard_users
-         WHERE username = $1
-         LIMIT 1`,
+         WHERE active = TRUE
+         ORDER BY CASE WHEN LOWER(username) = $1 THEN 0 ELSE 1 END, id ASC`,
         [username]
       );
-      const user = rows[0];
-      if (user && user.active && verifyPassword(password, user.password_hash)) {
+
+      const candidates = explicitUsername
+        ? rows.filter((u) => normalizeUsername(u.username) === username)
+        : rows;
+
+      const matchedUser = candidates.find(
+        (u) => u && u.active !== false && u.password_hash && verifyPassword(password, u.password_hash)
+      );
+
+      if (matchedUser) {
         await query('UPDATE dashboard_users SET last_login_at = NOW() WHERE id = $1', [
-          user.id,
-        ]);
+          matchedUser.id,
+        ]).catch(() => {});
         return res.json({
           ok: true,
           protected: true,
-          token: signSession(user),
-          user: publicUser(user),
+          token: signSession(matchedUser),
+          user: publicUser(matchedUser),
         });
       }
 
-      const count = await dashboardUserCount();
-      if (count === 0 && verifyDashboardKey(password)) {
+      if (verifyDashboardKey(password)) {
         const legacy = {
           id: 0,
           username: 'admin',
@@ -104,7 +112,7 @@ router.post('/painel', painelLimiter, async (req, res, next) => {
     }
 
     return res.status(401).json({
-      error: 'Senha do painel inválida.',
+      error: 'Usuário ou senha do painel inválidos.',
       code: 'DASHBOARD_LOCKED',
     });
   } catch (err) {

@@ -60,16 +60,35 @@ const memory = {
   supplier_products: [],
   price_alerts: [],
   dashboard_users: [],
+  app_state: new Map(),
 };
 let nextIds = { accounts: 1, listings: 1, suppliers: 3, supplier_products: 1, users: 1, executions: 1 };
-const DATABASE_URL = process.env.DATABASE_URL;
-const IS_PRODUCTION = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
-const ALLOW_MEMORY = !DATABASE_URL && !IS_PRODUCTION;
+const RAW_DATABASE_URL = (process.env.DATABASE_URL || '').trim();
+const IS_LOCALHOST_DB =
+  Boolean(RAW_DATABASE_URL) &&
+  /^postgres(ql)?:\/\/([^@]+@)?(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(RAW_DATABASE_URL);
+const DATABASE_URL = IS_LOCALHOST_DB && process.env.K_SERVICE ? '' : RAW_DATABASE_URL;
+const IS_VERCEL = Boolean(process.env.VERCEL);
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || IS_VERCEL;
+let allowMemoryFallback = !DATABASE_URL || !IS_VERCEL;
 const REQUIRES_SSL =
   Boolean(DATABASE_URL) &&
+  !IS_LOCALHOST_DB &&
   (IS_PRODUCTION || /sslmode=(require|verify-ca|verify-full)/i.test(DATABASE_URL) || /neon\.tech/i.test(DATABASE_URL));
 let pool = null;
 let schemaPromise = null;
+
+function switchToMemoryFallback(reason) {
+  if (IS_VERCEL) return false;
+  if (pool) {
+    const oldPool = pool;
+    pool = null;
+    oldPool.end().catch(() => {});
+  }
+  allowMemoryFallback = true;
+  console.warn(`[db] Postgres local indisponível (${reason}); operando em memória.`);
+  return true;
+}
 
 if (DATABASE_URL) {
   try {
@@ -78,7 +97,7 @@ if (DATABASE_URL) {
       ...(REQUIRES_SSL ? { ssl: { rejectUnauthorized: false } } : {}),
       max: 5,
       idleTimeoutMillis: 15000,
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: IS_LOCALHOST_DB ? 1500 : 5000,
     });
     pool.on('error', (err) => {
       console.error('[db] pool error:', err.message);
@@ -277,12 +296,37 @@ function mockQuery(text, params = []) {
     if (upper.includes('COUNT(*)::INT AS TOTAL') && upper.includes('FROM PRICE_ALERTS')) {
       return { rows: [{ total: 0, nao_lidas: 0 }], rowCount: 1 };
     }
+    if (upper.includes('FROM APP_STATE')) {
+      const key = String(params[0] || '');
+      if (memory.app_state.has(key)) {
+        return { rows: [{ value: memory.app_state.get(key) }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    }
+    if (upper.startsWith('INSERT INTO APP_STATE')) {
+      const key = String(params[0] || '');
+      let val = params[1];
+      if (typeof val === 'string') {
+        try {
+          val = JSON.parse(val);
+        } catch {}
+      }
+      memory.app_state.set(key, val);
+      return { rows: [{ key, value: val }], rowCount: 1 };
+    }
+    if (upper.includes('FROM DASHBOARD_USERS')) {
+      const activeRows = memory.dashboard_users.filter((u) => u.active !== false);
+      return { rows: activeRows, rowCount: activeRows.length };
+    }
+    if (upper.startsWith('UPDATE DASHBOARD_USERS')) {
+      return { rows: [], rowCount: 1 };
+    }
   } catch {}
   return { rows: [], rowCount: 0 };
 }
 
 export function usingMemory() {
-  return !pool && ALLOW_MEMORY;
+  return !pool && allowMemoryFallback;
 }
 
 function databaseUnavailable(err) {
@@ -296,14 +340,22 @@ function databaseUnavailable(err) {
   return error;
 }
 
+function isLocalConnRefused(err) {
+  const msg = String(err?.message || err?.code || '');
+  return IS_LOCALHOST_DB && /ECONNREFUSED|ENOTFOUND|timeout/i.test(msg);
+}
+
 export async function query(text, params) {
   if (!pool) {
-    if (ALLOW_MEMORY) return mockQuery(text, params);
+    if (allowMemoryFallback) return mockQuery(text, params);
     throw databaseUnavailable();
   }
   try {
     return await pool.query(text, params);
   } catch (err) {
+    if (isLocalConnRefused(err) && switchToMemoryFallback(err.message)) {
+      return mockQuery(text, params);
+    }
     throw databaseUnavailable(err);
   }
 }
@@ -716,7 +768,11 @@ export async function ensureSchema() {
         return true;
       })
       .catch((err) => {
-        console.error('[db] falha ao garantir schema:', err.message);
+        if (isLocalConnRefused(err)) {
+          switchToMemoryFallback(err.message);
+        } else {
+          console.error('[db] falha ao garantir schema:', err.message);
+        }
         return false;
       });
   }
@@ -725,20 +781,23 @@ export async function ensureSchema() {
 
 export async function dashboardUserCount() {
   if (!pool) {
-    if (ALLOW_MEMORY) return memory.dashboard_users.length;
+    if (allowMemoryFallback) return memory.dashboard_users.length;
     throw databaseUnavailable();
   }
   try {
     const { rows } = await pool.query('SELECT COUNT(*)::int AS count FROM dashboard_users');
     return Number(rows[0]?.count) || 0;
   } catch (err) {
+    if (isLocalConnRefused(err) && switchToMemoryFallback(err.message)) {
+      return memory.dashboard_users.length;
+    }
     throw databaseUnavailable(err);
   }
 }
 
 export async function dbStatus() {
   if (!pool) {
-    if (ALLOW_MEMORY) return { driver: 'memory', ok: true };
+    if (allowMemoryFallback) return { driver: 'memory', ok: true };
     return { driver: 'postgres', ok: false, error: 'DATABASE_URL ausente ou pool inválido.' };
   }
   try {
@@ -746,6 +805,9 @@ export async function dbStatus() {
     await pool.query('SELECT 1');
     return { driver: 'postgres', ok: true, latency_ms: Date.now() - started };
   } catch (err) {
+    if (isLocalConnRefused(err) && switchToMemoryFallback(err.message)) {
+      return { driver: 'memory', ok: true };
+    }
     return { driver: 'postgres', ok: false, error: err.message };
   }
 }
