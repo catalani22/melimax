@@ -27,6 +27,7 @@ import {
   isLiveItemModerationLocked,
   detectLiveModerationAlert,
   tryConvertExistingItemInPlace,
+  ensureItemStrictlyPaused,
 } from '../src/routes/aliexpress.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -74,24 +75,34 @@ async function saveCatalogToDbAndLocal(products) {
 }
 
 async function postItemSafe(payload) {
+  let created = null;
   try {
-    return await mlFetch('/items', { method: 'POST', body: payload });
+    created = await mlFetch('/items', { method: 'POST', body: payload });
   } catch (err) {
     if (err?.status !== 401) {
       const alt = { ...payload };
       if (alt.family_name && !alt.title) {
         alt.title = alt.family_name;
         delete alt.family_name;
-        return await mlFetch('/items', { method: 'POST', body: alt });
-      }
-      if (alt.title && !alt.family_name) {
+        created = await mlFetch('/items', { method: 'POST', body: alt });
+      } else if (alt.title && !alt.family_name) {
         alt.family_name = alt.title;
         delete alt.title;
-        return await mlFetch('/items', { method: 'POST', body: alt });
+        created = await mlFetch('/items', { method: 'POST', body: alt });
+      } else {
+        throw err;
       }
+    } else {
+      throw err;
     }
-    throw err;
   }
+  if (created?.id) {
+    const paused = await ensureItemStrictlyPaused(created.id);
+    if (paused?.status) {
+      created = { ...created, status: paused.status };
+    }
+  }
+  return created;
 }
 
 async function closeOldMe2(id) {

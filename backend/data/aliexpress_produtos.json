@@ -2284,7 +2284,7 @@
     "imagem_5": "https://ae-pic-a1.aliexpress-media.com/kf/S92f1ff0381a944a7b1e0c3c7a076ac07f.jpg",
     "imagem_6": "https://ae-pic-a1.aliexpress-media.com/kf/S93c6499d1d1b45c680f70b71ac7147225.jpg",
     "altura_cm": 6,
-    "titulo_ml": "Fones de Ouvido Bluetooth sem Fio com Cancelamento de Ruído",
+    "titulo_ml": "Fones de Ouvido Bluetooth sem Fio com Cancelamento Ref 0019",
     "largura_cm": 12,
     "imposto_pct": 6,
     "lote_origem": "Lote 1 - CSSV SHOP Store",
@@ -6025,8 +6025,8 @@
     "categoria_outros_outros_nome": "Mais Categorias > Outros",
     "marca_famosa_quarentena": false,
     "marca_famosa_detectada": null,
-    "risco_politica_ml": false,
-    "motivo_risco_politica_ml": null
+    "risco_politica_ml": true,
+    "motivo_risco_politica_ml": "ANVISA / Saneantes & Repelentes"
   },
   {
     "sku": "AE-0050-1005012005373580",
@@ -6144,8 +6144,8 @@
     "categoria_outros_outros_nome": "Mais Categorias > Outros",
     "marca_famosa_quarentena": false,
     "marca_famosa_detectada": null,
-    "risco_politica_ml": false,
-    "motivo_risco_politica_ml": null
+    "risco_politica_ml": true,
+    "motivo_risco_politica_ml": "ANVISA / Saneantes & Repelentes"
   },
   {
     "sku": "AE-0051-1005012169084018",
@@ -6285,7 +6285,7 @@
     "imagem_5": "",
     "imagem_6": "",
     "altura_cm": 10,
-    "titulo_ml": "Luzes LED RGB Subaquáticas com Ventosas Magnéticas 16 Cores",
+    "titulo_ml": "Luzes LED RGB Subaquáticas com Ventosas Magnéticas Ref 0052",
     "largura_cm": 16,
     "imposto_pct": 6,
     "lote_origem": "Lote 1 - CSSV SHOP Store",
@@ -10844,7 +10844,7 @@
     "imagem_5": "",
     "imagem_6": "",
     "altura_cm": 10,
-    "titulo_ml": "Lanterna LED Poderosa com Carregamento USB Foco Ajustável",
+    "titulo_ml": "Lanterna LED Poderosa com Carregamento USB Foco Aju Ref 0090",
     "largura_cm": 16,
     "imposto_pct": 6,
     "lote_origem": "Lote 1 - CSSV SHOP Store",
@@ -12869,7 +12869,7 @@
     "imagem_5": "",
     "imagem_6": "",
     "altura_cm": 10,
-    "titulo_ml": "Balança Digital Suspensa 50kg 10g Precisão LCD",
+    "titulo_ml": "Balança Digital Suspensa 50kg 10g Precisão LCD Ref 0107",
     "largura_cm": 16,
     "imposto_pct": 6,
     "lote_origem": "Lote 1 - CSSV SHOP Store",
@@ -29558,8 +29558,8 @@
     "categoria_outros_outros_nome": "Mais Categorias > Outros",
     "marca_famosa_quarentena": false,
     "marca_famosa_detectada": null,
-    "risco_politica_ml": false,
-    "motivo_risco_politica_ml": null
+    "risco_politica_ml": true,
+    "motivo_risco_politica_ml": "ANVISA / Saneantes & Repelentes"
   },
   {
     "sku": "AE-0244-1005007547346797",
@@ -50643,8 +50643,8 @@
     "categoria_outros_outros_nome": "Mais Categorias > Outros",
     "marca_famosa_quarentena": false,
     "marca_famosa_detectada": null,
-    "risco_politica_ml": false,
-    "motivo_risco_politica_ml": null
+    "risco_politica_ml": true,
+    "motivo_risco_politica_ml": "ANVISA / Saneantes & Repelentes"
   },
   {
     "sku": "AE-0414-1005012045491579",
@@ -66839,8 +66839,8 @@
     "categoria_outros_outros_nome": "Mais Categorias > Outros",
     "marca_famosa_quarentena": false,
     "marca_famosa_detectada": null,
-    "risco_politica_ml": false,
-    "motivo_risco_politica_ml": null
+    "risco_politica_ml": true,
+    "motivo_risco_politica_ml": "ANVISA / Saneantes & Repelentes"
   },
   {
     "sku": "AE-0547-1005012527012581",
@@ -83414,8 +83414,8 @@
     "categoria_outros_outros_nome": "Mais Categorias > Outros",
     "marca_famosa_quarentena": false,
     "marca_famosa_detectada": null,
-    "risco_politica_ml": false,
-    "motivo_risco_politica_ml": null
+    "risco_politica_ml": true,
+    "motivo_risco_politica_ml": "ANVISA / Saneantes & Repelentes"
   },
   {
     "sku": "AE-0684-1005010710916968",

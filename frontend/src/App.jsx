@@ -1144,6 +1144,8 @@ export default function App() {
   const [lastStatusReport, setLastStatusReport] = useState(null);
   const [antiMe2Strategy, setAntiMe2Strategy] = useState('cascata');
   const [antiMe2Diag, setAntiMe2Diag] = useState(null);
+  const [mlRaioX, setMlRaioX] = useState(null);
+  const [closeUnfixableToggle, setCloseUnfixableToggle] = useState(true);
   const [antiMe2Busy, setAntiMe2Busy] = useState(null);
   const [antiMe2Progress, setAntiMe2Progress] = useState(null);
   const [sanitizeReport, setSanitizeReport] = useState(null);
@@ -1323,6 +1325,20 @@ export default function App() {
     }
   }, [notify]);
 
+  const loadRaioXModeracoes = useCallback(async (silent = false) => {
+    if (!silent) setAntiMe2Busy('raiox');
+    try {
+      const data = await request('/aliexpress/raio-x-moderacoes-ml');
+      setMlRaioX(data);
+      return data;
+    } catch (err) {
+      if (!silent) notify(err.message, 'error');
+      return null;
+    } finally {
+      if (!silent) setAntiMe2Busy(null);
+    }
+  }, [notify]);
+
   useEffect(() => {
     if (!authReady) return;
     if (activeNav === 'fornecedores') loadApprovedStores();
@@ -1330,8 +1346,9 @@ export default function App() {
     if (activeNav === 'anuncios') {
       loadListings();
       loadAntiMe2Diag(true);
+      loadRaioXModeracoes(true);
     }
-  }, [authReady, activeNav, loadApprovedStores, loadOrders, loadListings, loadAntiMe2Diag]);
+  }, [authReady, activeNav, loadApprovedStores, loadOrders, loadListings, loadAntiMe2Diag, loadRaioXModeracoes]);
 
   const handleScrapeNew = async (e) => {
     e.preventDefault();
@@ -1840,7 +1857,226 @@ export default function App() {
         `Proteção da conta concluída: ${totalClosed} anúncio(s) com risco fechado(s) no ML e ${totalQuarantined} isolado(s) em quarentena no catálogo.`,
         totalFailed > 0 ? 'info' : 'success'
       );
-      await Promise.all([loadAntiMe2Diag(true), loadCatalog(), loadListings()]);
+      await Promise.all([loadRaioXModeracoes(true), loadAntiMe2Diag(true), loadCatalog(), loadListings()]);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setAntiMe2Busy(null);
+    }
+  };
+
+  const runEmergencyPauseAllPhase = async (sharedLogs = null) => {
+    const logs = sharedLogs || [];
+    const ignoredIds = [];
+    let totalPaused = 0;
+    let totalFailed = 0;
+    let round = 0;
+
+    setAntiMe2Progress({
+      mode: 'pausar_tudo',
+      label: 'Pausando 100% dos anúncios ativos na conta Mercado Livre (0 Ativos)...',
+      done: 0,
+      total: Math.max(Number(mlRaioX?.resumo?.ativos_na_loja || 1), 1),
+      summary: 'Varrendo todos os anúncios ativos na API do ML e aplicando status=paused...',
+      logs: logs.slice(0, 16),
+    });
+
+    while (!stopLoopRef.current && round < 40) {
+      round += 1;
+      const res = await request('/aliexpress/pausar-tudo-conta-ml', {
+        method: 'POST',
+        body: { limite: 80, ignorar_ids: ignoredIds },
+      });
+      totalPaused += Number(res.pausados_agora || 0);
+      totalFailed += Number(res.falhas || 0);
+
+      for (const d of res.detalhes || []) {
+        if (!d.ok && d.ml_item_id) {
+          ignoredIds.push(String(d.ml_item_id));
+          logs.unshift(`FALHA PAUSA ${d.ml_item_id}: ${d.error || 'erro'}`);
+        } else if (d.ml_item_id) {
+          logs.unshift(`PAUSADO: ${d.ml_item_id} → ${d.status}`);
+        }
+      }
+
+      const doneSoFar = totalPaused + totalFailed;
+      const estTotal = Math.max(doneSoFar + Number(res.ativos_restantes || 0), 1);
+      setAntiMe2Progress({
+        mode: 'pausar_tudo',
+        label: 'Desativando todos os anúncios ativos na loja Mercado Livre...',
+        done: doneSoFar,
+        total: estTotal,
+        summary: `Pausados agora: ${totalPaused} · Ativos restantes: ${res.ativos_restantes} · Falhas: ${totalFailed}`,
+        logs: logs.slice(0, 16),
+      });
+
+      if (!res.processados || Number(res.ativos_restantes || 0) === 0) break;
+    }
+
+    return { totalPaused, totalFailed, logs };
+  };
+
+  const runSanearPendenciasPhase = async (modo, fecharBloqueados, sharedLogs = null) => {
+    const logs = sharedLogs || [];
+    const processedIds = [];
+    let totalCorrigidos = 0;
+    let totalCapas = 0;
+    let totalFechados = 0;
+    let totalManual = 0;
+    let totalFalhas = 0;
+    let initialTotal = 0;
+    let round = 0;
+
+    while (!stopLoopRef.current && round < 160) {
+      round += 1;
+      const res = await request('/aliexpress/sanear-pendencias-ml', {
+        method: 'POST',
+        body: {
+          modo,
+          limite: modo === 'corrigir_recuperaveis' ? 12 : 35,
+          fechar_se_continuar_bloqueado: Boolean(fecharBloqueados),
+          ignorar_ids: processedIds,
+        },
+      });
+
+      if (round === 1) {
+        initialTotal = Math.max(Number(res.total_fila_inicial || 0), 1);
+      }
+
+      totalCorrigidos += Number(res.corrigidos_e_pausados || 0);
+      totalCapas += Number(res.capas_limpas_promovidas || 0);
+      totalFechados += Number(res.fechados_e_isolados || 0);
+      totalManual += Number(res.mantidos_pausados_revisao_manual || 0);
+      totalFalhas += Number(res.falhas || 0);
+
+      for (const d of res.detalhes || []) {
+        if (d.ml_item_id) processedIds.push(String(d.ml_item_id));
+        if (d.ok) {
+          logs.unshift(
+            `${d.acao === 'fechado_e_isolado' ? 'EXCLUÍDO/ISOLADO' : 'CORRIGIDO & PAUSADO'}: ${d.ml_item_id}${d.sku ? ` (${d.sku})` : ''} — ${d.motivo || d.acao}`
+          );
+        } else {
+          logs.unshift(`ERRO ${d.ml_item_id}: ${d.error || 'falha'}`);
+        }
+      }
+
+      const doneCount = processedIds.length;
+      const estTotal = Math.max(initialTotal, doneCount + Number(res.restantes_pendentes || 0), 1);
+      setAntiMe2Progress({
+        mode: modo,
+        label:
+          modo === 'fechar_irrecuperaveis'
+            ? 'Excluindo anúncios penalizados irrecuperáveis / proibidos / duplicados...'
+            : 'Corrigindo foto de capa + ficha técnica/GTIN e forçando status PAUSADO...',
+        done: doneCount,
+        total: estTotal,
+        summary: `Corrigidos & Pausados: ${totalCorrigidos} · Capas limpas trocadas: ${totalCapas} · Fechados/Isolados: ${totalFechados} · Restantes na fila: ${res.restantes_pendentes} · Falhas: ${totalFalhas}`,
+        logs: logs.slice(0, 16),
+      });
+
+      if (!res.processados || Number(res.restantes_pendentes || 0) === 0) break;
+    }
+
+    return {
+      totalCorrigidos,
+      totalCapas,
+      totalFechados,
+      totalManual,
+      totalFalhas,
+      logs,
+    };
+  };
+
+  const handlePauseAllAccountNow = async () => {
+    stopLoopRef.current = false;
+    setAntiMe2Busy('pausar_tudo');
+    try {
+      const out = await runEmergencyPauseAllPhase();
+      notify(
+        `Pausa geral concluída: ${out.totalPaused} anúncio(s) desativado(s) na conta Mercado Livre (0 ativos).`,
+        'success'
+      );
+      await Promise.all([loadRaioXModeracoes(true), loadAntiMe2Diag(true), loadCatalog(), loadListings()]);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setAntiMe2Busy(null);
+    }
+  };
+
+  const handleCloseIrrecoverableOnly = async () => {
+    stopLoopRef.current = false;
+    setAntiMe2Busy('fechar_irrec');
+    try {
+      const out = await runSanearPendenciasPhase('fechar_irrecuperaveis', false);
+      notify(
+        `Limpeza concluída: ${out.totalFechados} anúncio(s) proibido(s)/cancelado(s)/duplicado(s) fechado(s) e isolado(s).`,
+        'success'
+      );
+      await Promise.all([loadRaioXModeracoes(true), loadAntiMe2Diag(true), loadCatalog(), loadListings()]);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setAntiMe2Busy(null);
+    }
+  };
+
+  const handleRepairRecoverableOnly = async () => {
+    stopLoopRef.current = false;
+    setAntiMe2Busy('corrigir_rec');
+    try {
+      const out = await runSanearPendenciasPhase('corrigir_recuperaveis', closeUnfixableToggle);
+      notify(
+        `Correção concluída: ${out.totalCorrigidos} corrigido(s) e PAUSADO(S) (${out.totalCapas} capas trocadas), ${out.totalFechados} irrecuperáveis fechados.`,
+        'success'
+      );
+      await Promise.all([loadRaioXModeracoes(true), loadAntiMe2Diag(true), loadCatalog(), loadListings()]);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setAntiMe2Busy(null);
+    }
+  };
+
+  const handleFullRemediationAndPauseAll = async () => {
+    stopLoopRef.current = false;
+    setAntiMe2Busy('saneamento_total');
+    const sharedLogs = [];
+    try {
+      const p1 = await runEmergencyPauseAllPhase(sharedLogs);
+      let p2 = { totalFechados: 0 };
+      let p3 = { totalCorrigidos: 0, totalCapas: 0, totalFechados: 0, totalManual: 0 };
+      let p4 = { totalPaused: 0 };
+
+      if (!stopLoopRef.current) {
+        p2 = await runSanearPendenciasPhase('fechar_irrecuperaveis', false, sharedLogs);
+      }
+      if (!stopLoopRef.current) {
+        p3 = await runSanearPendenciasPhase('corrigir_recuperaveis', closeUnfixableToggle, sharedLogs);
+      }
+      if (!stopLoopRef.current) {
+        // Final guarantee sweep so ZERO items remain active after any waiting_for_patch resolution
+        p4 = await runEmergencyPauseAllPhase(sharedLogs);
+      }
+
+      const totalClosedAll = p2.totalFechados + p3.totalFechados;
+      const totalPausedAll = p1.totalPaused + p4.totalPaused;
+      setAntiMe2Progress((prev) =>
+        prev
+          ? {
+              ...prev,
+              label: stopLoopRef.current
+                ? 'Saneamento interrompido pelo operador'
+                : 'Saneamento Completo Concluído — Loja 100% Desativada (Paused) e Higienizada',
+              summary: `Ativos Desativados: ${totalPausedAll} · Corrigidos & Pausados: ${p3.totalCorrigidos} (Capas limpas: ${p3.totalCapas}) · Penalizados Excluídos/Isolados: ${totalClosedAll}`,
+            }
+          : null
+      );
+      notify(
+        `Saneamento finalizado! ${totalPausedAll} desativado(s), ${p3.totalCorrigidos} corrigido(s) e mantido(s) PAUSADO(S), e ${totalClosedAll} penalizado(s) fechado(s)/isolado(s).`,
+        'success'
+      );
+      await Promise.all([loadRaioXModeracoes(true), loadAntiMe2Diag(true), loadCatalog(), loadListings()]);
     } catch (err) {
       notify(err.message, 'error');
     } finally {
@@ -3880,6 +4116,254 @@ export default function App() {
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* CENTRAL DE EMERGÊNCIA: PAUSA TOTAL + RAIO-X DOS 706/518 + SANEAMENTO AUTOMÁTICO */}
+            <div className="surface space-y-4 border-2 border-red-300 bg-white p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-md bg-red-100 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-red-900">
+                    Central de Saneamento & Pausa Total · 100% Desativado Após Correção
+                  </div>
+                  <h2 className="mt-2 text-base font-bold text-slate-900">
+                    Resolver Pendências do Mercado Livre (Ativos Indevidos · 518 a Corrigir · 706 Inativos por Políticas)
+                  </h2>
+                  <p className="mt-0.5 max-w-4xl text-xs leading-relaxed text-slate-600">
+                    A API do Mercado Livre ignora <code className="font-mono">status: paused</code> na criação inicial e ativou anúncios automaticamente, acionando moderações de capa promocional (<code className="font-mono">poor_quality_thumbnail</code>) e políticas. Agora toda criação/edição aplica <code className="font-mono">PUT status: paused</code> obrigatório, e os comandos abaixo <strong>desativam 100% da loja</strong>, <strong>excluem os penalizados irrecuperáveis</strong> e <strong>corrigem capas/ficha técnica mantendo tudo DESATIVADO</strong>.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={Boolean(antiMe2Busy)}
+                  onClick={() => {
+                    loadRaioXModeracoes(false);
+                    loadAntiMe2Diag(true);
+                  }}
+                  className="btn-ghost border border-slate-300 py-1.5 text-xs font-semibold"
+                >
+                  <Icon name="refresh" className="h-3.5 w-3.5" />
+                  {antiMe2Busy === 'raiox' ? 'Lendo Conta ML...' : 'Atualizar Raio-X Oficial ML'}
+                </button>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-xl border border-red-200 bg-red-50/70 p-3.5">
+                  <div className="text-[11px] font-semibold uppercase text-red-800">
+                    1. Ativos na Loja (Meta: 0)
+                  </div>
+                  <div
+                    className={`mt-1 font-mono text-xl font-bold ${
+                      Number(mlRaioX?.resumo?.ativos_na_loja || 0) === 0
+                        ? 'text-emerald-700'
+                        : 'text-red-700'
+                    }`}
+                  >
+                    {mlRaioX?.resumo
+                      ? `${mlRaioX.resumo.ativos_na_loja} ativos`
+                      : account
+                        ? 'Carregando...'
+                        : '—'}
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-600">
+                    {Number(mlRaioX?.resumo?.ativos_na_loja || 0) === 0
+                      ? 'Confirmado: 100% da loja está desativada'
+                      : 'Clique abaixo para pausar 100% imediatamente'}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3.5">
+                  <div className="text-[11px] font-semibold uppercase text-amber-900">
+                    2. Pendentes para Corrigir
+                  </div>
+                  <div className="mt-1 font-mono text-xl font-bold text-amber-800">
+                    {mlRaioX?.resumo?.pendentes_para_corrigir ?? '—'} anúncios
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-600">
+                    Capa: <strong>{mlRaioX?.resumo?.pendentes_capa_fora_padrao ?? 0}</strong> · Ficha/GTIN:{' '}
+                    <strong>{mlRaioX?.resumo?.pendentes_ficha_gtin ?? 0}</strong> · ME2:{' '}
+                    <strong>{mlRaioX?.resumo?.pendentes_envio_me2 ?? 0}</strong>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-red-200 bg-red-50/60 p-3.5">
+                  <div className="text-[11px] font-semibold uppercase text-red-900">
+                    3. Inativos por Políticas ML
+                  </div>
+                  <div className="mt-1 font-mono text-xl font-bold text-red-700">
+                    {mlRaioX?.resumo?.inativos_por_politicas ?? '—'} anúncios
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-600">
+                    Excluir proibidos/dupl.:{' '}
+                    <strong>{mlRaioX?.resumo?.inativos_irrecuperaveis_fechar ?? 0}</strong> · Recuperáveis:{' '}
+                    <strong>{mlRaioX?.resumo?.inativos_recuperaveis_patch ?? 0}</strong>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5">
+                  <div className="text-[11px] font-semibold uppercase text-emerald-900">
+                    4. Pausados 100% Limpos & Prontos
+                  </div>
+                  <div className="mt-1 font-mono text-xl font-bold text-emerald-700">
+                    {mlRaioX?.resumo?.pausados_limpos_prontos ?? '—'} prontos
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-600">
+                    Desativados · Sem ME2 · Qualidade ML{' '}
+                    {mlRaioX?.resumo?.qualidade_media_ml_pct
+                      ? `~${mlRaioX.resumo.qualidade_media_ml_pct}%`
+                      : '≥ 90%'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                <label className="flex items-start gap-2.5 text-xs text-slate-700 max-w-2xl cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={closeUnfixableToggle}
+                    onChange={(e) => setCloseUnfixableToggle(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-meli-blue"
+                  />
+                  <span>
+                    <strong>Zerar 100% dos alertas vermelhos da conta:</strong> se o fornecedor não tiver nenhuma foto com fundo branco limpo (ou se o ML bloquear a categoria Outros naquele SKU), fechar/excluir o anúncio no ML e isolar no catálogo para revisão manual de foto antes de republicar.
+                  </span>
+                </label>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={!account || Boolean(antiMe2Busy)}
+                    onClick={handleFullRemediationAndPauseAll}
+                    className="btn-primary py-2.5 px-4 text-xs font-bold shadow-sm"
+                  >
+                    {antiMe2Busy === 'saneamento_total'
+                      ? 'Saneando Loja e Pausando Tudo...'
+                      : 'EXECUTAR TUDO: Pausar 100% + Excluir Proibidos + Corrigir Capas/Ficha e Manter DESATIVADO'}
+                  </button>
+                  {antiMe2Busy && !['diag', 'raiox'].includes(antiMe2Busy) ? (
+                    <button
+                      type="button"
+                      onClick={handleStopAntiMe2Loop}
+                      className="btn-danger py-2.5 px-3 text-xs font-bold"
+                    >
+                      Parar Agora
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="grid gap-2.5 sm:grid-cols-3">
+                <button
+                  type="button"
+                  disabled={!account || Boolean(antiMe2Busy)}
+                  onClick={handlePauseAllAccountNow}
+                  className="btn-danger py-2 text-xs font-bold"
+                >
+                  {antiMe2Busy === 'pausar_tudo'
+                    ? 'Desativando todos os ativos...'
+                    : `1. Só Desativar (Pausar) Todos os Ativos Agora (${mlRaioX?.resumo?.ativos_na_loja ?? 0})`}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!account || Boolean(antiMe2Busy)}
+                  onClick={handleCloseIrrecoverableOnly}
+                  className="btn-dark py-2 text-xs font-semibold"
+                >
+                  {antiMe2Busy === 'fechar_irrec'
+                    ? 'Excluindo proibidos/duplicados...'
+                    : `2. Só Excluir Penalizados Irrecuperáveis (${mlRaioX?.resumo?.inativos_irrecuperaveis_fechar ?? 0})`}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!account || Boolean(antiMe2Busy)}
+                  onClick={handleRepairRecoverableOnly}
+                  className="btn-accent py-2 text-xs font-semibold"
+                >
+                  {antiMe2Busy === 'corrigir_rec'
+                    ? 'Corrigindo capas/ficha e pausando...'
+                    : '3. Só Corrigir Pendentes (Capa + Ficha) e Manter Pausado'}
+                </button>
+              </div>
+
+              {antiMe2Progress &&
+              ['pausar_tudo', 'fechar_irrecuperaveis', 'corrigir_recuperaveis'].includes(
+                antiMe2Progress.mode
+              ) ? (
+                <div className="space-y-2 rounded-xl border border-red-200 bg-red-50/40 p-3.5 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-900">{antiMe2Progress.label}</span>
+                    <span className="font-mono font-bold text-meli-blue">
+                      {antiMe2Progress.done} / {antiMe2Progress.total} (
+                      {Math.min(
+                        100,
+                        Math.round((antiMe2Progress.done / Math.max(antiMe2Progress.total, 1)) * 100)
+                      )}
+                      %)
+                    </span>
+                  </div>
+                  <progress
+                    value={Math.min(
+                      100,
+                      Math.max(4, Math.round((antiMe2Progress.done / Math.max(antiMe2Progress.total, 1)) * 100))
+                    )}
+                    max={100}
+                    className="h-2.5 w-full overflow-hidden rounded-full accent-blue-600"
+                  />
+                  <div className="font-mono text-[11px] text-slate-800">{antiMe2Progress.summary}</div>
+                  {Array.isArray(antiMe2Progress.logs) && antiMe2Progress.logs.length > 0 ? (
+                    <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 font-mono text-[11px] text-slate-700">
+                      {antiMe2Progress.logs.map((line, i) => (
+                        <div key={`${line}-${i}`} className="truncate">
+                          {line}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {Array.isArray(mlRaioX?.motivos_oficiais_ml) && mlRaioX.motivos_oficiais_ml.length > 0 ? (
+                <div className="space-y-1.5 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-xs font-bold text-slate-900">
+                    Motivos Oficiais Apontados pela Moderação do Mercado Livre na Sua Conta:
+                  </div>
+                  <div className="max-h-40 space-y-1.5 overflow-y-auto text-[11px]">
+                    {mlRaioX.motivos_oficiais_ml.map((m, idx) => (
+                      <div
+                        key={`${m.subgroup}-${idx}`}
+                        className="rounded border border-slate-200 bg-white px-2.5 py-1.5 text-slate-700"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-semibold text-red-800">{m.reason}</span>
+                          <span className="rounded bg-red-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-red-800">
+                            {m.qtd} ocorrência(s)
+                          </span>
+                        </div>
+                        {m.remedy ? (
+                          <div className="mt-0.5 text-[10px] text-slate-500">
+                            Ação indicada pelo ML: {m.remedy}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {Array.isArray(mlRaioX?.contagem_tags_substatus) && mlRaioX.contagem_tags_substatus.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
+                  <span className="font-sans font-semibold text-slate-600">Tags técnicas ML detectadas:</span>
+                  {mlRaioX.contagem_tags_substatus.map((t) => (
+                    <span
+                      key={t.chave}
+                      className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-700"
+                    >
+                      {t.chave}: <strong>{t.qtd}</strong>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             {/* CENTRAL ANTI-ME2 PARA OS JÁ SUBIDOS + 1.000+ PENDENTES */}

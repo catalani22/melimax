@@ -1035,6 +1035,14 @@ export function detectMlPolicyRisk(productOrFields = {}) {
     return 'Política ML / Espionagem ou ANATEL Rádio';
   }
 
+  if (
+    /\b(repelente|anti[- ]?mosquito|inseticida|mata[r]?\s+mosquitos?|assassino\s+de\s+mosquitos?)\b/.test(
+      norm
+    )
+  ) {
+    return 'ANVISA / Saneantes & Repelentes';
+  }
+
   return null;
 }
 
