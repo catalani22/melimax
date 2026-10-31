@@ -4,7 +4,12 @@ import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { query } from '../src/lib/db.js';
 import { mlFetch } from '../src/lib/ml.js';
-import { PREMIUM_LISTING_TYPE, OUTROS_OUTROS_LEAF_ID } from '../src/lib/aliexpress-scraper.js';
+import {
+  PREMIUM_LISTING_TYPE,
+  OUTROS_OUTROS_LEAF_ID,
+  detectFamousBrand,
+  resolveNonMe2DepartmentCategory,
+} from '../src/lib/aliexpress-scraper.js';
 import {
   ensureAliExpressCatalog,
   getAliExpressCatalog,
@@ -16,6 +21,10 @@ import {
   buildMlReviewFingerprint,
   ensureFreeShippingNoticeInDescription,
   getProductImages,
+  collectAllAccountListingIds,
+  fetchMultiItemsFast,
+  isLiveItemModerationLocked,
+  tryConvertExistingItemInPlace,
 } from '../src/routes/aliexpress.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,6 +52,7 @@ for (const arg of process.argv.slice(2)) {
 const APPLY = args.apply === true || args.apply === 'true';
 const MODO = String(args.modo || 'tudo').toLowerCase(); // tudo | migrar | preparar | subir
 const ESTRATEGIA = String(args.estrategia || 'cascata').toLowerCase();
+const INCLUIR_MARCAS = args['incluir-marcas'] === true || args['incluir-marcas'] === 'true';
 const LIMIT = Number(args.limit || 0);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -53,7 +63,7 @@ async function saveCatalogToDbAndLocal(products) {
      VALUES ('aliexpress_catalog', $1::jsonb, NOW())
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
     [JSON.stringify(products)]
-  );
+  ).catch((err) => console.warn('[aviso db app_state]', err.message));
   for (const rel of ['backend/data/aliexpress_produtos.json', 'dados/aliexpress_produtos.json']) {
     const target = path.join(REPO_ROOT, rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -65,17 +75,18 @@ async function postItemSafe(payload) {
   try {
     return await mlFetch('/items', { method: 'POST', body: payload });
   } catch (err) {
-    const txt = `${err.message || ''} ${JSON.stringify(err.data || {})}`;
-    if (/family_name|item\.title|title\.missing|title\.invalid|body\.invalid_fields/i.test(txt)) {
+    if (err?.status !== 401) {
       const alt = { ...payload };
       if (alt.family_name && !alt.title) {
         alt.title = alt.family_name;
         delete alt.family_name;
-      } else if (alt.title && !alt.family_name) {
+        return await mlFetch('/items', { method: 'POST', body: alt });
+      }
+      if (alt.title && !alt.family_name) {
         alt.family_name = alt.title;
         delete alt.title;
+        return await mlFetch('/items', { method: 'POST', body: alt });
       }
-      return await mlFetch('/items', { method: 'POST', body: alt });
     }
     throw err;
   }
@@ -93,7 +104,7 @@ async function closeOldMe2(id) {
 }
 
 console.log(
-  `=== MeLi Max Anti-ME2 CLI (${APPLY ? 'APPLY REAL' : 'DRY-RUN'}) | modo=${MODO} | estrategia=${ESTRATEGIA} ===`
+  `=== MeLi Max Anti-ME2 CLI (${APPLY ? 'APPLY REAL' : 'DRY-RUN'}) | modo=${MODO} | estrategia=${ESTRATEGIA} | incluirMarcas=${INCLUIR_MARCAS} ===`
 );
 
 await ensureAliExpressCatalog();
@@ -108,45 +119,144 @@ console.log(
   `Conta conectada: ${profile.nickname} (${profile.user_id}) | modos=${profile.shipping_modes.join(',')} | Base=${products.length} produtos`
 );
 
-// STEP 1: Migrate already-uploaded ME2 items
+// STEP 1: Migrate already-uploaded ME2 items (in-place first, then close & recreate; skip famous brands)
 if (MODO === 'tudo' || MODO === 'migrar') {
-  const { rows: dbListings } = await query(
-    `SELECT id, ml_item_id, title, price, status, source_item_id
-     FROM listings
-     WHERE ml_item_id IS NOT NULL AND COALESCE(status, '') != 'closed'
-     ORDER BY created_at ASC`
+  const { allIds, dbRowsByMlId } = await collectAllAccountListingIds(profile.user_id);
+  const liveItems = await fetchMultiItemsFast(allIds);
+  const me2Items = liveItems.filter(
+    (it) => it.status !== 'closed' && !isItemShippingFreeOfMe2(it.shipping || {})
   );
-  const targets = LIMIT > 0 ? dbListings.slice(0, LIMIT) : dbListings;
-  let migrated = 0;
+  const targets = LIMIT > 0 ? me2Items.slice(0, LIMIT) : me2Items;
 
-  for (const row of targets) {
+  let convertedInPlace = 0;
+  let recreated = 0;
+  let quarantinedBrands = 0;
+  let failed = 0;
+
+  for (const live of targets) {
+    const oldId = String(live.id);
+    const dbRow = dbRowsByMlId.get(oldId) || null;
+    const sellerSkuAttr = (live.attributes || []).find((a) => a.id === 'SELLER_SKU')?.value_name;
+
+    const prodIdx = products.findIndex(
+      (p) =>
+        String(p.ml_item_id) === oldId ||
+        (sellerSkuAttr && String(p.sku).toUpperCase() === String(sellerSkuAttr).toUpperCase()) ||
+        (dbRow?.source_item_id && String(p.aliexpress_item_id) === String(dbRow.source_item_id))
+    );
+    const matchedProd = prodIdx >= 0 ? products[prodIdx] : null;
+    const detectedBrand =
+      detectFamousBrand(live) || (matchedProd ? detectFamousBrand(matchedProd) : null);
+    const modLocked = isLiveItemModerationLocked(live);
+
+    if (!INCLUIR_MARCAS && (detectedBrand || modLocked)) {
+      quarantinedBrands += 1;
+      console.log(
+        `[RESERVADO MARCA FAMOSA] ${oldId} (${detectedBrand || 'Moderação ML'}) — "${live.title}"`
+      );
+      if (APPLY) {
+        if (live.status === 'active') {
+          await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
+            method: 'PUT',
+            body: { status: 'paused' },
+          }).catch(() => null);
+        }
+        if (prodIdx >= 0) {
+          products[prodIdx] = {
+            ...products[prodIdx],
+            marca_famosa_quarentena: true,
+            marca_famosa_detectada: detectedBrand || 'Moderação ML',
+            status_anuncio: 'aguardando_procedimento_marca',
+          };
+        }
+      }
+      continue;
+    }
+
+    console.log(`[EM ME2] ${oldId} | cat=${live.category_id} | titulo="${live.title}"`);
+    if (!APPLY) continue;
+
     try {
-      const live = await mlFetch(`/items/${encodeURIComponent(row.ml_item_id)}`);
-      if (live.status === 'closed' || isItemShippingFreeOfMe2(live.shipping || {})) {
-        console.log(`[OK SEM ME2] ${row.ml_item_id} (${live.shipping?.mode || live.status})`);
+      if (live.status === 'active') {
+        await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
+          method: 'PUT',
+          body: { status: 'paused' },
+        }).catch(() => null);
+      }
+
+      const livePics = (live.pictures || []).map((pic) => pic.secure_url || pic.url).filter(Boolean);
+      const baseProd = matchedProd
+        ? {
+            ...matchedProd,
+            imagens: getProductImages(matchedProd).length >= 4 ? getProductImages(matchedProd) : livePics,
+          }
+        : {
+            sku: sellerSkuAttr || `MLMIG-${oldId}`,
+            codigo_interno: sellerSkuAttr || oldId,
+            aliexpress_item_id: dbRow?.source_item_id || oldId,
+            titulo_ml: live.title || 'Produto Pronta Entrega',
+            descricao_ml_otimizada: `${live.title || 'Produto'}. Frete grátis para todo o Brasil com prazo de 5 a 10 dias corridos.`,
+            preco_venda_ml_sugerido: Math.max(Number(live.price) || 79.9, 79.9),
+            imagens: livePics,
+            marca: 'Genérica',
+            modelo: 'Padrão',
+            estoque_disponivel: 3,
+          };
+
+      const deptCat = resolveNonMe2DepartmentCategory(baseProd);
+      const targetCatId = ESTRATEGIA === 'forcar_mlb3530' ? OUTROS_OUTROS_LEAF_ID : deptCat.id;
+
+      const { converted, lastPutError } = await tryConvertExistingItemInPlace(
+        live,
+        baseProd,
+        targetCatId,
+        profile,
+        ESTRATEGIA
+      );
+
+      if (converted) {
+        convertedInPlace += 1;
+        await mlFetch(`/items/${encodeURIComponent(converted.id)}/description`, {
+          method: 'PUT',
+          body: { plain_text: ensureFreeShippingNoticeInDescription(baseProd.descricao_ml_otimizada) },
+        }).catch(() => null);
+
+        if (prodIdx >= 0) {
+          const finalCat = converted.category_id || targetCatId;
+          const fp = buildMlReviewFingerprint(products[prodIdx], finalCat);
+          products[prodIdx] = {
+            ...products[prodIdx],
+            ml_item_id: converted.id,
+            status_anuncio: 'paused',
+            ml_shipping: converted.shipping,
+            ml_preflight: {
+              ...(products[prodIdx].ml_preflight || {}),
+              ok: true,
+              anti_me2_verified: true,
+              categoria_ml_id: finalCat,
+              fingerprint: fp,
+            },
+            ml_revisao: {
+              aprovado: true,
+              aprovado_em: new Date().toISOString(),
+              aprovado_por: 'cli_anti_me2',
+              categoria_ml_id: finalCat,
+              checks: { categoria: true, fotos: true, titulo_fotos: true, preco_frete: true },
+              fingerprint: fp,
+            },
+          };
+        }
+        console.log(
+          `  -> CONVERTIDO IN-PLACE: ${oldId} (${converted.category_id} | ${converted.shipping?.mode})`
+        );
+        await sleep(250);
         continue;
       }
-      console.log(`[EM ME2] ${row.ml_item_id} | cat=${live.category_id} | titulo="${live.title}"`);
-      if (!APPLY) continue;
 
-      const prodIdx = products.findIndex(
-        (p) =>
-          String(p.ml_item_id) === String(row.ml_item_id) ||
-          (row.source_item_id && String(p.aliexpress_item_id) === String(row.source_item_id))
-      );
-      const baseProd =
-        prodIdx >= 0
-          ? products[prodIdx]
-          : {
-              sku: `MLMIG-${row.ml_item_id}`,
-              codigo_interno: row.ml_item_id,
-              aliexpress_item_id: row.source_item_id || row.ml_item_id,
-              titulo_ml: live.title || 'Produto Pronta Entrega',
-              descricao_ml_otimizada: `${live.title}. Frete grátis para todo o Brasil com prazo de 5 a 10 dias corridos.`,
-              preco_venda_ml_sugerido: Math.max(Number(live.price) || 79.9, 79.9),
-              imagens: (live.pictures || []).map((pic) => pic.secure_url || pic.url).filter(Boolean),
-              estoque_disponivel: 3,
-            };
+      if (livePics.length >= 4) {
+        baseProd.imagens = livePics;
+        baseProd.qtd_imagens = livePics.length;
+      }
 
       const { prepared, report } = await runMlPreflight(baseProd, {
         ignore_existing_ml_item: true,
@@ -154,11 +264,14 @@ if (MODO === 'tudo' || MODO === 'migrar') {
         estrategia: ESTRATEGIA,
       });
       if (!report.ok || !report.payload) {
-        console.warn(`  -> Bloqueado na validação substituta: ${(report.blockers || []).join('; ')}`);
+        failed += 1;
+        console.warn(
+          `  -> Bloqueado (${lastPutError || 'in-place recusado'}): ${(report.blockers || []).join('; ')}`
+        );
         continue;
       }
 
-      await closeOldMe2(row.ml_item_id);
+      await closeOldMe2(oldId);
       let created = await postItemSafe({ ...report.payload, status: 'paused' });
       if (created?.id && !isItemShippingFreeOfMe2(created.shipping || {})) {
         await closeOldMe2(created.id);
@@ -171,12 +284,14 @@ if (MODO === 'tudo' || MODO === 'migrar') {
           body: { plain_text: ensureFreeShippingNoticeInDescription(prepared.descricao_ml_otimizada) },
         }).catch(() => null);
 
-        await query('UPDATE listings SET ml_item_id=$1, status=$2, permalink=$3 WHERE id=$4', [
-          created.id,
-          'paused',
-          created.permalink || null,
-          row.id,
-        ]);
+        if (dbRow?.id) {
+          await query('UPDATE listings SET ml_item_id=$1, status=$2, permalink=$3 WHERE id=$4', [
+            created.id,
+            'paused',
+            created.permalink || null,
+            dbRow.id,
+          ]).catch(() => null);
+        }
 
         if (prodIdx >= 0) {
           const fp = buildMlReviewFingerprint(prepared, created.category_id || report.categoria_ml_id);
@@ -184,6 +299,7 @@ if (MODO === 'tudo' || MODO === 'migrar') {
             ...products[prodIdx],
             ...prepared,
             ml_item_id: created.id,
+            ml_item_id_me2_fechado: oldId,
             ml_permalink: created.permalink || null,
             status_anuncio: 'paused',
             ml_shipping: created.shipping || null,
@@ -198,33 +314,49 @@ if (MODO === 'tudo' || MODO === 'migrar') {
             },
           };
         }
-        migrated += 1;
+        recreated += 1;
         console.log(
-          `  -> MIGRADO: ${row.ml_item_id} (fechado) => ${created.id} (${created.category_id} | ${created.shipping?.mode})`
+          `  -> RECRIADO SEM ME2: ${oldId} (fechado) => ${created.id} (${created.category_id} | ${created.shipping?.mode})`
         );
       }
-      await sleep(450);
+      await sleep(300);
     } catch (err) {
-      console.error(`  -> Erro em ${row.ml_item_id}: ${err.message}`);
+      failed += 1;
+      console.error(`  -> Erro em ${oldId}: ${err.message}`);
     }
   }
-  if (APPLY && migrated > 0) {
+  if (APPLY && (convertedInPlace > 0 || recreated > 0 || quarantinedBrands > 0)) {
     await saveCatalogToDbAndLocal(products);
   }
-  console.log(`Resumo Migração Já Subidos: ${migrated} migrado(s).`);
+  console.log(
+    `Resumo Migração Já Subidos: ${convertedInPlace} in-place, ${recreated} recriados, ${quarantinedBrands} marcas famosas reservadas, ${failed} falhas.`
+  );
 }
 
-// STEP 2: Prepare all 1,000+ un-uploaded products with Anti-ME2 validation
+// STEP 2: Prepare all un-uploaded non-brand products with Anti-ME2 validation
 if (MODO === 'tudo' || MODO === 'preparar') {
   const pendingIndices = [];
+  let skippedFamous = 0;
   for (let i = 0; i < products.length; i += 1) {
     const p = products[i];
     if (p.ml_item_id) continue;
+    if (!INCLUIR_MARCAS && (p.marca_famosa_quarentena || detectFamousBrand(p))) {
+      skippedFamous += 1;
+      products[i] = {
+        ...p,
+        marca_famosa_quarentena: true,
+        marca_famosa_detectada: p.marca_famosa_detectada || detectFamousBrand(p),
+        status_anuncio: 'aguardando_procedimento_marca',
+      };
+      continue;
+    }
     if (getMlReviewGate(p).ok && p.ml_preflight?.anti_me2_verified) continue;
     pendingIndices.push(i);
   }
   const slice = LIMIT > 0 ? pendingIndices.slice(0, LIMIT) : pendingIndices;
-  console.log(`Produtos pendentes de preparo Anti-ME2: ${slice.length}/${pendingIndices.length}`);
+  console.log(
+    `Produtos elegíveis pendentes de preparo Anti-ME2: ${slice.length}/${pendingIndices.length} (${skippedFamous} marcas famosas reservadas)`
+  );
 
   let prepCount = 0;
   for (const idx of slice) {
@@ -259,21 +391,25 @@ if (MODO === 'tudo' || MODO === 'preparar') {
     } else {
       console.warn(`  [BLOQUEIO] ${item.sku}: ${(report.blockers || []).join('; ')}`);
     }
-    await sleep(180);
+    await sleep(140);
   }
-  if (APPLY && prepCount > 0) {
+  if (APPLY && (prepCount > 0 || skippedFamous > 0)) {
     await saveCatalogToDbAndLocal(products);
   }
   console.log(`Resumo Preparação Base 1000+: ${prepCount} aprovado(s) sem ME2.`);
 }
 
-// STEP 3: Optional paused upload (--modo=subir --apply)
-if (MODO === 'subir' && APPLY) {
+// STEP 3: Paused upload without ME2 (--modo=tudo --apply or --modo=subir --apply)
+if ((MODO === 'tudo' || MODO === 'subir') && APPLY) {
   const readyIndices = [];
   for (let i = 0; i < products.length; i += 1) {
-    if (!products[i].ml_item_id && getMlReviewGate(products[i]).ok) readyIndices.push(i);
+    const p = products[i];
+    if (p.ml_item_id) continue;
+    if (!INCLUIR_MARCAS && (p.marca_famosa_quarentena || detectFamousBrand(p))) continue;
+    if (getMlReviewGate(p).ok) readyIndices.push(i);
   }
   const slice = LIMIT > 0 ? readyIndices.slice(0, LIMIT) : readyIndices;
+  console.log(`Iniciando subida PAUSADA sem ME2 para ${slice.length} produtos elegíveis...`);
   let uploaded = 0;
   for (const idx of slice) {
     const p = products[idx];
@@ -312,7 +448,7 @@ if (MODO === 'subir' && APPLY) {
       uploaded += 1;
       console.log(`[CRIADO PAUSADO SEM ME2] ${p.sku} -> ${created.id} (${created.category_id})`);
       if (uploaded % 15 === 0) await saveCatalogToDbAndLocal(products);
-      await sleep(450);
+      await sleep(320);
     } catch (err) {
       console.error(`[ERRO SUBIDA] ${p.sku}: ${err.message}`);
     }

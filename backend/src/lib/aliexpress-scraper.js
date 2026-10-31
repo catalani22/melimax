@@ -852,8 +852,8 @@ export const NON_ME2_DEPARTMENTAL_LEAVES = [
     keywords: /brinquedo|infantil|jogo|educativo|boneco|pel[uú]cia|montar|hobby/i,
   },
   {
-    id: 'MLB1911',
-    name: 'Calçados, Roupas e Bolsas > Outros',
+    id: OUTROS_OUTROS_LEAF_ID,
+    name: 'Mais Categorias > Outros (Moda & Acessórios)',
     matchCatId: /^(MLB1430|MLB1911)$/i,
     keywords: /bolsa|mochila|carteira|[oó]culos|bon[eé]|cinto|meia|roupa|moda|cal[cç]ado/i,
   },
@@ -897,6 +897,166 @@ export function resolveNonMe2DepartmentCategory(productOrFields = {}) {
     }
   }
   return { id: 'MLB1902', name: 'Casa, Móveis e Decoração > Outros' };
+}
+
+export const FAMOUS_BRAND_PATTERNS = [
+  /\b(apple|iphone|ipad|airpods|macbook|magsafe|imac|apple\s*watch)\b/i,
+  /\b(samsung|galaxy)\b/i,
+  /\b(xiaomi|redmi|poco|mijia|amazfit)\b/i,
+  /\b(sony|playstation|ps4|ps5|dualsense|dualshock)\b/i,
+  /\b(microsoft|xbox)\b/i,
+  /\b(nintendo|joy-?con|nintendo\s+switch)\b/i,
+  /\b(jbl|harman|bose|marshall|anker|soundcore|edifier|qcy|haylou|fifine|maono|boya)\b/i,
+  /\b(baseus|ugreen|essager|toocki|orico|blitzwolf|ulanzi)\b/i,
+  /\b(lenovo|dell\b|asus|acer|msi|logitech|razer|hyperx|corsair|steelseries|redragon)\b/i,
+  /\b(dji|gopro|insta360|garmin)\b/i,
+  /\b(philips|panasonic|braun|oral-?b|gillette|wahl|kemei)\b/i,
+  /\b(huawei|honor|realme|oneplus|motorola)\b/i,
+  /\b(makita|bosch|dewalt|stanley|black\s*[+&]?\s*decker|dremel|stihl|vonder|tramontina|gedore)\b/i,
+  /\b(wap\b|karcher|mondial|philco|brit[aâ]nia|electrolux|arno\b|oster|cadence|mallory|walita|nespresso)\b/i,
+  /\b(nike|adidas|puma|under\s*armour|reebok|new\s*balance|asics|oakley|ray-?ban|gucci|prada|louis\s*vuitton|chanel|dior|versace|lacoste|tommy\s*hilfiger|calvin\s*klein)\b/i,
+  /\b(casio|g-?shock|seiko|citizen|invicta|rolex|omega|fossil)\b/i,
+  /\b(disney|marvel|dc\s*comics|star\s*wars|lego|sanrio|hello\s*kitty|kuromi|pok[eé]mon|pikachu|naruto|dragon\s*ball|one\s*piece|barbie|hot\s*wheels|nerf|mattel|hasbro|bandai|funko)\b/i,
+];
+
+export function detectFamousBrand(productOrFields = {}) {
+  if (!productOrFields || typeof productOrFields !== 'object') return null;
+  if (productOrFields.marca_famosa_liberada_manualmente === true) return null;
+
+  const liveBrandAttr = Array.isArray(productOrFields.attributes)
+    ? productOrFields.attributes.find((a) => a?.id === 'BRAND')?.value_name || ''
+    : '';
+
+  const haystack = [
+    productOrFields.marca,
+    liveBrandAttr,
+    productOrFields.modelo,
+    productOrFields.titulo_ml,
+    productOrFields.title,
+    productOrFields.family_name,
+    productOrFields.titulo_aliexpress_original,
+  ]
+    .filter(Boolean)
+    .join(' | ');
+
+  if (!haystack) return null;
+  for (const rx of FAMOUS_BRAND_PATTERNS) {
+    const match = haystack.match(rx);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+export function parseImageDimensionsFromBuffer(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 24) return null;
+
+  // PNG
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return {
+      format: 'png',
+      width: buf.readUInt32BE(16),
+      height: buf.readUInt32BE(20),
+    };
+  }
+
+  // GIF
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
+    return {
+      format: 'gif',
+      width: buf.readUInt16LE(6),
+      height: buf.readUInt16LE(8),
+    };
+  }
+
+  // RIFF WEBP
+  if (
+    buf[0] === 0x52 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46 &&
+    buf[3] === 0x46 &&
+    buf[8] === 0x57 &&
+    buf[9] === 0x45 &&
+    buf[10] === 0x42 &&
+    buf[11] === 0x50
+  ) {
+    const chunk = buf.toString('ascii', 12, 16);
+    if (chunk === 'VP8 ' && buf.length >= 30) {
+      return {
+        format: 'webp',
+        width: buf.readUInt16LE(26) & 0x3fff,
+        height: buf.readUInt16LE(28) & 0x3fff,
+      };
+    }
+    if (chunk === 'VP8L' && buf.length >= 25) {
+      const bits = buf.readUInt32LE(21);
+      return {
+        format: 'webp',
+        width: (bits & 0x3fff) + 1,
+        height: ((bits >> 14) & 0x3fff) + 1,
+      };
+    }
+    if (chunk === 'VP8X' && buf.length >= 30) {
+      return {
+        format: 'webp',
+        width: buf.readUIntLE(24, 3) + 1,
+        height: buf.readUIntLE(27, 3) + 1,
+      };
+    }
+  }
+
+  // JPEG (SOF0..SOF15 markers)
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 8 < buf.length) {
+      if (buf[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      while (offset < buf.length && buf[offset] === 0xff) offset += 1;
+      if (offset >= buf.length) break;
+      const marker = buf[offset];
+      offset += 1;
+      if (
+        marker === 0xd8 ||
+        marker === 0xd9 ||
+        marker === 0x01 ||
+        (marker >= 0xd0 && marker <= 0xd7)
+      ) {
+        continue;
+      }
+      if (offset + 2 > buf.length) break;
+      const segLen = buf.readUInt16BE(offset);
+      if (segLen < 2) break;
+      if (
+        (marker >= 0xc0 && marker <= 0xc3) ||
+        (marker >= 0xc5 && marker <= 0xc7) ||
+        (marker >= 0xc9 && marker <= 0xcb) ||
+        (marker >= 0xcd && marker <= 0xcf)
+      ) {
+        if (offset + 7 <= buf.length) {
+          return {
+            format: 'jpeg',
+            height: buf.readUInt16BE(offset + 3),
+            width: buf.readUInt16BE(offset + 5),
+          };
+        }
+        break;
+      }
+      offset += segLen;
+    }
+  }
+
+  // AVIF / HEIF ispe box fallback
+  const ispeIdx = buf.indexOf(Buffer.from('ispe'));
+  if (ispeIdx >= 0 && ispeIdx + 16 <= buf.length) {
+    const w = buf.readUInt32BE(ispeIdx + 8);
+    const h = buf.readUInt32BE(ispeIdx + 12);
+    if (w > 0 && w < 20000 && h > 0 && h < 20000) {
+      return { format: 'avif', width: w, height: h };
+    }
+  }
+
+  return null;
 }
 
 function inferCategoryAndDimensions(title, attrsText, descText) {

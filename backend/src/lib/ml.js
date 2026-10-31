@@ -104,10 +104,17 @@ export async function refreshAccount(account) {
 
 function mlError(status, data) {
   const causes = Array.isArray(data?.cause)
-    ? data.cause.filter((cause) => cause?.message)
+    ? data.cause.filter((cause) => cause?.message || cause?.code)
     : [];
   const causeText = causes
-    .map((cause) => (cause.type === 'warning' ? `Aviso: ${cause.message}` : cause.message))
+    .map((cause) => {
+      const refs =
+        Array.isArray(cause.references) && cause.references.length
+          ? ` (${cause.references.join(',')})`
+          : '';
+      const label = cause.message || `${cause.code}${refs}`;
+      return cause.type === 'warning' ? `Aviso: ${label}` : label;
+    })
     .join(' | ');
   const base =
     data?.message ||
@@ -119,6 +126,7 @@ function mlError(status, data) {
   err.status = status;
   err.code = data?.code || data?.error;
   err.details = data;
+  err.data = data;
   return err;
 }
 

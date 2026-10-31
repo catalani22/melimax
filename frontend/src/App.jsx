@@ -484,6 +484,14 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
               <span className="font-mono font-semibold text-emerald-700">
                 Score interno {product.qualidade_score || 0}%
               </span>
+              {product.marca_famosa_quarentena ? (
+                <>
+                  <span>·</span>
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-800">
+                    Marca Reservada ({product.marca_famosa_detectada || 'BPP'})
+                  </span>
+                </>
+              ) : null}
             </div>
             <h2 className="mt-0.5 truncate text-base font-bold text-slate-900">{product.titulo_ml}</h2>
           </div>
@@ -1099,6 +1107,7 @@ export default function App() {
   const [selectedSupplier, setSelectedSupplier] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [pisoFilter, setPisoFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [catalogPage, setCatalogPage] = useState(1);
   const [catalogPageSize, setCatalogPageSize] = useState(50);
   const [costPage, setCostPage] = useState(1);
@@ -1184,6 +1193,7 @@ export default function App() {
       if (selectedSupplier) params.set('fornecedor', selectedSupplier);
       if (selectedCategory) params.set('categoria', selectedCategory);
       if (pisoFilter) params.set('piso', pisoFilter);
+      if (statusFilter) params.set('status', statusFilter);
       const data = await request(`/aliexpress/produtos?${params.toString()}`);
       setCatalogData(data);
     } catch (err) {
@@ -1191,7 +1201,7 @@ export default function App() {
     } finally {
       setLoadingCatalog(false);
     }
-  }, [searchQuery, selectedSupplier, selectedCategory, pisoFilter, notify]);
+  }, [searchQuery, selectedSupplier, selectedCategory, pisoFilter, statusFilter, notify]);
 
   const loadApprovedStores = useCallback(async () => {
     try {
@@ -1277,7 +1287,7 @@ export default function App() {
 
   useEffect(() => {
     setCatalogPage(1);
-  }, [searchQuery, selectedSupplier, selectedCategory, pisoFilter, catalogPageSize]);
+  }, [searchQuery, selectedSupplier, selectedCategory, pisoFilter, statusFilter, catalogPageSize]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -1483,70 +1493,217 @@ export default function App() {
     notify('Solicitação de parada enviada; concluindo o micro-lote atual...', 'info');
   };
 
-  const handleMigrateUploadedMe2Loop = async () => {
-    stopLoopRef.current = false;
-    setAntiMe2Busy('migrar');
+  const runMigrateMe2Phase = async (sharedLogs = null) => {
     let totalConvertidos = 0;
     let totalRecriados = 0;
+    let totalReservadosMarca = 0;
     let totalFalhas = 0;
-    let consecutiveAllFailed = 0;
-    const logs = [];
+    const ignoredIds = new Set();
+    const logs = sharedLogs || [];
 
-    try {
-      const initialDiag = await loadAntiMe2Diag(true);
-      const initialTarget = Number(initialDiag?.subidos_ml?.em_me2 || 0);
-      setAntiMe2Progress({
-        mode: 'migrar',
-        label: 'Migrando anúncios já subidos de ME2 → Envio Próprio Sem Etiqueta...',
-        done: 0,
-        total: Math.max(initialTarget, 1),
-        summary: 'Iniciando micro-lotes seguros (5 por requisição)...',
-        logs: [],
+    const initialDiag = await loadAntiMe2Diag(true);
+    const initialTarget = Number(
+      initialDiag?.subidos_ml?.em_me2_elegiveis ?? initialDiag?.subidos_ml?.em_me2 ?? 0
+    );
+    setAntiMe2Progress({
+      mode: 'migrar',
+      label: 'Etapa 1/3 — Migrando anúncios já subidos de ME2 → Envio Próprio Sem Etiqueta (exceto marcas famosas)...',
+      done: 0,
+      total: Math.max(initialTarget, 1),
+      summary: 'Iniciando micro-lotes testados (6 por chamada, sem repetir falhas/marcas)...',
+      logs: logs.slice(0, 16),
+    });
+
+    while (!stopLoopRef.current) {
+      const res = await request('/aliexpress/migrar-subidos-me2', {
+        method: 'POST',
+        body: {
+          limite: 6,
+          estrategia: antiMe2Strategy,
+          ignorar_ids: [...ignoredIds],
+        },
       });
+      totalConvertidos += Number(res.convertidos_in_place || 0);
+      totalRecriados += Number(res.recriados_sem_me2 || 0);
+      totalReservadosMarca += Number(res.reservados_marca_famosa || 0);
+      totalFalhas += Number(res.falhas || 0);
 
-      while (!stopLoopRef.current) {
-        const res = await request('/aliexpress/migrar-subidos-me2', {
-          method: 'POST',
-          body: { limite: 5, estrategia: antiMe2Strategy },
-        });
-        totalConvertidos += Number(res.convertidos_in_place || 0);
-        totalRecriados += Number(res.recriados_sem_me2 || 0);
-        totalFalhas += Number(res.falhas || 0);
-
-        for (const item of res.resultados || []) {
+      for (const item of res.resultados || []) {
+        if (item.reservado_marca_famosa) {
+          ignoredIds.add(String(item.ml_item_id_antigo));
           logs.unshift(
-            item.ok
-              ? `OK: ${item.ml_item_id_antigo} → ${item.ml_item_id_novo} (${item.categoria_aplicada} · ${item.modo_envio})`
-              : `ERRO: ${item.ml_item_id_antigo} — ${item.error}`
+            `RESERVADO MARCA (${item.marca_detectada}): ${item.ml_item_id_antigo} — mantido pausado p/ procedimento posterior`
           );
-        }
-
-        const fixedSoFar = totalConvertidos + totalRecriados;
-        const estTotal = Math.max(initialTarget, fixedSoFar + Number(res.restantes_em_me2 || 0), 1);
-
-        setAntiMe2Progress({
-          mode: 'migrar',
-          label: 'Migrando anúncios já subidos de ME2 → Envio Próprio Sem Etiqueta',
-          done: fixedSoFar,
-          total: estTotal,
-          summary: `Convertidos direto: ${totalConvertidos} · Fechados ME2 & Recriados: ${totalRecriados} · Restantes em ME2: ${res.restantes_em_me2} · Falhas: ${totalFalhas}`,
-          logs: logs.slice(0, 14),
-        });
-
-        if (res.processados === 0 || Number(res.restantes_em_me2 || 0) === 0) {
-          break;
-        }
-        if (res.falhas > 0 && res.convertidos_in_place === 0 && res.recriados_sem_me2 === 0) {
-          consecutiveAllFailed += 1;
-          if (consecutiveAllFailed >= 2) break;
+        } else if (item.ok) {
+          if (String(item.ml_item_id_antigo) === String(item.ml_item_id_novo)) {
+            ignoredIds.add(String(item.ml_item_id_antigo));
+          }
+          logs.unshift(
+            `OK: ${item.ml_item_id_antigo} → ${item.ml_item_id_novo} (${item.categoria_aplicada} · ${item.modo_envio})`
+          );
         } else {
-          consecutiveAllFailed = 0;
+          ignoredIds.add(String(item.ml_item_id_antigo));
+          logs.unshift(`ERRO: ${item.ml_item_id_antigo} — ${item.error}`);
         }
       }
 
+      const fixedSoFar = totalConvertidos + totalRecriados;
+      const doneCount = fixedSoFar + totalFalhas;
+      const estTotal = Math.max(initialTarget, doneCount + Number(res.restantes_em_me2 || 0), 1);
+
+      setAntiMe2Progress({
+        mode: 'migrar',
+        label: 'Migrando anúncios já subidos de ME2 → Envio Próprio Sem Etiqueta',
+        done: doneCount,
+        total: estTotal,
+        summary: `Convertidos direto: ${totalConvertidos} · Fechados ME2 & Recriados: ${totalRecriados} · Marcas reservadas: ${totalReservadosMarca} · Restantes elegíveis: ${res.restantes_em_me2} · Falhas: ${totalFalhas}`,
+        logs: logs.slice(0, 16),
+      });
+
+      if (Number(res.processados || 0) === 0 || Number(res.restantes_em_me2 || 0) === 0) {
+        break;
+      }
+    }
+
+    return { totalConvertidos, totalRecriados, totalReservadosMarca, totalFalhas, logs };
+  };
+
+  const runPrepareCatalogPhase = async (sharedLogs = null) => {
+    let totalOk = 0;
+    let totalBlocked = 0;
+    let lastReservadosMarca = 0;
+    const ignoredSkus = new Set();
+    const logs = sharedLogs || [];
+
+    const initialDiag = await loadAntiMe2Diag(true);
+    const initialPending = Number(
+      initialDiag?.catalogo_1000?.pendentes_preparacao_anti_me2 || resumo.revisao_pendente || 0
+    );
+    setAntiMe2Progress({
+      mode: 'preparar',
+      label: 'Etapa 2/3 — Preparando e validando na API do ML os produtos pendentes (exceto marcas famosas)...',
+      done: 0,
+      total: Math.max(initialPending, 1),
+      summary: 'Validando imagens HD binárias, atributos obrigatórios e frete grátis R$ 0,00 sem ME2...',
+      logs: logs.slice(0, 16),
+    });
+
+    if (initialPending === 0) {
+      return { totalOk: 0, totalBlocked: 0, lastReservadosMarca: Number(initialDiag?.catalogo_1000?.marcas_famosas_quarentena || 0), logs };
+    }
+
+    while (!stopLoopRef.current) {
+      const res = await request('/aliexpress/preparar-lote-catalogo', {
+        method: 'POST',
+        body: {
+          limite: 18,
+          estrategia: antiMe2Strategy,
+          aprovar_revisao: true,
+          fornecedor: uploadSupplierFilter || '',
+          ignorar_skus: [...ignoredSkus],
+        },
+      });
+      totalOk += Number(res.preparados_ok || 0);
+      totalBlocked += Number(res.com_bloqueio || 0);
+      lastReservadosMarca = Number(res.reservados_marca_famosa || lastReservadosMarca);
+
+      for (const r of res.resultados || []) {
+        if (r.ok) {
+          logs.unshift(`PRONTO: ${r.sku} → ${r.categoria_ml_id} (${r.modo_envio})`);
+        } else {
+          if (r.sku) ignoredSkus.add(String(r.sku).toUpperCase());
+          logs.unshift(`PENDENTE: ${r.sku} — ${r.error}`);
+        }
+      }
+
+      const processedSoFar = totalOk + totalBlocked;
+      const estTotal = Math.max(initialPending, processedSoFar + Number(res.restantes_pendentes || 0), 1);
+
+      setAntiMe2Progress({
+        mode: 'preparar',
+        label: 'Preparando e aprovando base completa com Cascata Anti-ME2',
+        done: processedSoFar,
+        total: estTotal,
+        summary: `Aprovados Gate OK: ${totalOk} · Marcas famosas reservadas: ${lastReservadosMarca} · Pendentes c/ bloqueio: ${totalBlocked} · Restantes na fila: ${res.restantes_pendentes} · Prontos p/ subir: ${res.total_aprovados_prontos_para_subir}`,
+        logs: logs.slice(0, 16),
+      });
+
+      if (Number(res.processados || 0) === 0 || Number(res.restantes_pendentes || 0) === 0) {
+        break;
+      }
+    }
+
+    return { totalOk, totalBlocked, lastReservadosMarca, logs };
+  };
+
+  const runUploadPreparedPhase = async (sharedLogs = null) => {
+    let sentTotal = 0;
+    let failTotal = 0;
+    const ignoredSkus = new Set();
+    const logs = sharedLogs || [];
+
+    const diag = await loadAntiMe2Diag(true);
+    const readyCount = Number(diag?.catalogo_1000?.prontos_anti_me2_gate_ok || resumo.revisao_aprovada || 0);
+    setAntiMe2Progress({
+      mode: 'subir_auto',
+      label: 'Etapa 3/3 — Subindo produtos aprovados PAUSADOS e SEM ME2 em lotes seguros...',
+      done: 0,
+      total: Math.max(readyCount, 1),
+      summary: 'Disparando lotes pausados (estoque 1–3 · frete R$ 0,00 · sem etiqueta ME2)...',
+      logs: logs.slice(0, 16),
+    });
+
+    if (readyCount === 0) {
+      return { sentTotal: 0, failTotal: 0, logs };
+    }
+
+    while (!stopLoopRef.current) {
+      const res = await request('/aliexpress/publicar-lote', {
+        method: 'POST',
+        body: {
+          limite: 8,
+          fornecedor: uploadSupplierFilter || '',
+          ignorar_skus: [...ignoredSkus],
+        },
+      });
+      sentTotal += Number(res.enviados || 0);
+      failTotal += Number(res.falhas || 0);
+
+      for (const r of res.resultados || []) {
+        if (r.ok) {
+          logs.unshift(`CRIADO PAUSADO: ${r.sku} → ${r.ml_item_id}`);
+        } else {
+          if (r.sku) ignoredSkus.add(String(r.sku).toUpperCase());
+          logs.unshift(`FALHA: ${r.sku} — ${r.error}`);
+        }
+      }
+
+      setAntiMe2Progress({
+        mode: 'subir_auto',
+        label: 'Subindo produtos aprovados PAUSADOS e SEM ME2',
+        done: sentTotal + failTotal,
+        total: Math.max(readyCount, sentTotal + failTotal, 1),
+        summary: `Criados pausados sem ME2: ${sentTotal} · Falhas isoladas: ${failTotal}`,
+        logs: logs.slice(0, 16),
+      });
+
+      const batchProcessed = Number(res.enviados || 0) + Number(res.falhas || 0);
+      if (batchProcessed === 0 || sentTotal + failTotal >= readyCount) {
+        break;
+      }
+    }
+
+    return { sentTotal, failTotal, logs };
+  };
+
+  const handleMigrateUploadedMe2Loop = async () => {
+    stopLoopRef.current = false;
+    setAntiMe2Busy('migrar');
+    try {
+      const out = await runMigrateMe2Phase();
       notify(
-        `Migração Anti-ME2 concluída: ${totalConvertidos + totalRecriados} anúncio(s) migrado(s) para envio próprio (${totalFalhas} falha(s)).`,
-        totalFalhas > 0 ? 'info' : 'success'
+        `Migração Anti-ME2 concluída: ${out.totalConvertidos + out.totalRecriados} migrado(s), ${out.totalReservadosMarca} marca(s) famosa(s) reservada(s), ${out.totalFalhas} falha(s).`,
+        out.totalFalhas > 0 ? 'info' : 'success'
       );
       await Promise.all([loadCatalog(), loadListings(), loadAntiMe2Diag(true)]);
     } catch (err) {
@@ -1559,71 +1716,10 @@ export default function App() {
   const handlePrepareAll1000Loop = async () => {
     stopLoopRef.current = false;
     setAntiMe2Busy('preparar');
-    let totalOk = 0;
-    let totalBlocked = 0;
-    let consecutiveAllBlocked = 0;
-    const logs = [];
-
     try {
-      const initialDiag = await loadAntiMe2Diag(true);
-      const initialPending = Number(
-        initialDiag?.catalogo_1000?.pendentes_preparacao_anti_me2 || resumo.revisao_pendente || 1
-      );
-      setAntiMe2Progress({
-        mode: 'preparar',
-        label: 'Preparando e validando na API do ML os 1.000+ produtos pendentes (Sem ME2)...',
-        done: 0,
-        total: Math.max(initialPending, 1),
-        summary: 'Iniciando validação em micro-lotes (16 por chamada)...',
-        logs: [],
-      });
-
-      while (!stopLoopRef.current) {
-        const res = await request('/aliexpress/preparar-lote-catalogo', {
-          method: 'POST',
-          body: {
-            limite: 16,
-            estrategia: antiMe2Strategy,
-            aprovar_revisao: true,
-            fornecedor: uploadSupplierFilter || '',
-          },
-        });
-        totalOk += Number(res.preparados_ok || 0);
-        totalBlocked += Number(res.com_bloqueio || 0);
-
-        for (const r of res.resultados || []) {
-          logs.unshift(
-            r.ok
-              ? `PRONTO: ${r.sku} → ${r.categoria_ml_id} (${r.modo_envio})`
-              : `PENDENTE: ${r.sku} — ${r.error}`
-          );
-        }
-
-        const processedSoFar = totalOk + totalBlocked;
-        const estTotal = Math.max(initialPending, processedSoFar + Number(res.restantes_pendentes || 0), 1);
-
-        setAntiMe2Progress({
-          mode: 'preparar',
-          label: 'Preparando e aprovando base 1.000+ com Cascata Anti-ME2',
-          done: processedSoFar,
-          total: estTotal,
-          summary: `Aprovados Gate OK: ${totalOk} · Com bloqueio: ${totalBlocked} · Restantes na fila: ${res.restantes_pendentes} · Total prontos p/ subir: ${res.total_aprovados_prontos_para_subir}`,
-          logs: logs.slice(0, 14),
-        });
-
-        if (res.processados === 0 || Number(res.restantes_pendentes || 0) === 0) {
-          break;
-        }
-        if (res.preparados_ok === 0 && res.com_bloqueio > 0) {
-          consecutiveAllBlocked += 1;
-          if (consecutiveAllBlocked >= 3) break;
-        } else {
-          consecutiveAllBlocked = 0;
-        }
-      }
-
+      const out = await runPrepareCatalogPhase();
       notify(
-        `Preparação em massa finalizada: ${totalOk} produto(s) validados sem ME2 e liberados para envio pausado.`,
+        `Preparação finalizada: ${out.totalOk} produto(s) validados sem ME2 (${out.lastReservadosMarca} marcas famosas reservadas).`,
         'success'
       );
       await Promise.all([loadCatalog(), loadAntiMe2Diag(true)]);
@@ -1637,63 +1733,49 @@ export default function App() {
   const handleAutoUploadAllPrepared = async () => {
     stopLoopRef.current = false;
     setAntiMe2Busy('subir_auto');
-    let sentTotal = 0;
-    let failTotal = 0;
-    let consecutiveZero = 0;
-    const logs = [];
-
     try {
-      const diag = await loadAntiMe2Diag(true);
-      const readyCount = Number(diag?.catalogo_1000?.prontos_anti_me2_gate_ok || resumo.revisao_aprovada || 1);
-      setAntiMe2Progress({
-        mode: 'subir_auto',
-        label: 'Subindo produtos aprovados PAUSADOS e SEM ME2 em lotes de 8...',
-        done: 0,
-        total: Math.max(readyCount, 1),
-        summary: 'Disparando lotes pausados com proteção Anti-ME2 pós-criação...',
-        logs: [],
-      });
-
-      while (!stopLoopRef.current) {
-        const res = await request('/aliexpress/publicar-lote', {
-          method: 'POST',
-          body: {
-            limite: 8,
-            fornecedor: uploadSupplierFilter || '',
-          },
-        });
-        sentTotal += Number(res.enviados || 0);
-        failTotal += Number(res.falhas || 0);
-
-        for (const r of res.resultados || []) {
-          logs.unshift(
-            r.ok
-              ? `CRIADO PAUSADO: ${r.sku} → ${r.ml_item_id}`
-              : `FALHA: ${r.sku} — ${r.error}`
-          );
-        }
-
-        setAntiMe2Progress({
-          mode: 'subir_auto',
-          label: 'Subindo produtos aprovados PAUSADOS e SEM ME2',
-          done: sentTotal + failTotal,
-          total: Math.max(readyCount, sentTotal + failTotal),
-          summary: `Criados pausados sem ME2: ${sentTotal} · Falhas: ${failTotal}`,
-          logs: logs.slice(0, 14),
-        });
-
-        if (Number(res.enviados || 0) === 0) {
-          consecutiveZero += 1;
-          if (consecutiveZero >= 1) break;
-        } else {
-          consecutiveZero = 0;
-        }
-        if (sentTotal + failTotal >= readyCount) break;
-      }
-
+      const out = await runUploadPreparedPhase();
       notify(
-        `Carga sequencial concluída: ${sentTotal} anúncio(s) enviados PAUSADOS sem ME2 (${failTotal} falha(s)).`,
-        failTotal > 0 ? 'info' : 'success'
+        `Carga sequencial concluída: ${out.sentTotal} anúncio(s) enviados PAUSADOS sem ME2 (${out.failTotal} falha(s)).`,
+        out.failTotal > 0 ? 'info' : 'success'
+      );
+      await Promise.all([loadCatalog(), loadListings(), loadAntiMe2Diag(true)]);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setAntiMe2Busy(null);
+    }
+  };
+
+  const handleRunFull1300Pipeline = async () => {
+    stopLoopRef.current = false;
+    setAntiMe2Busy('tudo_1300');
+    const sharedLogs = [];
+    try {
+      const mig = await runMigrateMe2Phase(sharedLogs);
+      let prep = { totalOk: 0, totalBlocked: 0, lastReservadosMarca: 0 };
+      let up = { sentTotal: 0, failTotal: 0 };
+      if (!stopLoopRef.current) {
+        prep = await runPrepareCatalogPhase(sharedLogs);
+      }
+      if (!stopLoopRef.current) {
+        up = await runUploadPreparedPhase(sharedLogs);
+      }
+      const totalMigrated = mig.totalConvertidos + mig.totalRecriados;
+      setAntiMe2Progress((prev) =>
+        prev
+          ? {
+              ...prev,
+              label: stopLoopRef.current
+                ? 'Pipeline pausado pelo operador'
+                : 'Pipeline Completo 1.300+ Concluído (Sem ME2 · Marcas Famosas Reservadas)',
+              summary: `ME2 Migrados: ${totalMigrated} · Preparados Gate OK: ${prep.totalOk} · Subidos Pausados s/ ME2: ${up.sentTotal} · Marcas Famosas Reservadas: ${mig.totalReservadosMarca + prep.lastReservadosMarca}`,
+            }
+          : null
+      );
+      notify(
+        `Operação completa: ${totalMigrated} ME2 migrados, ${prep.totalOk} preparados e ${up.sentTotal} subidos PAUSADOS sem ME2 (marcas famosas preservadas para depois).`,
+        'success'
       );
       await Promise.all([loadCatalog(), loadListings(), loadAntiMe2Diag(true)]);
     } catch (err) {
@@ -1998,9 +2080,9 @@ export default function App() {
     };
   }, [catalogData.produtos]);
 
-  const csvQuerySuffix = selectedSupplier
-    ? `&fornecedor=${encodeURIComponent(selectedSupplier)}`
-    : '';
+  const csvQuerySuffix = `${
+    selectedSupplier ? `&fornecedor=${encodeURIComponent(selectedSupplier)}` : ''
+  }${statusFilter ? `&status=${encodeURIComponent(statusFilter)}` : ''}`;
 
   const totalCatalogItems = catalogData.produtos?.length || 0;
   const totalCatalogPages = Math.max(Math.ceil(totalCatalogItems / catalogPageSize), 1);
@@ -2454,6 +2536,22 @@ export default function App() {
                   <option value="piso_79">No piso mínimo (R$ 79,90)</option>
                   <option value="acima_79">Acima de R$ 79,90 (2.8x direto)</option>
                 </select>
+
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="input w-auto text-xs"
+                >
+                  <option value="">Todos os status ({resumo.total})</option>
+                  <option value="sem_marca_famosa">
+                    Elegíveis s/ Marca Famosa ({Math.max(0, (resumo.total || 0) - (resumo.marcas_famosas_quarentena || 0))})
+                  </option>
+                  <option value="marcas_famosas">
+                    Quarentena Marcas Famosas ({resumo.marcas_famosas_quarentena || 0})
+                  </option>
+                  <option value="prontos">Não publicados elegíveis ({resumo.prontos_para_subir || 0})</option>
+                  <option value="publicados">Já publicados ML ({resumo.publicados_ml || 0})</option>
+                </select>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 border-l border-slate-200 pl-3">
@@ -2630,13 +2728,27 @@ export default function App() {
                           </td>
 
                           <td className="px-3 py-3 text-[11px]">
-                            <div className="font-mono font-semibold text-emerald-700">
-                              Score {item.qualidade_score || 0}% · Revisão{' '}
-                              {item.ml_revisao?.aprovado ? 'aprovada' : 'pendente'}
-                            </div>
-                            <div className="text-slate-500">
-                              {item.ml_preflight?.ok ? 'Pré-publicação OK' : 'Pré-publicação pendente'} · Pausado
-                            </div>
+                            {item.marca_famosa_quarentena ? (
+                              <>
+                                <div className="font-mono font-semibold text-amber-700">
+                                  Reservado Marca ({item.marca_famosa_detectada || 'BPP'})
+                                </div>
+                                <div className="text-slate-500">
+                                  Aguardando procedimento especial de marca
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="font-mono font-semibold text-emerald-700">
+                                  Score {item.qualidade_score || 0}% · Revisão{' '}
+                                  {item.ml_revisao?.aprovado ? 'aprovada' : 'pendente'}
+                                </div>
+                                <div className="text-slate-500">
+                                  {item.ml_preflight?.ok ? 'Pré-publicação OK' : 'Pré-publicação pendente'} ·{' '}
+                                  {item.ml_preflight?.categoria_ml_id || item.categoria_sem_me2_id || 'Sem ME2'}
+                                </div>
+                              </>
+                            )}
                           </td>
 
                           <td className="py-3 pl-3 pr-4 text-right">
@@ -3710,25 +3822,31 @@ export default function App() {
                   <div className="text-[11px] font-semibold uppercase text-slate-500">Anúncios Já Subidos no ML</div>
                   <div className="mt-1 flex items-baseline gap-2 font-mono">
                     <span className="text-lg font-bold text-red-600">
-                      {antiMe2Diag?.subidos_ml?.em_me2 ?? '—'} em ME2
+                      {antiMe2Diag?.subidos_ml?.em_me2_elegiveis ?? antiMe2Diag?.subidos_ml?.em_me2 ?? '—'} em ME2
                     </span>
                     <span className="text-xs font-semibold text-emerald-700">
                       · {antiMe2Diag?.subidos_ml?.sem_me2_ok ?? '—'} sem ME2
                     </span>
                   </div>
                   <div className="mt-0.5 text-[11px] text-slate-500">
-                    Total abertos na conta: {antiMe2Diag?.subidos_ml?.total_encontrados ?? listings.length}
+                    Total abertos: {antiMe2Diag?.subidos_ml?.total_encontrados ?? listings.length}
+                    {antiMe2Diag?.subidos_ml?.em_me2_marcas_famosas
+                      ? ` · ${antiMe2Diag.subidos_ml.em_me2_marcas_famosas} marca famosa reservados`
+                      : ''}
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
-                  <div className="text-[11px] font-semibold uppercase text-slate-500">Base Total no Repositório/DB</div>
+                  <div className="text-[11px] font-semibold uppercase text-slate-500">Base Total (1.300+ c/ Quarentena)</div>
                   <div className="mt-1 font-mono text-lg font-bold text-slate-900">
                     {antiMe2Diag?.catalogo_1000?.total ?? resumo.total} produtos
                   </div>
                   <div className="mt-0.5 text-[11px] text-slate-500">
-                    {antiMe2Diag?.catalogo_1000?.ja_publicados ?? resumo.publicados_ml} já subidos ·{' '}
-                    {antiMe2Diag?.catalogo_1000?.nao_publicados ?? resumo.prontos_para_subir} para subir
+                    {antiMe2Diag?.catalogo_1000?.ja_publicados ?? resumo.publicados_ml} subidos ·{' '}
+                    {antiMe2Diag?.catalogo_1000?.nao_publicados_elegiveis ?? resumo.prontos_para_subir} elegíveis ·{' '}
+                    <span className="font-semibold text-amber-700">
+                      {antiMe2Diag?.catalogo_1000?.marcas_famosas_total_base ?? resumo.marcas_famosas_quarentena ?? 0} marcas reservadas
+                    </span>
                   </div>
                 </div>
 
@@ -3740,8 +3858,36 @@ export default function App() {
                     </span>
                   </div>
                   <div className="mt-0.5 text-[11px] text-slate-500">
-                    {antiMe2Diag?.catalogo_1000?.pendentes_preparacao_anti_me2 ?? resumo.revisao_pendente ?? 0} aguardando preparo em lote
+                    {antiMe2Diag?.catalogo_1000?.pendentes_preparacao_anti_me2 ?? resumo.revisao_pendente ?? 0} elegíveis aguardando preparo
                   </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5">
+                <div className="max-w-3xl text-xs text-slate-700">
+                  <strong className="text-slate-900">Execução Automatizada Testada (1.300+ Produtos · Zero Sharp · Avisos ML Tratados):</strong>{' '}
+                  converte/recria os restantes em ME2, prepara todos os pendentes e sobe tudo <strong>PAUSADO</strong> com estoque 1–3 e frete grátis R$ 0,00 sem etiquetas, pulando automaticamente itens de <strong>marcas famosas</strong> para procedimento posterior.
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={!account || Boolean(antiMe2Busy)}
+                    onClick={handleRunFull1300Pipeline}
+                    className="btn-primary py-2.5 px-4 text-xs font-bold shadow-sm"
+                  >
+                    {antiMe2Busy === 'tudo_1300'
+                      ? 'Executando Pipeline Completo 1.300+...'
+                      : 'Executar Tudo nos 1.300+ (Migrar ME2 + Preparar + Subir Pausado · Exceto Marcas Famosas)'}
+                  </button>
+                  {antiMe2Busy && antiMe2Busy !== 'diag' ? (
+                    <button
+                      type="button"
+                      onClick={handleStopAntiMe2Loop}
+                      className="btn-danger py-2.5 px-3 text-xs"
+                    >
+                      Parar Lote
+                    </button>
+                  ) : null}
                 </div>
               </div>
 
@@ -3777,18 +3923,18 @@ export default function App() {
                   >
                     {antiMe2Busy === 'migrar'
                       ? 'Migrando Já Subidos (ME2 → Sem ME2)...'
-                      : '1. Migrar Já Subidos de ME2 → Envio Próprio'}
+                      : '1. Só Migrar Já Subidos ME2'}
                   </button>
 
                   <button
                     type="button"
                     disabled={!account || Boolean(antiMe2Busy)}
                     onClick={handlePrepareAll1000Loop}
-                    className="btn-primary flex-1 py-2 text-xs"
+                    className="btn-ghost border border-slate-300 bg-white flex-1 py-2 text-xs"
                   >
                     {antiMe2Busy === 'preparar'
                       ? 'Preparando 1.000+ na API ML...'
-                      : '2. Preparar & Aprovar os 1.000+ Pendentes'}
+                      : '2. Só Preparar Pendentes'}
                   </button>
 
                   <button
@@ -3799,18 +3945,8 @@ export default function App() {
                   >
                     {antiMe2Busy === 'subir_auto'
                       ? 'Subindo Sequência Pausada...'
-                      : '3. Subir Todos Aprovados (Pausado s/ ME2)'}
+                      : '3. Só Subir Aprovados (Pausado)'}
                   </button>
-
-                  {antiMe2Busy && antiMe2Busy !== 'diag' ? (
-                    <button
-                      type="button"
-                      onClick={handleStopAntiMe2Loop}
-                      className="btn-danger py-2 text-xs"
-                    >
-                      Parar Lote
-                    </button>
-                  ) : null}
                 </div>
               </div>
 

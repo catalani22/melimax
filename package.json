@@ -12,8 +12,5 @@
     "build": "npm run build --workspace=ml-dropshipping-frontend",
     "start": "PORT=3000 node backend/src/index.js",
     "lint": "node --check backend/src/index.js && node --check backend/src/app.js && node --check backend/src/lib/db.js && node --check backend/src/lib/ml-fees.js && node --check backend/src/lib/aliexpress-scraper.js && node --check backend/src/routes/aliexpress.js && node --check backend/scripts/preparar-e-migrar-1000-ml.mjs"
-  },
-  "dependencies": {
-    "sharp": "^0.35.5"
   }
 }

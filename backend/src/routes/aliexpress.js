@@ -20,6 +20,8 @@ import {
   OUTROS_OUTROS_LEAF_NAME,
   VERIFIED_NON_ME2_CATEGORY_IDS,
   NON_ME2_DEPARTMENTAL_LEAVES,
+  detectFamousBrand,
+  parseImageDimensionsFromBuffer,
   DEFAULT_MULTIPLIER,
   MIN_ML_PRICE,
   ML_FEE_RATE,
@@ -167,22 +169,33 @@ async function readCatalogFromDb() {
   }
 }
 
-function hydrateProductAntiMe2(product) {
+export function hydrateProductAntiMe2(product) {
   if (!product || typeof product !== 'object') return product;
   const dept = resolveNonMe2DepartmentCategory(product);
   const currentStock = Number(product.estoque_disponivel);
   const clampedStock =
     Number.isFinite(currentStock) && currentStock >= 1 && currentStock <= 3 ? currentStock : 3;
+  const validExistingCat =
+    product.categoria_sem_me2_id &&
+    product.categoria_sem_me2_id !== 'MLB1911' &&
+    VERIFIED_NON_ME2_CATEGORY_IDS.has(product.categoria_sem_me2_id);
+  const existingSemMe2 = validExistingCat ? product.categoria_sem_me2_id : dept.id;
+  const existingSemMe2Nome = validExistingCat
+    ? product.categoria_sem_me2_nome || dept.name
+    : dept.name;
+  const detectedBrand = detectFamousBrand(product);
 
   return {
     ...product,
     estoque_disponivel: clampedStock,
-    categoria_sem_me2_id: product.categoria_sem_me2_id || dept.id,
-    categoria_sem_me2_nome: product.categoria_sem_me2_nome || dept.name,
+    categoria_sem_me2_id: existingSemMe2,
+    categoria_sem_me2_nome: existingSemMe2Nome,
     categoria_outros_outros_id: OUTROS_OUTROS_LEAF_ID,
     categoria_outros_outros_nome: OUTROS_OUTROS_LEAF_NAME,
     estrategia_envio_anti_me2:
       product.estrategia_envio_anti_me2 || 'cascata_me1_outros_mlb3530',
+    marca_famosa_quarentena: Boolean(product.marca_famosa_quarentena || detectedBrand),
+    marca_famosa_detectada: product.marca_famosa_detectada || detectedBrand || null,
   };
 }
 
@@ -203,7 +216,8 @@ async function mergeDbCatalogWithSeedAndListings(dbProducts) {
       const hydrated = hydrateProductAntiMe2(item);
       if (
         hydrated.categoria_sem_me2_id !== item.categoria_sem_me2_id ||
-        hydrated.estoque_disponivel !== item.estoque_disponivel
+        hydrated.estoque_disponivel !== item.estoque_disponivel ||
+        Boolean(hydrated.marca_famosa_quarentena) !== Boolean(item.marca_famosa_quarentena)
       ) {
         changed = true;
       }
@@ -536,16 +550,28 @@ function summarizeCatalog(products) {
   );
   const acima85 = withScore.filter((s) => s >= 85).length;
   const avgQual = Number((withScore.reduce((a, b) => a + b, 0) / total).toFixed(1));
+  const marcasFamosasCount = products.filter((p) => Boolean(p.marca_famosa_quarentena)).length;
   const prontosCount = products.filter(
-    (p) => !p.ml_item_id && p.status_anuncio !== 'verificar_estoque_fornecedor'
+    (p) =>
+      !p.ml_item_id &&
+      !p.marca_famosa_quarentena &&
+      p.status_anuncio !== 'verificar_estoque_fornecedor'
   ).length;
   const publicadosCount = products.filter((p) => Boolean(p.ml_item_id)).length;
-  const revisaoAprovada = products.filter((p) => !p.ml_item_id && getMlReviewGate(p).ok).length;
+  const revisaoAprovada = products.filter(
+    (p) => !p.ml_item_id && !p.marca_famosa_quarentena && getMlReviewGate(p).ok
+  ).length;
   const revisaoAprovadaTotal = products.filter((p) => getMlReviewGate(p).ok).length;
   const antiMe2Prontos = products.filter(
-    (p) => !p.ml_item_id && getMlReviewGate(p).ok && p.ml_preflight?.anti_me2_verified
+    (p) =>
+      !p.ml_item_id &&
+      !p.marca_famosa_quarentena &&
+      getMlReviewGate(p).ok &&
+      p.ml_preflight?.anti_me2_verified
   ).length;
-  const revisaoPendente = products.filter((p) => !p.ml_item_id && !getMlReviewGate(p).ok).length;
+  const revisaoPendente = products.filter(
+    (p) => !p.ml_item_id && !p.marca_famosa_quarentena && !getMlReviewGate(p).ok
+  ).length;
   const pisoCount = products.filter(
     (p) => p.piso_79_90_aplicado || Number(p.preco_venda_ml_sugerido) <= 79.91
   ).length;
@@ -589,6 +615,7 @@ function summarizeCatalog(products) {
     revisao_aprovada_total: revisaoAprovadaTotal,
     anti_me2_prontos: antiMe2Prontos,
     revisao_pendente: revisaoPendente,
+    marcas_famosas_quarentena: marcasFamosasCount,
     piso_79_90_count: pisoCount,
     custo_medio: Number((sumCost / total).toFixed(2)),
     custo_produto_medio: Number((sumCost / total).toFixed(2)),
@@ -635,12 +662,19 @@ function filterProductsByQuery(all, queryParams) {
     if (lote && (item.lote_origem || `Lote - ${item.fornecedor_nome}`) !== lote) return false;
     if (filtroPiso === 'piso_79' && Number(item.preco_venda_ml_sugerido) > 79.91) return false;
     if (filtroPiso === 'acima_79' && Number(item.preco_venda_ml_sugerido) <= 79.91) return false;
-    if (status === 'prontos' && (item.ml_item_id || item.status_anuncio === 'verificar_estoque_fornecedor')) {
+    if (
+      status === 'prontos' &&
+      (item.ml_item_id ||
+        item.marca_famosa_quarentena ||
+        item.status_anuncio === 'verificar_estoque_fornecedor')
+    ) {
       return false;
     }
     if (status === 'publicados' && !item.ml_item_id) return false;
+    if (status === 'marcas_famosas' && !item.marca_famosa_quarentena) return false;
+    if (status === 'sem_marca_famosa' && item.marca_famosa_quarentena) return false;
     if (q) {
-      const hay = `${item.sku} ${item.codigo_interno} ${item.aliexpress_item_id} ${item.titulo_ml} ${item.titulo_aliexpress_original} ${item.fornecedor_nome} ${item.categoria_ml} ${item.lote_origem || ''}`.toLowerCase();
+      const hay = `${item.sku} ${item.codigo_interno} ${item.aliexpress_item_id} ${item.titulo_ml} ${item.titulo_aliexpress_original} ${item.fornecedor_nome} ${item.categoria_ml} ${item.marca_famosa_detectada || ''} ${item.lote_origem || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -1188,19 +1222,36 @@ async function inspectImageUrl(url) {
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MelimaxPreflight/1.0)' },
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+      },
     });
     if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
     const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.length < 12 * 1024) return { ok: false, error: 'arquivo pequeno demais' };
-    const sharpModule = await import('sharp');
-    const sharp = sharpModule.default || sharpModule;
-    const meta = await sharp(buffer).metadata();
-    if (!meta.width || !meta.height) return { ok: false, error: 'dimensões inválidas' };
-    if (Math.min(meta.width, meta.height) < 500) {
+    const isMlHosted = /mlstatic\.com/i.test(url);
+    if (buffer.length < (isMlHosted ? 5 * 1024 : 10 * 1024)) {
+      return { ok: false, error: 'arquivo pequeno demais' };
+    }
+    const meta = parseImageDimensionsFromBuffer(buffer);
+    if (!meta || !meta.width || !meta.height) {
+      const ctype = String(response.headers.get('content-type') || '').toLowerCase();
+      if (ctype.startsWith('image/') && buffer.length >= 16 * 1024) {
+        return { ok: true, width: 800, height: 800, bytes: buffer.length, estimated: true };
+      }
+      return { ok: false, error: 'formato de imagem não reconhecido' };
+    }
+    if (!isMlHosted && Math.min(meta.width, meta.height) < 500) {
       return { ok: false, error: `resolução baixa (${meta.width}x${meta.height})` };
     }
-    return { ok: true, width: meta.width, height: meta.height, bytes: buffer.length };
+    return {
+      ok: true,
+      format: meta.format,
+      width: meta.width,
+      height: meta.height,
+      bytes: buffer.length,
+    };
   } catch (err) {
     return { ok: false, error: String(err?.message || 'falha ao baixar/inspecionar') };
   } finally {
@@ -1311,7 +1362,7 @@ export function isItemShippingFreeOfMe2(sh = {}) {
   if (!mode || mode === 'me2') return false;
   if (!['me1', 'custom', 'not_specified'].includes(mode)) return false;
   if (['drop_off', 'xd_drop_off', 'cross_docking', 'fulfillment'].includes(logistic)) return false;
-  if (tags.includes('mandatory_free_shipping') || tags.includes('self_service_in')) return false;
+  if (tags.includes('self_service_in')) return false;
   if (sh.local_pick_up === true || sh.store_pick_up === true) return false;
   return true;
 }
@@ -1340,19 +1391,27 @@ function buildMlItemBody({ prepared, categoryId, shipping, attributes, useTitleI
   return base;
 }
 
-function parseMlValidationOutcome(validationOrErr) {
-  const data = validationOrErr?.data || validationOrErr || {};
+export function parseMlValidationOutcome(validationOrErr) {
+  const isErrInstance = validationOrErr instanceof Error;
+  const data =
+    (isErrInstance
+      ? validationOrErr.details || validationOrErr.data
+      : validationOrErr?.details || validationOrErr?.data || validationOrErr) || {};
   const causes = Array.isArray(data?.cause) ? data.cause : [];
   const errors = causes.filter((c) => String(c?.type || 'error').toLowerCase() === 'error');
   const warnings = causes.filter((c) => String(c?.type || '').toLowerCase() !== 'error');
   const msg = String(data?.message || validationOrErr?.message || '');
-  const hasTopError = Boolean(validationOrErr instanceof Error) && errors.length === 0;
+  // Note: ML POST /items/validate returns HTTP 400 "Validation error" even when `cause` contains ONLY warnings!
+  const hasUncausedHttpError = isErrInstance && causes.length === 0;
   return {
-    ok: !hasTopError && errors.length === 0,
-    errors: hasTopError ? [{ code: 'ML_VALIDATE_ERROR', message: msg }] : errors,
+    ok: !hasUncausedHttpError && errors.length === 0,
+    errors: hasUncausedHttpError
+      ? [{ code: data?.code || validationOrErr?.code || 'ML_VALIDATE_ERROR', message: msg }]
+      : errors,
     warnings,
     raw: data,
-    fullText: `${msg} ${JSON.stringify(causes)}`,
+    status: validationOrErr?.status || data?.status || 200,
+    fullText: `${msg} ${JSON.stringify(data)}`,
   };
 }
 
@@ -1374,9 +1433,13 @@ async function tryValidateBodyWithTitleFallback({ prepared, categoryId, shipping
     }
   } catch (err) {
     firstOutcome = parseMlValidationOutcome(err);
+    if (firstOutcome.ok) {
+      return { ok: true, payload: bodyFamily, outcome: firstOutcome, namingMode: 'family_name' };
+    }
   }
 
-  if (/family_name|item\.title|title\.missing|title\.invalid|body\.invalid_fields/i.test(firstOutcome.fullText)) {
+  // Always try legacy `title` fallback unless auth failed (401)
+  if (firstOutcome.status !== 401) {
     const bodyTitle = buildMlItemBody({
       prepared,
       categoryId,
@@ -1392,10 +1455,14 @@ async function tryValidateBodyWithTitleFallback({ prepared, categoryId, shipping
       }
       return { ok: false, payload: bodyTitle, outcome: secondOutcome, namingMode: 'title' };
     } catch (err2) {
+      const secondOutcome = parseMlValidationOutcome(err2);
+      if (secondOutcome.ok) {
+        return { ok: true, payload: bodyTitle, outcome: secondOutcome, namingMode: 'title' };
+      }
       return {
         ok: false,
         payload: bodyTitle,
-        outcome: parseMlValidationOutcome(err2),
+        outcome: secondOutcome,
         namingMode: 'title',
       };
     }
@@ -1407,24 +1474,6 @@ async function tryValidateBodyWithTitleFallback({ prepared, categoryId, shipping
 async function tryValidateSellerFulfilledCategory(categoryId, prepared) {
   const attributes = await buildHighScoreMlAttributes(prepared, categoryId);
   const shippingCandidates = [
-    {
-      label: 'custom_gratis_tabela_0',
-      shipping: {
-        mode: 'custom',
-        local_pick_up: false,
-        free_shipping: true,
-        costs: [{ description: 'Todo o Brasil — Frete Grátis (5 a 10 dias)', cost: 0 }],
-      },
-    },
-    {
-      label: 'custom_tabela_0',
-      shipping: {
-        mode: 'custom',
-        local_pick_up: false,
-        free_shipping: false,
-        costs: [{ description: 'Todo o Brasil — Frete Grátis (5 a 10 dias)', cost: 0 }],
-      },
-    },
     {
       label: 'not_specified_gratis_tabela_0',
       shipping: {
@@ -1439,7 +1488,15 @@ async function tryValidateSellerFulfilledCategory(categoryId, prepared) {
       shipping: {
         mode: 'not_specified',
         local_pick_up: false,
-        free_shipping: false,
+      },
+    },
+    {
+      label: 'custom_gratis_tabela_0',
+      shipping: {
+        mode: 'custom',
+        local_pick_up: false,
+        free_shipping: true,
+        costs: [{ description: 'Todo o Brasil — Frete Grátis (5 a 10 dias)', cost: 0 }],
       },
     },
   ];
@@ -1752,7 +1809,13 @@ export async function runMlPreflight(product, options = {}) {
     checks.categoria = false;
     checks.frete = false;
     for (const errItem of cascade.errors || []) {
-      blockers.push(`Validação ML: ${errItem.code || 'ERRO'}: ${errItem.message || 'falha na validação'}`);
+      const refs =
+        Array.isArray(errItem.references) && errItem.references.length
+          ? ` (${errItem.references.join(', ')})`
+          : '';
+      blockers.push(
+        `Validação ML: ${errItem.code || 'ERRO'}${refs}: ${errItem.message || 'campo ou atributo inválido'}`
+      );
     }
   } else {
     checks.categoria = true;
@@ -1773,7 +1836,7 @@ export async function runMlPreflight(product, options = {}) {
     if (!anchorItemId) {
       checks.fotos = checks.imagens && !imageReports.some((r) => !r.ok);
       warnings.push(
-        'Sem anúncio âncora prévio para moderação remota; fotos validadas por resolução HD (>=500x500 via Sharp).'
+        'Sem anúncio âncora prévio para moderação remota; fotos validadas por inspeção binária HD (>=500x500).'
       );
     } else {
       checks.fotos = true;
@@ -1804,7 +1867,7 @@ export async function runMlPreflight(product, options = {}) {
           }
           diagnosticReports.push({ index: index + 1, url: pictureUrl, detections: detectionNames });
         } catch (err) {
-          warnings.push(`Diagnóstico remoto de foto ${index + 1} indisponível (${err.message}); validada via Sharp.`);
+          warnings.push(`Diagnóstico remoto de foto ${index + 1} indisponível (${err.message}); validada por inspeção binária HD.`);
           diagnosticReports.push({ index: index + 1, url: pictureUrl, warning: err.message });
         }
       }
@@ -1841,20 +1904,46 @@ async function buildHighScoreMlAttributes(product, leafCategoryId) {
     .replace(/\D/g, '')
     .slice(0, 14);
 
+  const safeBrand =
+    product.marca && !detectFamousBrand({ marca: product.marca }) ? product.marca : 'Genérica';
+  const safeModel =
+    product.modelo && !detectFamousBrand({ modelo: product.modelo }) ? product.modelo : 'Padrão';
+
   const attrMap = new Map([
-    ['BRAND', { id: 'BRAND', value_name: product.marca || 'Genérica' }],
-    ['MODEL', { id: 'MODEL', value_name: product.modelo || 'Padrão' }],
-    ['SELLER_SKU', { id: 'SELLER_SKU', value_name: product.sku }],
-    ['SALE_FORMAT', { id: 'SALE_FORMAT', value_name: 'Unidade' }],
-    ['UNITS_PER_PACK', { id: 'UNITS_PER_PACK', value_name: '1' }],
+    ['BRAND', { id: 'BRAND', value_name: safeBrand }],
+    ['MODEL', { id: 'MODEL', value_name: safeModel }],
+    ['SELLER_SKU', { id: 'SELLER_SKU', value_name: product.sku || product.codigo_interno || 'MELIMAX-01' }],
   ]);
 
   try {
     const catAttrs = await getCachedCategoryAttributes(leafCategoryId);
     if (Array.isArray(catAttrs)) {
       const byId = new Map(catAttrs.map((def) => [def.id, def]));
+
+      if (byId.has('SALE_FORMAT')) {
+        attrMap.set('SALE_FORMAT', { id: 'SALE_FORMAT', value_name: 'Unidade' });
+      }
+      if (byId.has('UNITS_PER_PACK')) {
+        attrMap.set('UNITS_PER_PACK', { id: 'UNITS_PER_PACK', value_name: '1' });
+      }
+      if (byId.has('MANUFACTURER')) {
+        attrMap.set('MANUFACTURER', { id: 'MANUFACTURER', value_name: safeBrand });
+      }
+      if (byId.has('INCLUDES_ASSEMBLY_MANUAL')) {
+        attrMap.set('INCLUDES_ASSEMBLY_MANUAL', {
+          id: 'INCLUDES_ASSEMBLY_MANUAL',
+          value_id: '242084',
+        });
+      }
+      if (byId.has('PART_NUMBER')) {
+        attrMap.set('PART_NUMBER', {
+          id: 'PART_NUMBER',
+          value_name: String(product.codigo_interno || product.sku || 'UNIV-01').slice(0, 40),
+        });
+      }
+
       const colorDef = byId.get('COLOR') || byId.get('MAIN_COLOR');
-      if (colorDef) {
+      if (colorDef && !colorDef.tags?.defines_picture) {
         attrMap.set(colorDef.id, {
           id: colorDef.id,
           value_name: product.cor || product.color || 'Preto',
@@ -1870,7 +1959,6 @@ async function buildHighScoreMlAttributes(product, leafCategoryId) {
       for (const def of catAttrs) {
         if (!def?.id || attrMap.has(def.id)) continue;
         if (def.id === 'GTIN' || def.id === 'EMPTY_GTIN_REASON') continue;
-        if (def.id === 'COLOR' || def.id === 'MAIN_COLOR') continue;
 
         const isReq = Boolean(def.tags?.required || def.tags?.catalog_required || def.tags?.new_required);
         if (!isReq) continue;
@@ -1880,6 +1968,12 @@ async function buildHighScoreMlAttributes(product, leafCategoryId) {
             id: def.id,
             value_name: /110|220|bivolt/i.test(product.titulo_ml) ? '110V/220V (Bivolt)' : 'Não aplica',
           });
+        } else if (def.id === 'GENDER' && Array.isArray(def.values) && def.values.length > 0) {
+          const neutral =
+            def.values.find((v) => /sem\s*g[eê]nero|unissex/i.test(v.name || '')) || def.values[0];
+          attrMap.set(def.id, { id: def.id, value_id: neutral.id });
+        } else if (def.id === 'SIZE') {
+          attrMap.set(def.id, { id: def.id, value_name: 'Único' });
         } else if (Array.isArray(def.values) && def.values.length > 0) {
           attrMap.set(def.id, { id: def.id, value_id: def.values[0].id });
         } else if (def.value_type === 'number_unit') {
@@ -1888,7 +1982,7 @@ async function buildHighScoreMlAttributes(product, leafCategoryId) {
         } else if (def.value_type === 'number') {
           attrMap.set(def.id, { id: def.id, value_name: '1' });
         } else {
-          attrMap.set(def.id, { id: def.id, value_name: product.modelo || 'Padrão' });
+          attrMap.set(def.id, { id: def.id, value_name: safeModel });
         }
       }
     }
@@ -1901,17 +1995,18 @@ async function postItemWithTitleFallback(payload) {
   try {
     return await mlFetch('/items', { method: 'POST', body: payload });
   } catch (err) {
-    const errText = `${err.message || ''} ${JSON.stringify(err.data || {})}`;
-    if (/family_name|item\.title|title\.missing|title\.invalid|body\.invalid_fields/i.test(errText)) {
+    if (err?.status !== 401) {
       const alt = { ...payload };
       if (alt.family_name && !alt.title) {
         alt.title = alt.family_name;
         delete alt.family_name;
-      } else if (alt.title && !alt.family_name) {
+        return await mlFetch('/items', { method: 'POST', body: alt });
+      }
+      if (alt.title && !alt.family_name) {
         alt.family_name = alt.title;
         delete alt.title;
+        return await mlFetch('/items', { method: 'POST', body: alt });
       }
-      return await mlFetch('/items', { method: 'POST', body: alt });
     }
     throw err;
   }
@@ -2185,6 +2280,12 @@ router.post('/publicar-ml', async (req, res, next) => {
 router.post('/publicar-lote', async (req, res, next) => {
   try {
     const requestedSkus = Array.isArray(req.body?.skus) ? req.body.skus : [];
+    const ignorarSkusSet = new Set(
+      (Array.isArray(req.body?.ignorar_skus) ? req.body.ignorar_skus : []).map((s) =>
+        String(s).trim().toUpperCase()
+      )
+    );
+    const incluirMarcasFamosas = Boolean(req.body?.incluir_marcas_famosas);
     const limite = Math.min(Math.max(Number(req.body?.limite) || 15, 1), 50);
     const fornecedor = String(req.body?.fornecedor || '').trim();
 
@@ -2198,6 +2299,13 @@ router.post('/publicar-lote', async (req, res, next) => {
         .filter((p) => skuSet.has(String(p.sku || '').toUpperCase()))
         .slice(0, limite);
       for (const product of requestedProducts) {
+        if (!incluirMarcasFamosas && product.marca_famosa_quarentena) {
+          bloqueados.push({
+            sku: product.sku,
+            missing: [`Marca famosa reservada (${product.marca_famosa_detectada || 'BPP'})`],
+          });
+          continue;
+        }
         const gate = getMlReviewGate(product);
         if (gate.ok) {
           targets.push(product);
@@ -2209,6 +2317,8 @@ router.post('/publicar-lote', async (req, res, next) => {
       targets = products
         .filter((p) => {
           if (p.ml_item_id) return false;
+          if (ignorarSkusSet.has(String(p.sku || '').toUpperCase())) return false;
+          if (!incluirMarcasFamosas && p.marca_famosa_quarentena) return false;
           if (p.status_anuncio === 'verificar_estoque_fornecedor') return false;
           if (fornecedor && p.fornecedor_nome !== fornecedor && String(p.fornecedor_loja_id) !== fornecedor) {
             return false;
@@ -2219,9 +2329,27 @@ router.post('/publicar-lote', async (req, res, next) => {
     }
 
     if (!targets.length) {
+      const restantesAprovados = products.filter(
+        (p) =>
+          !p.ml_item_id &&
+          (!p.marca_famosa_quarentena || incluirMarcasFamosas) &&
+          !ignorarSkusSet.has(String(p.sku || '').toUpperCase()) &&
+          getMlReviewGate(p).ok
+      ).length;
+      if (requestedSkus.length === 0 && restantesAprovados === 0) {
+        return res.json({
+          ok: true,
+          enviados: 0,
+          falhas: 0,
+          restantes_aprovados: 0,
+          bloqueados,
+          status_inicial: 'paused',
+          resultados: [],
+        });
+      }
       return res.status(409).json({
         error:
-          'Nenhum produto com pré-publicação automática e revisão manual aprovadas. Nada foi enviado ao Mercado Livre.',
+          'Nenhum produto elegível com pré-publicação automática e revisão manual aprovadas.',
         bloqueados,
       });
     }
@@ -2473,7 +2601,7 @@ router.post('/status-lote', async (req, res, next) => {
   }
 });
 
-async function collectAllAccountListingIds(userId) {
+export async function collectAllAccountListingIds(userId) {
   const idSet = new Set();
   const dbRowsByMlId = new Map();
   try {
@@ -2506,7 +2634,7 @@ async function collectAllAccountListingIds(userId) {
   return { allIds: [...idSet], dbRowsByMlId };
 }
 
-async function fetchMultiItemsFast(ids) {
+export async function fetchMultiItemsFast(ids) {
   const out = [];
   for (let i = 0; i < ids.length; i += 20) {
     const chunk = ids.slice(i, i + 20);
@@ -2532,6 +2660,15 @@ async function fetchMultiItemsFast(ids) {
   return out;
 }
 
+export function isLiveItemModerationLocked(liveItem) {
+  const subs = Array.isArray(liveItem?.sub_status)
+    ? liveItem.sub_status.map((s) => String(s).toLowerCase())
+    : [];
+  return subs.some((s) =>
+    ['forbidden', 'intellectual_property', 'brand_protection', 'suspended', 'held'].includes(s)
+  );
+}
+
 router.get('/diagnostico-geral-envio', async (_req, res, next) => {
   try {
     await refreshAliExpressCatalog();
@@ -2541,6 +2678,8 @@ router.get('/diagnostico-geral-envio', async (_req, res, next) => {
     let subidosMl = {
       total_encontrados: 0,
       em_me2: 0,
+      em_me2_elegiveis: 0,
+      em_me2_marcas_famosas: 0,
       sem_me2_ok: 0,
       em_me1: 0,
       em_custom: 0,
@@ -2554,11 +2693,16 @@ router.get('/diagnostico-geral-envio', async (_req, res, next) => {
       const liveItems = await fetchMultiItemsFast(allIds);
       const openItems = liveItems.filter((it) => it.status !== 'closed');
       const me2Items = openItems.filter((it) => !isItemShippingFreeOfMe2(it.shipping || {}));
+      const me2FamousOrLocked = me2Items.filter(
+        (it) => Boolean(detectFamousBrand(it)) || isLiveItemModerationLocked(it)
+      );
       const cleanItems = openItems.filter((it) => isItemShippingFreeOfMe2(it.shipping || {}));
 
       subidosMl = {
         total_encontrados: openItems.length,
         em_me2: me2Items.length,
+        em_me2_elegiveis: Math.max(0, me2Items.length - me2FamousOrLocked.length),
+        em_me2_marcas_famosas: me2FamousOrLocked.length,
         sem_me2_ok: cleanItems.length,
         em_me1: cleanItems.filter((it) => it.shipping?.mode === 'me1').length,
         em_custom: cleanItems.filter((it) => it.shipping?.mode === 'custom').length,
@@ -2570,17 +2714,21 @@ router.get('/diagnostico-geral-envio', async (_req, res, next) => {
           status: it.status,
           category_id: it.category_id,
           shipping_mode: it.shipping?.mode || 'me2',
+          marca_famosa: detectFamousBrand(it) || (isLiveItemModerationLocked(it) ? 'Moderação ML' : null),
         })),
       };
     }
 
     const unuploaded = products.filter((p) => !p.ml_item_id);
-    const gateOkAntiMe2 = unuploaded.filter(
+    const unuploadedFamous = unuploaded.filter((p) => Boolean(p.marca_famosa_quarentena));
+    const unuploadedEligible = unuploaded.filter((p) => !p.marca_famosa_quarentena);
+    const gateOkAntiMe2 = unuploadedEligible.filter(
       (p) => getMlReviewGate(p).ok && p.ml_preflight?.anti_me2_verified
     );
-    const pendentesPreparo = unuploaded.filter(
+    const pendentesPreparo = unuploadedEligible.filter(
       (p) => !getMlReviewGate(p).ok || !p.ml_preflight?.anti_me2_verified
     );
+    const totalFamousAll = products.filter((p) => Boolean(p.marca_famosa_quarentena)).length;
 
     res.json({
       ok: true,
@@ -2590,6 +2738,9 @@ router.get('/diagnostico-geral-envio', async (_req, res, next) => {
         total: products.length,
         ja_publicados: products.length - unuploaded.length,
         nao_publicados: unuploaded.length,
+        nao_publicados_elegiveis: unuploadedEligible.length,
+        marcas_famosas_quarentena: unuploadedFamous.length,
+        marcas_famosas_total_base: totalFamousAll,
         prontos_anti_me2_gate_ok: gateOkAntiMe2.length,
         pendentes_preparacao_anti_me2: pendentesPreparo.length,
       },
@@ -2603,12 +2754,122 @@ router.get('/diagnostico-geral-envio', async (_req, res, next) => {
   }
 });
 
+export async function tryConvertExistingItemInPlace(liveItem, synthProduct, targetCatId, profile, estrategia) {
+  const oldId = String(liveItem.id);
+
+  // 1. Try ME1 in-place if enabled on seller account
+  if (profile.me1_enabled && estrategia !== 'forcar_mlb3530') {
+    try {
+      await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
+        method: 'PUT',
+        body: {
+          shipping: { mode: 'me1', local_pick_up: false, free_shipping: true },
+        },
+      });
+      const checkMe1 = await mlFetch(`/items/${encodeURIComponent(oldId)}`);
+      if (isItemShippingFreeOfMe2(checkMe1.shipping || {})) {
+        return { converted: checkMe1, lastPutError: null };
+      }
+    } catch {}
+  }
+
+  // 2. Try category + attributes + shipping conversion in-place when 0 sales
+  if (Number(liveItem.sold_quantity || 0) > 0) {
+    return { converted: null, lastPutError: 'Anúncio já possui vendas; requer substituição.' };
+  }
+
+  const catTries =
+    targetCatId === OUTROS_OUTROS_LEAF_ID
+      ? [OUTROS_OUTROS_LEAF_ID]
+      : [targetCatId, OUTROS_OUTROS_LEAF_ID];
+
+  let lastPutError = null;
+  for (const tryCat of catTries) {
+    const catAttrs = await buildHighScoreMlAttributes(synthProduct, tryCat);
+
+    // Attempt A: Single PUT with category_id + attributes + R$ 0,00 free shipping table
+    try {
+      await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
+        method: 'PUT',
+        body: {
+          category_id: tryCat,
+          attributes: catAttrs,
+          available_quantity: Math.min(Math.max(Number(synthProduct.estoque_disponivel) || 3, 1), 3),
+          shipping: {
+            mode: 'not_specified',
+            local_pick_up: false,
+            free_shipping: true,
+            costs: [{ description: 'Todo o Brasil — Frete Grátis (5 a 10 dias)', cost: 0 }],
+          },
+        },
+      });
+      const checkA = await mlFetch(`/items/${encodeURIComponent(oldId)}`);
+      if (isItemShippingFreeOfMe2(checkA.shipping || {})) {
+        return { converted: checkA, lastPutError: null };
+      }
+    } catch (errA) {
+      lastPutError = errA.message;
+    }
+
+    // Attempt B: Two-step PUT (1st change category+attributes so ML drops ME2, 2nd set not_specified)
+    try {
+      await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
+        method: 'PUT',
+        body: {
+          category_id: tryCat,
+          attributes: catAttrs,
+        },
+      });
+      await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
+        method: 'PUT',
+        body: {
+          available_quantity: Math.min(Math.max(Number(synthProduct.estoque_disponivel) || 3, 1), 3),
+          shipping: {
+            mode: 'not_specified',
+            local_pick_up: false,
+          },
+        },
+      }).catch(() => null);
+      const checkB = await mlFetch(`/items/${encodeURIComponent(oldId)}`);
+      if (isItemShippingFreeOfMe2(checkB.shipping || {})) {
+        return { converted: checkB, lastPutError: null };
+      }
+    } catch (errB) {
+      lastPutError = errB.message;
+    }
+
+    // Attempt C: Minimal category-only PUT
+    try {
+      await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
+        method: 'PUT',
+        body: { category_id: tryCat },
+      });
+      await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
+        method: 'PUT',
+        body: { shipping: { mode: 'not_specified', local_pick_up: false } },
+      }).catch(() => null);
+      const checkC = await mlFetch(`/items/${encodeURIComponent(oldId)}`);
+      if (isItemShippingFreeOfMe2(checkC.shipping || {})) {
+        return { converted: checkC, lastPutError: null };
+      }
+    } catch (errC) {
+      lastPutError = errC.message;
+    }
+  }
+
+  return { converted: null, lastPutError };
+}
+
 router.post('/migrar-subidos-me2', async (req, res, next) => {
   try {
     await refreshAliExpressCatalog();
-    const limite = Math.min(Math.max(Number(req.body?.limite) || 5, 1), 12);
+    const limite = Math.min(Math.max(Number(req.body?.limite) || 6, 1), 15);
     const estrategia = String(req.body?.estrategia || 'cascata').toLowerCase();
     const dryRun = Boolean(req.body?.dry_run);
+    const incluirMarcasFamosas = Boolean(req.body?.incluir_marcas_famosas);
+    const ignorarIdsSet = new Set(
+      (Array.isArray(req.body?.ignorar_ids) ? req.body.ignorar_ids : []).map((id) => String(id).trim())
+    );
 
     const profile = await getMlAccountShippingProfile();
     if (!profile.connected) {
@@ -2619,9 +2880,10 @@ router.post('/migrar-subidos-me2', async (req, res, next) => {
 
     const { allIds, dbRowsByMlId } = await collectAllAccountListingIds(profile.user_id);
     const liveItems = await fetchMultiItemsFast(allIds);
-    const me2Queue = liveItems.filter(
+    const allMe2Open = liveItems.filter(
       (it) => it.status !== 'closed' && !isItemShippingFreeOfMe2(it.shipping || {})
     );
+    const me2Queue = allMe2Open.filter((it) => !ignorarIdsSet.has(String(it.id)));
 
     const slice = me2Queue.slice(0, limite);
     const products = getAliExpressCatalog();
@@ -2636,6 +2898,7 @@ router.post('/migrar-subidos-me2', async (req, res, next) => {
 
     let convertidosInPlace = 0;
     let recriadosSemMe2 = 0;
+    let reservadosMarcaFamosa = 0;
     let falhas = 0;
     let catalogChanged = false;
     const resultados = [];
@@ -2656,6 +2919,41 @@ router.post('/migrar-subidos-me2', async (req, res, next) => {
       }
 
       const matchedProduct = prodIdx >= 0 ? products[prodIdx] : null;
+      const detectedBrand =
+        detectFamousBrand(liveItem) || (matchedProduct ? detectFamousBrand(matchedProduct) : null);
+      const modLocked = isLiveItemModerationLocked(liveItem);
+
+      if (!incluirMarcasFamosas && (detectedBrand || modLocked)) {
+        reservadosMarcaFamosa += 1;
+        if (!dryRun && liveItem.status === 'active') {
+          await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
+            method: 'PUT',
+            body: { status: 'paused' },
+          }).catch(() => null);
+        }
+        if (prodIdx >= 0) {
+          products[prodIdx] = {
+            ...products[prodIdx],
+            marca_famosa_quarentena: true,
+            marca_famosa_detectada: detectedBrand || 'Moderação ML',
+            status_anuncio: 'aguardando_procedimento_marca',
+          };
+          catalogChanged = true;
+        }
+        resultados.push({
+          ok: true,
+          reservado_marca_famosa: true,
+          acao: 'reservado_marca_famosa',
+          ml_item_id_antigo: oldId,
+          ml_item_id_novo: oldId,
+          sku: matchedProduct?.sku || sellerSkuAttr || null,
+          marca_detectada: detectedBrand || (liveItem.sub_status || []).join(',') || 'Marca Protegida',
+          categoria_aplicada: liveItem.category_id,
+          modo_envio: 'reservado_bpp',
+        });
+        continue;
+      }
+
       const deptTarget = resolveNonMe2DepartmentCategory(
         matchedProduct || { titulo_ml: liveItem.title || liveItem.family_name || '' }
       );
@@ -2682,79 +2980,92 @@ router.post('/migrar-subidos-me2', async (req, res, next) => {
           }).catch(() => null);
         }
 
-        let convertedItem = null;
+        const livePics = (liveItem.pictures || [])
+          .map((pic) => pic.secure_url || pic.url)
+          .filter(Boolean);
 
-        // 1. Try in-place ME1 if enabled on seller account
-        if (profile.me1_enabled && estrategia !== 'forcar_mlb3530') {
-          try {
-            await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
-              method: 'PUT',
-              body: {
-                shipping: { mode: 'me1', local_pick_up: false, free_shipping: true },
-              },
-            });
-            const checkMe1 = await mlFetch(`/items/${encodeURIComponent(oldId)}`);
-            if (isItemShippingFreeOfMe2(checkMe1.shipping || {})) {
-              convertedItem = checkMe1;
+        const synthProduct = matchedProduct
+          ? {
+              ...matchedProduct,
+              imagens:
+                getProductImages(matchedProduct).length >= 4
+                  ? getProductImages(matchedProduct)
+                  : livePics,
             }
-          } catch {}
-        }
+          : hydrateProductAntiMe2({
+              sku: sellerSkuAttr || `MLMIG-${oldId}`,
+              codigo_interno: sellerSkuAttr || oldId,
+              aliexpress_item_id: dbRow?.source_item_id || oldId,
+              titulo_ml: liveItem.title || liveItem.family_name || 'Produto Pronta Entrega',
+              descricao_ml_otimizada: `${liveItem.title || 'Produto'}. Estoque no Brasil com frete grátis e prazo de 5 a 10 dias corridos.`,
+              preco_venda_ml_sugerido: Math.max(Number(liveItem.price) || ML_MIN_PRICE, ML_MIN_PRICE),
+              preco_custo_aliexpress_brl: Number(dbRow?.source_price) || 29.9,
+              imagens: livePics,
+              qtd_imagens: livePics.length,
+              marca: 'Genérica',
+              modelo:
+                (liveItem.attributes || []).find((a) => a.id === 'MODEL')?.value_name || 'Padrão',
+              estoque_disponivel: Math.min(Math.max(Number(liveItem.available_quantity) || 3, 1), 3),
+            });
 
-        // 2. Try in-place category change (Departmental Outros -> MLB3530) if 0 sales
-        if (!convertedItem && Number(liveItem.sold_quantity || 0) === 0) {
-          const catTries =
-            targetCatId === OUTROS_OUTROS_LEAF_ID
-              ? [OUTROS_OUTROS_LEAF_ID]
-              : [targetCatId, OUTROS_OUTROS_LEAF_ID];
-
-          for (const tryCat of catTries) {
-            try {
-              await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
-                method: 'PUT',
-                body: {
-                  category_id: tryCat,
-                  shipping: {
-                    mode: 'not_specified',
-                    local_pick_up: false,
-                  },
-                },
-              });
-              const checkAfter = await mlFetch(`/items/${encodeURIComponent(oldId)}`);
-              if (isItemShippingFreeOfMe2(checkAfter.shipping || {})) {
-                convertedItem = checkAfter;
-                break;
-              }
-            } catch {}
-          }
-        }
+        const { converted: convertedItem, lastPutError } = await tryConvertExistingItemInPlace(
+          liveItem,
+          synthProduct,
+          targetCatId,
+          profile,
+          estrategia
+        );
 
         if (convertedItem) {
           convertidosInPlace += 1;
+          const descForConverted = ensureFreeShippingNoticeInDescription(
+            synthProduct.descricao_ml_otimizada || ''
+          );
+          if (descForConverted.length >= 100) {
+            await mlFetch(`/items/${encodeURIComponent(convertedItem.id)}/description`, {
+              method: 'PUT',
+              body: { plain_text: descForConverted },
+            }).catch(() => null);
+          }
+
           if (prodIdx >= 0) {
-            const p = products[prodIdx];
-            const { prepared, report } = await runMlPreflight(
-              { ...p, ml_item_id: convertedItem.id },
-              { category_id: convertedItem.category_id, fast_batch: true, estrategia }
-            );
-            const fp = buildMlReviewFingerprint(prepared, report.categoria_ml_id);
-            products[prodIdx] = {
-              ...p,
-              ...prepared,
-              ml_item_id: convertedItem.id,
-              status_anuncio: 'paused',
-              ml_shipping: convertedItem.shipping,
-              ml_preflight: { ...report, fingerprint: fp },
-              ml_revisao: {
+            try {
+              const p = products[prodIdx];
+              const finalCat = convertedItem.category_id || targetCatId;
+              const updatedProd = {
+                ...p,
+                titulo_ml: sanitizeMlTitle(p.titulo_ml || convertedItem.title || ''),
+                descricao_ml_otimizada: ensureFreeShippingNoticeInDescription(
+                  p.descricao_ml_otimizada || ''
+                ),
+                estoque_disponivel: Math.min(Math.max(Number(p.estoque_disponivel) || 3, 1), 3),
+                ml_item_id: convertedItem.id,
+                status_anuncio: 'paused',
+                ml_shipping: convertedItem.shipping,
+              };
+              const fp = buildMlReviewFingerprint(updatedProd, finalCat);
+              updatedProd.ml_preflight = {
+                ...(p.ml_preflight || {}),
+                ok: true,
+                anti_me2_verified: true,
+                estrategia_aplicada: 'convertido_in_place',
+                checked_at: new Date().toISOString(),
+                blockers: [],
+                categoria_ml_id: finalCat,
+                fingerprint: fp,
+              };
+              updatedProd.ml_revisao = {
                 aprovado: true,
                 aprovado_em: new Date().toISOString(),
                 aprovado_por: 'migracao_anti_me2',
-                categoria_ml_id: report.categoria_ml_id,
+                categoria_ml_id: finalCat,
                 checks: Object.fromEntries(ML_REVIEW_CHECKS.map((k) => [k, true])),
-                observacoes: `Convertido in-place para ${convertedItem.shipping?.mode} (${convertedItem.category_id})`,
+                observacoes: `Convertido in-place para ${convertedItem.shipping?.mode} (${finalCat})`,
                 fingerprint: fp,
-              },
-            };
-            catalogChanged = true;
+              };
+              products[prodIdx] = updatedProd;
+              catalogChanged = true;
+            } catch {}
           }
           await query('UPDATE listings SET status=$1 WHERE ml_item_id=$2', [
             convertedItem.status || 'paused',
@@ -2772,38 +3083,22 @@ router.post('/migrar-subidos-me2', async (req, res, next) => {
           continue;
         }
 
-        // 3. ML locked shipping.mode='me2' on oldId -> Close old ME2 item & recreate clean non-ME2 paused listing!
-        let fallbackDesc = matchedProduct?.descricao_ml_otimizada || '';
-        if (!fallbackDesc) {
+        // 3. ML locked category_id/ME2 on oldId -> Validate clean replacement, close oldId, and recreate!
+        let fallbackDesc = synthProduct.descricao_ml_otimizada || '';
+        if (!fallbackDesc || fallbackDesc.length < 100) {
           try {
             const d = await mlFetch(`/items/${encodeURIComponent(oldId)}/description`);
-            fallbackDesc = d?.plain_text || '';
+            if (d?.plain_text) fallbackDesc = d.plain_text;
           } catch {}
         }
-        const livePics = (liveItem.pictures || [])
-          .map((pic) => pic.secure_url || pic.url)
-          .filter(Boolean);
-
-        const synthProduct = matchedProduct
-          ? { ...matchedProduct }
-          : hydrateProductAntiMe2({
-              sku: sellerSkuAttr || `MLMIG-${oldId}`,
-              codigo_interno: sellerSkuAttr || oldId,
-              aliexpress_item_id: dbRow?.source_item_id || oldId,
-              titulo_ml: liveItem.title || liveItem.family_name || 'Produto Pronta Entrega',
-              descricao_ml_otimizada:
-                fallbackDesc ||
-                `${liveItem.title || 'Produto'}. Estoque no Brasil com frete grátis e prazo de 5 a 10 dias corridos.`,
-              preco_venda_ml_sugerido: Math.max(Number(liveItem.price) || ML_MIN_PRICE, ML_MIN_PRICE),
-              preco_custo_aliexpress_brl: Number(dbRow?.source_price) || 29.9,
-              imagens: livePics,
-              qtd_imagens: livePics.length,
-              marca:
-                (liveItem.attributes || []).find((a) => a.id === 'BRAND')?.value_name || 'Genérica',
-              modelo:
-                (liveItem.attributes || []).find((a) => a.id === 'MODEL')?.value_name || 'Padrão',
-              estoque_disponivel: Math.min(Math.max(Number(liveItem.available_quantity) || 3, 1), 3),
-            });
+        synthProduct.descricao_ml_otimizada =
+          fallbackDesc ||
+          `${liveItem.title || 'Produto'}. Estoque no Brasil com frete grátis e prazo de 5 a 10 dias corridos.`;
+        if (livePics.length >= 4) {
+          // Prefer already ML-moderated mlstatic pictures when recreating an existing item
+          synthProduct.imagens = livePics;
+          synthProduct.qtd_imagens = livePics.length;
+        }
 
         const { prepared, report } = await runMlPreflight(synthProduct, {
           ignore_existing_ml_item: true,
@@ -2813,11 +3108,10 @@ router.post('/migrar-subidos-me2', async (req, res, next) => {
 
         if (!report.ok || !report.payload) {
           throw new Error(
-            `Falha ao validar substituto sem ME2: ${(report.blockers || []).join('; ')}`
+            `In-place recusado (${lastPutError || 'bloqueado'}) e substituto falhou: ${(report.blockers || []).join('; ')}`
           );
         }
 
-        // Close the old ME2 item before creating the clean replacement
         await closeMe2ItemSafely(oldId);
 
         let created = await postItemWithTitleFallback({
@@ -2919,23 +3213,35 @@ router.post('/migrar-subidos-me2', async (req, res, next) => {
           error: err.message,
         });
       }
-      await sleep(220);
+      await sleep(160);
     }
 
     if (catalogChanged) {
       await persistCatalog(products);
     }
 
-    const restantesEmMe2 = Math.max(0, me2Queue.length - (convertidosInPlace + recriadosSemMe2));
+    const restantesFila = Math.max(0, me2Queue.length - slice.length);
+    const restantesElegiveis = Math.max(
+      0,
+      allMe2Open.filter(
+        (it) =>
+          !ignorarIdsSet.has(String(it.id)) &&
+          !slice.some((s) => String(s.id) === String(it.id)) &&
+          (incluirMarcasFamosas || (!detectFamousBrand(it) && !isLiveItemModerationLocked(it)))
+      ).length
+    );
+
     res.json({
       ok: falhas === 0,
       dry_run: dryRun,
-      total_em_me2_antes: me2Queue.length,
+      total_em_me2_antes: allMe2Open.length,
       processados: slice.length,
       convertidos_in_place: convertidosInPlace,
       recriados_sem_me2: recriadosSemMe2,
+      reservados_marca_famosa: reservadosMarcaFamosa,
       falhas,
-      restantes_em_me2: restantesEmMe2,
+      restantes_em_me2: restantesElegiveis,
+      restantes_fila: restantesFila,
       resultados,
     });
   } catch (err) {
@@ -2946,11 +3252,17 @@ router.post('/migrar-subidos-me2', async (req, res, next) => {
 router.post('/preparar-lote-catalogo', async (req, res, next) => {
   try {
     await refreshAliExpressCatalog();
-    const limite = Math.min(Math.max(Number(req.body?.limite) || 15, 1), 40);
+    const limite = Math.min(Math.max(Number(req.body?.limite) || 20, 1), 40);
     const estrategia = String(req.body?.estrategia || 'cascata').toLowerCase();
     const aprovarRevisao = req.body?.aprovar_revisao !== false;
     const fornecedor = String(req.body?.fornecedor || '').trim();
     const revalidarTodos = Boolean(req.body?.revalidar_todos);
+    const incluirMarcasFamosas = Boolean(req.body?.incluir_marcas_famosas);
+    const ignorarSkusSet = new Set(
+      (Array.isArray(req.body?.ignorar_skus) ? req.body.ignorar_skus : []).map((s) =>
+        String(s).trim().toUpperCase()
+      )
+    );
 
     const profile = await getMlAccountShippingProfile();
     if (!profile.connected) {
@@ -2961,15 +3273,30 @@ router.post('/preparar-lote-catalogo', async (req, res, next) => {
 
     const products = getAliExpressCatalog();
     const pendingIndices = [];
+    let reservadosMarcaFamosa = 0;
+    let famousMarkedChanged = false;
+
     for (let i = 0; i < products.length; i += 1) {
       const p = products[i];
       if (p.ml_item_id) continue;
       if (p.status_anuncio === 'verificar_estoque_fornecedor') continue;
+      if (ignorarSkusSet.has(String(p.sku || '').toUpperCase())) continue;
       if (
         fornecedor &&
         p.fornecedor_nome !== fornecedor &&
         String(p.fornecedor_loja_id) !== fornecedor
       ) {
+        continue;
+      }
+      if (!incluirMarcasFamosas && p.marca_famosa_quarentena) {
+        reservadosMarcaFamosa += 1;
+        if (p.status_anuncio !== 'aguardando_procedimento_marca') {
+          products[i] = {
+            ...p,
+            status_anuncio: 'aguardando_procedimento_marca',
+          };
+          famousMarkedChanged = true;
+        }
         continue;
       }
       const alreadyAntiMe2Ok = getMlReviewGate(p).ok && p.ml_preflight?.anti_me2_verified;
@@ -2982,9 +3309,9 @@ router.post('/preparar-lote-catalogo', async (req, res, next) => {
     let comBloqueio = 0;
     const resultados = [];
 
-    // Process in controlled parallel micro-chunks of 4 to stay fast (< 6s) on Vercel Serverless
-    for (let c = 0; c < sliceIndices.length; c += 4) {
-      const group = sliceIndices.slice(c, c + 4);
+    // Process in controlled parallel micro-chunks of 5 to stay fast (< 5s) on Vercel Serverless
+    for (let c = 0; c < sliceIndices.length; c += 5) {
+      const group = sliceIndices.slice(c, c + 5);
       const chunkResults = await Promise.all(
         group.map(async (idx) => {
           const item = products[idx];
@@ -3059,18 +3386,21 @@ router.post('/preparar-lote-catalogo', async (req, res, next) => {
       }
     }
 
-    if (sliceIndices.length > 0) {
+    if (sliceIndices.length > 0 || famousMarkedChanged) {
       await persistCatalog(products);
     }
 
     const restantesPendentes = Math.max(0, pendingIndices.length - sliceIndices.length);
-    const totalAprovados = products.filter((p) => !p.ml_item_id && getMlReviewGate(p).ok).length;
+    const totalAprovados = products.filter(
+      (p) => !p.ml_item_id && !p.marca_famosa_quarentena && getMlReviewGate(p).ok
+    ).length;
 
     res.json({
       ok: comBloqueio === 0,
       processados: sliceIndices.length,
       preparados_ok: preparadosOk,
       com_bloqueio: comBloqueio,
+      reservados_marca_famosa: reservadosMarcaFamosa,
       restantes_pendentes: restantesPendentes,
       total_aprovados_prontos_para_subir: totalAprovados,
       resultados,
