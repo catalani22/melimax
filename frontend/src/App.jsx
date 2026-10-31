@@ -208,6 +208,13 @@ function Icon({ name, className = 'h-4 w-4' }) {
         <line x1="3" y1="20" x2="21" y2="20" />
       </>
     ),
+    pause: (
+      <>
+        <rect x="6" y="4" width="4" height="16" rx="1" />
+        <rect x="14" y="4" width="4" height="16" rx="1" />
+      </>
+    ),
+    play: <polygon points="6 4 20 12 6 20 6 4" />,
   };
 
   return (
@@ -1034,6 +1041,8 @@ export default function App() {
   const [uploadSupplierFilter, setUploadSupplierFilter] = useState('');
   const [uploadingBatch, setUploadingBatch] = useState(false);
   const [lastUploadReport, setLastUploadReport] = useState(null);
+  const [statusBusy, setStatusBusy] = useState(null);
+  const [lastStatusReport, setLastStatusReport] = useState(null);
 
   // Order Execution & Manual Tracking
   const [ordersState, setOrdersState] = useState({
@@ -1258,6 +1267,53 @@ export default function App() {
       notify(err.message, 'error');
     } finally {
       setRecalculating(false);
+    }
+  };
+
+  const handleSyncMlStatus = async () => {
+    setStatusBusy('sync');
+    try {
+      const res = await request('/aliexpress/sincronizar-status', {
+        method: 'POST',
+        body: { limite: 200 },
+      });
+      setLastStatusReport({ tipo: 'sincronizacao', ...res });
+      notify(
+        `Status real sincronizado: ${res.atualizados} anúncio(s) atualizado(s), ${res.falhas} falha(s).`,
+        res.falhas ? 'error' : 'success'
+      );
+      await Promise.all([loadCatalog(), loadListings()]);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setStatusBusy(null);
+    }
+  };
+
+  const handleStatusLote = async (acao) => {
+    if (acao === 'ativar' && !window.confirm('Ativar em massa SOMENTE os anúncios com pré-publicação e revisão aprovadas. Continuar?')) {
+      return;
+    }
+    if (acao === 'pausar' && !window.confirm('Desativar todos os anúncios no Mercado Livre agora? Continuar?')) {
+      return;
+    }
+    setStatusBusy(acao);
+    try {
+      const res = await request('/aliexpress/status-lote', {
+        method: 'POST',
+        body: { acao, limite: 100 },
+      });
+      setLastStatusReport({ tipo: acao, ...res });
+      const extra =
+        acao === 'ativar'
+          ? `${res.atualizados} ativado(s), ${res.bloqueados?.length || 0} bloqueado(s) sem gate.`
+          : `${res.atualizados} desativado(s)/oculto(s), ${res.falhas} falha(s).`;
+      notify(extra, res.falhas || (res.bloqueados?.length && acao === 'ativar') ? 'error' : 'success');
+      await Promise.all([loadCatalog(), loadListings()]);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setStatusBusy(null);
     }
   };
 
@@ -3255,6 +3311,77 @@ export default function App() {
                             <span className="font-mono font-semibold">{item.sku}</span>
                             <span className="mx-1.5">·</span>
                             <span className="break-words">{item.missing?.join('; ') || 'pendente'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="surface space-y-3 p-5 lg:col-span-12">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="label">Controle de Status Real no Mercado Livre</div>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                      Sincroniza o status real da API, desativa todos os anúncios e ativa em massa somente os que passaram pela pré-publicação automática e revisão manual. Nenhuma ativação ignora o gate.
+                    </p>
+                  </div>
+                  <span className="badge badge-neutral font-mono text-[11px]">
+                    ML: {account?.nickname || 'desconectado'}
+                  </span>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <button
+                    type="button"
+                    disabled={!account || Boolean(statusBusy)}
+                    onClick={handleSyncMlStatus}
+                    className="btn-secondary text-xs"
+                  >
+                    <Icon name="refresh" className="h-3.5 w-3.5" />
+                    {statusBusy === 'sync' ? 'Sincronizando...' : 'Sincronizar status real do ML'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!account || Boolean(statusBusy)}
+                    onClick={() => handleStatusLote('pausar')}
+                    className="btn-danger text-xs"
+                  >
+                    <Icon name="pause" className="h-3.5 w-3.5" />
+                    {statusBusy === 'pausar' ? 'Desativando no ML...' : 'Desativar todos no ML'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!account || Boolean(statusBusy)}
+                    onClick={() => handleStatusLote('ativar')}
+                    className="btn-primary text-xs"
+                  >
+                    <Icon name="play" className="h-3.5 w-3.5" />
+                    {statusBusy === 'ativar' ? 'Ativando aprovados...' : 'Ativar aprovados em massa'}
+                  </button>
+                </div>
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
+                  Regra de envio obrigatória: “Vou enviar por minha conta”, frete grátis R$ 0,00 para todo o Brasil, sem retirada no local, sem retirada em agência e sem etiqueta do Mercado Livre. O código de postagem é inserido manualmente na venda.
+                </div>
+                {lastStatusReport ? (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+                    <div className="font-mono font-semibold text-slate-800">
+                      {lastStatusReport.tipo === 'sincronizacao' ? 'Sincronização' : lastStatusReport.tipo === 'ativar' ? 'Ativação' : 'Desativação'}:
+                      {' '}total {lastStatusReport.total} · atualizados {lastStatusReport.atualizados}
+                      {' '}· bloqueados {lastStatusReport.bloqueados?.length || 0} · falhas {lastStatusReport.falhas}
+                    </div>
+                    {lastStatusReport.resumo ? (
+                      <div className="mt-1 font-mono text-[11px] text-slate-600">
+                        {Object.entries(lastStatusReport.resumo).map(([k, v]) => `${k}: ${v}`).join(' · ')}
+                      </div>
+                    ) : null}
+                    {Array.isArray(lastStatusReport.bloqueados) && lastStatusReport.bloqueados.length > 0 ? (
+                      <div className="mt-2 space-y-1">
+                        {lastStatusReport.bloqueados.slice(0, 8).map((b) => (
+                          <div key={b.ml_item_id} className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+                            <span className="font-mono font-semibold">{b.ml_item_id}</span>
+                            {' · '}
+                            <span>{b.missing?.join('; ') || 'sem gate'}</span>
                           </div>
                         ))}
                       </div>

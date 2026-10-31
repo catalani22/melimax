@@ -956,13 +956,12 @@ router.post('/pausar-todos', async (req, res, next) => {
   }
 });
 
-router.post('/reativar-todos', async (req, res, next) => {
-  try {
-    const result = await updateAllListingStatus('paused', 'active');
-    res.json(result);
-  } catch (err) {
-    next(err);
-  }
+router.post('/reativar-todos', (req, res) => {
+  res.status(409).json({
+    error:
+      'Ativação em massa bloqueada. Use /api/aliexpress/status-lote com pré-publicação e revisão manual aprovadas.',
+    code: 'ML_ACTIVATION_REQUIRES_PREFLIGHT_AND_REVIEW',
+  });
 });
 
 
@@ -1157,7 +1156,15 @@ router.post('/sync-prices', async (req, res, next) => {
   }
 });
 
-router.post('/publicar-lote', async (req, res, next) => {
+router.post('/publicar-lote', (req, res) => {
+  res.status(409).json({
+    error:
+      'Publicação/ativação em massa bloqueada. Use /api/aliexpress/status-lote após pré-publicação e revisão manual.',
+    code: 'ML_ACTIVATION_REQUIRES_PREFLIGHT_AND_REVIEW',
+  });
+});
+
+router.post('/publicar-lote-desativado', async (req, res, next) => {
   try {
     const ids = Array.isArray(req.body.ids) ? req.body.ids.map(String) : [];
     const limit = Math.min(Math.max(Number(req.body.max_batch) || 20, 1), 50);

@@ -62,31 +62,31 @@ const memory = {
   dashboard_users: [],
 };
 let nextIds = { accounts: 1, listings: 1, suppliers: 3, supplier_products: 1, users: 1, executions: 1 };
+const DATABASE_URL = process.env.DATABASE_URL;
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+const ALLOW_MEMORY = !DATABASE_URL && !IS_PRODUCTION;
+const REQUIRES_SSL =
+  Boolean(DATABASE_URL) &&
+  (IS_PRODUCTION || /sslmode=(require|verify-ca|verify-full)/i.test(DATABASE_URL) || /neon\.tech/i.test(DATABASE_URL));
 let pool = null;
 let schemaPromise = null;
 
-if (process.env.DATABASE_URL) {
+if (DATABASE_URL) {
   try {
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString: DATABASE_URL,
+      ...(REQUIRES_SSL ? { ssl: { rejectUnauthorized: false } } : {}),
       max: 5,
       idleTimeoutMillis: 15000,
-      connectionTimeoutMillis: 3000,
+      connectionTimeoutMillis: 5000,
     });
     pool.on('error', (err) => {
       console.error('[db] pool error:', err.message);
     });
-  } catch {
+  } catch (err) {
+    console.error('[db] falha ao criar pool:', err.message);
     pool = null;
   }
-}
-
-function disablePool() {
-  if (pool) {
-    pool.end().catch(() => {});
-    pool = null;
-  }
-  schemaPromise = null;
 }
 
 function mockQuery(text, params = []) {
@@ -282,23 +282,29 @@ function mockQuery(text, params = []) {
 }
 
 export function usingMemory() {
-  return !pool;
+  return !pool && ALLOW_MEMORY;
+}
+
+function databaseUnavailable(err) {
+  const error = new Error(
+    err?.message
+      ? `Banco de dados indisponível: ${err.message}`
+      : 'Banco de dados não configurado. Defina DATABASE_URL.'
+  );
+  error.code = 'DATABASE_UNAVAILABLE';
+  error.cause = err;
+  return error;
 }
 
 export async function query(text, params) {
-  if (!pool) return mockQuery(text, params);
+  if (!pool) {
+    if (ALLOW_MEMORY) return mockQuery(text, params);
+    throw databaseUnavailable();
+  }
   try {
     return await pool.query(text, params);
   } catch (err) {
-    if (
-      err &&
-      (['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH'].includes(err.code) ||
-        /connect|timeout|terminated/i.test(String(err.message || '')))
-    ) {
-      disablePool();
-      return mockQuery(text, params);
-    }
-    throw err;
+    throw databaseUnavailable(err);
   }
 }
 
@@ -709,8 +715,8 @@ export async function ensureSchema() {
         await seedAdminUser();
         return true;
       })
-      .catch(() => {
-        disablePool();
+      .catch((err) => {
+        console.error('[db] falha ao garantir schema:', err.message);
         return false;
       });
   }
@@ -718,24 +724,28 @@ export async function ensureSchema() {
 }
 
 export async function dashboardUserCount() {
-  if (!pool) return memory.dashboard_users.length;
+  if (!pool) {
+    if (ALLOW_MEMORY) return memory.dashboard_users.length;
+    throw databaseUnavailable();
+  }
   try {
     const { rows } = await pool.query('SELECT COUNT(*)::int AS count FROM dashboard_users');
     return Number(rows[0]?.count) || 0;
-  } catch {
-    disablePool();
-    return memory.dashboard_users.length;
+  } catch (err) {
+    throw databaseUnavailable(err);
   }
 }
 
 export async function dbStatus() {
-  if (!pool) return { driver: 'memory', ok: true };
+  if (!pool) {
+    if (ALLOW_MEMORY) return { driver: 'memory', ok: true };
+    return { driver: 'postgres', ok: false, error: 'DATABASE_URL ausente ou pool inválido.' };
+  }
   try {
     const started = Date.now();
     await pool.query('SELECT 1');
     return { driver: 'postgres', ok: true, latency_ms: Date.now() - started };
-  } catch {
-    disablePool();
-    return { driver: 'memory', ok: true };
+  } catch (err) {
+    return { driver: 'postgres', ok: false, error: err.message };
   }
 }
