@@ -8,6 +8,7 @@ import {
   PREMIUM_LISTING_TYPE,
   OUTROS_OUTROS_LEAF_ID,
   detectFamousBrand,
+  detectMlPolicyRisk,
   resolveNonMe2DepartmentCategory,
 } from '../src/lib/aliexpress-scraper.js';
 import {
@@ -24,6 +25,7 @@ import {
   collectAllAccountListingIds,
   fetchMultiItemsFast,
   isLiveItemModerationLocked,
+  detectLiveModerationAlert,
   tryConvertExistingItemInPlace,
 } from '../src/routes/aliexpress.js';
 
@@ -147,7 +149,39 @@ if (MODO === 'tudo' || MODO === 'migrar') {
     const matchedProd = prodIdx >= 0 ? products[prodIdx] : null;
     const detectedBrand =
       detectFamousBrand(live) || (matchedProd ? detectFamousBrand(matchedProd) : null);
+    const policyRisk =
+      detectMlPolicyRisk(live) ||
+      (matchedProd?.risco_politica_ml
+        ? matchedProd.motivo_risco_politica_ml
+        : matchedProd
+          ? detectMlPolicyRisk(matchedProd)
+          : null);
+    const liveModAlert = detectLiveModerationAlert(live);
     const modLocked = isLiveItemModerationLocked(live);
+
+    if (policyRisk || (liveModAlert && !detectedBrand)) {
+      quarantinedBrands += 1;
+      console.log(
+        `[FECHADO E ISOLADO RISCO POLÍTICA ML] ${oldId} (${policyRisk || liveModAlert}) — "${live.title}"`
+      );
+      if (APPLY) {
+        await closeOldMe2(oldId);
+        await query("UPDATE listings SET status='closed' WHERE ml_item_id=$1", [oldId]).catch(() => null);
+        if (prodIdx >= 0) {
+          products[prodIdx] = {
+            ...products[prodIdx],
+            ml_item_id: null,
+            ml_permalink: null,
+            ml_item_id_risco_fechado: oldId,
+            risco_politica_ml: true,
+            motivo_risco_politica_ml: policyRisk || liveModAlert,
+            ml_revisao: null,
+            status_anuncio: 'quarentena_politica_ml',
+          };
+        }
+      }
+      continue;
+    }
 
     if (!INCLUIR_MARCAS && (detectedBrand || modLocked)) {
       quarantinedBrands += 1;
@@ -337,6 +371,7 @@ if (MODO === 'tudo' || MODO === 'migrar') {
 if (MODO === 'tudo' || MODO === 'preparar') {
   const pendingIndices = [];
   let skippedFamous = 0;
+  let skippedPolicy = 0;
   for (let i = 0; i < products.length; i += 1) {
     const p = products[i];
     if (p.ml_item_id) continue;
@@ -350,12 +385,24 @@ if (MODO === 'tudo' || MODO === 'preparar') {
       };
       continue;
     }
+    const pRisk = p.risco_politica_ml ? p.motivo_risco_politica_ml : detectMlPolicyRisk(p);
+    if (pRisk && p.risco_politica_liberado_manualmente !== true) {
+      skippedPolicy += 1;
+      products[i] = {
+        ...p,
+        risco_politica_ml: true,
+        motivo_risco_politica_ml: pRisk,
+        ml_revisao: null,
+        status_anuncio: 'quarentena_politica_ml',
+      };
+      continue;
+    }
     if (getMlReviewGate(p).ok && p.ml_preflight?.anti_me2_verified) continue;
     pendingIndices.push(i);
   }
   const slice = LIMIT > 0 ? pendingIndices.slice(0, LIMIT) : pendingIndices;
   console.log(
-    `Produtos elegíveis pendentes de preparo Anti-ME2: ${slice.length}/${pendingIndices.length} (${skippedFamous} marcas famosas reservadas)`
+    `Produtos elegíveis pendentes de preparo Anti-ME2: ${slice.length}/${pendingIndices.length} (${skippedFamous} marcas famosas reservadas · ${skippedPolicy} quarentena ANVISA/fotos)`
   );
 
   let prepCount = 0;
@@ -393,7 +440,7 @@ if (MODO === 'tudo' || MODO === 'preparar') {
     }
     await sleep(140);
   }
-  if (APPLY && (prepCount > 0 || skippedFamous > 0)) {
+  if (APPLY && (prepCount > 0 || skippedFamous > 0 || skippedPolicy > 0)) {
     await saveCatalogToDbAndLocal(products);
   }
   console.log(`Resumo Preparação Base 1000+: ${prepCount} aprovado(s) sem ME2.`);
@@ -406,6 +453,7 @@ if ((MODO === 'tudo' || MODO === 'subir') && APPLY) {
     const p = products[i];
     if (p.ml_item_id) continue;
     if (!INCLUIR_MARCAS && (p.marca_famosa_quarentena || detectFamousBrand(p))) continue;
+    if ((p.risco_politica_ml || detectMlPolicyRisk(p)) && p.risco_politica_liberado_manualmente !== true) continue;
     if (getMlReviewGate(p).ok) readyIndices.push(i);
   }
   const slice = LIMIT > 0 ? readyIndices.slice(0, LIMIT) : readyIndices;

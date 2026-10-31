@@ -21,6 +21,8 @@ import {
   VERIFIED_NON_ME2_CATEGORY_IDS,
   NON_ME2_DEPARTMENTAL_LEAVES,
   detectFamousBrand,
+  detectMlPolicyRisk,
+  sanitizeBenignPolicyTerms,
   parseImageDimensionsFromBuffer,
   DEFAULT_MULTIPLIER,
   MIN_ML_PRICE,
@@ -171,31 +173,46 @@ async function readCatalogFromDb() {
 
 export function hydrateProductAntiMe2(product) {
   if (!product || typeof product !== 'object') return product;
-  const dept = resolveNonMe2DepartmentCategory(product);
-  const currentStock = Number(product.estoque_disponivel);
+  const cleanedTitle = product.titulo_ml
+    ? sanitizeBenignPolicyTerms(product.titulo_ml).slice(0, 60)
+    : product.titulo_ml;
+  const baseWithCleanTitle =
+    cleanedTitle !== product.titulo_ml ? { ...product, titulo_ml: cleanedTitle } : product;
+
+  const dept = resolveNonMe2DepartmentCategory(baseWithCleanTitle);
+  const currentStock = Number(baseWithCleanTitle.estoque_disponivel);
   const clampedStock =
     Number.isFinite(currentStock) && currentStock >= 1 && currentStock <= 3 ? currentStock : 3;
   const validExistingCat =
-    product.categoria_sem_me2_id &&
-    product.categoria_sem_me2_id !== 'MLB1911' &&
-    VERIFIED_NON_ME2_CATEGORY_IDS.has(product.categoria_sem_me2_id);
-  const existingSemMe2 = validExistingCat ? product.categoria_sem_me2_id : dept.id;
+    baseWithCleanTitle.categoria_sem_me2_id &&
+    baseWithCleanTitle.categoria_sem_me2_id !== 'MLB1911' &&
+    VERIFIED_NON_ME2_CATEGORY_IDS.has(baseWithCleanTitle.categoria_sem_me2_id);
+  const existingSemMe2 = validExistingCat ? baseWithCleanTitle.categoria_sem_me2_id : dept.id;
   const existingSemMe2Nome = validExistingCat
-    ? product.categoria_sem_me2_nome || dept.name
+    ? baseWithCleanTitle.categoria_sem_me2_nome || dept.name
     : dept.name;
-  const detectedBrand = detectFamousBrand(product);
+  const detectedBrand = detectFamousBrand(baseWithCleanTitle);
+  const detectedPolicyRisk = detectMlPolicyRisk(baseWithCleanTitle);
+  const isPolicyQuarantined =
+    baseWithCleanTitle.risco_politica_liberado_manualmente === true
+      ? false
+      : Boolean(baseWithCleanTitle.risco_politica_ml || detectedPolicyRisk);
 
   return {
-    ...product,
+    ...baseWithCleanTitle,
     estoque_disponivel: clampedStock,
     categoria_sem_me2_id: existingSemMe2,
     categoria_sem_me2_nome: existingSemMe2Nome,
     categoria_outros_outros_id: OUTROS_OUTROS_LEAF_ID,
     categoria_outros_outros_nome: OUTROS_OUTROS_LEAF_NAME,
     estrategia_envio_anti_me2:
-      product.estrategia_envio_anti_me2 || 'cascata_me1_outros_mlb3530',
-    marca_famosa_quarentena: Boolean(product.marca_famosa_quarentena || detectedBrand),
-    marca_famosa_detectada: product.marca_famosa_detectada || detectedBrand || null,
+      baseWithCleanTitle.estrategia_envio_anti_me2 || 'cascata_me1_outros_mlb3530',
+    marca_famosa_quarentena: Boolean(baseWithCleanTitle.marca_famosa_quarentena || detectedBrand),
+    marca_famosa_detectada: baseWithCleanTitle.marca_famosa_detectada || detectedBrand || null,
+    risco_politica_ml: isPolicyQuarantined,
+    motivo_risco_politica_ml: isPolicyQuarantined
+      ? baseWithCleanTitle.motivo_risco_politica_ml || detectedPolicyRisk || 'Política ML (ANVISA / Fotos)'
+      : null,
   };
 }
 
@@ -217,7 +234,9 @@ async function mergeDbCatalogWithSeedAndListings(dbProducts) {
       if (
         hydrated.categoria_sem_me2_id !== item.categoria_sem_me2_id ||
         hydrated.estoque_disponivel !== item.estoque_disponivel ||
-        Boolean(hydrated.marca_famosa_quarentena) !== Boolean(item.marca_famosa_quarentena)
+        hydrated.titulo_ml !== item.titulo_ml ||
+        Boolean(hydrated.marca_famosa_quarentena) !== Boolean(item.marca_famosa_quarentena) ||
+        Boolean(hydrated.risco_politica_ml) !== Boolean(item.risco_politica_ml)
       ) {
         changed = true;
       }
@@ -381,6 +400,16 @@ export function getMlReviewGate(product) {
   const missing = [];
   const categoryId = preflight?.categoria_ml_id || review?.categoria_ml_id || null;
   const currentFingerprint = buildMlReviewFingerprint(product, categoryId);
+
+  const policyRiskReason =
+    product?.risco_politica_liberado_manualmente === true
+      ? null
+      : product?.risco_politica_ml
+        ? product.motivo_risco_politica_ml || 'Política ML (ANVISA / Fotos)'
+        : detectMlPolicyRisk(product);
+  if (policyRiskReason) {
+    missing.push(`quarentena preventiva ML (${policyRiskReason})`);
+  }
 
   if (!preflight?.ok) {
     missing.push('pré-publicação automática aprovada');
@@ -551,26 +580,37 @@ function summarizeCatalog(products) {
   const acima85 = withScore.filter((s) => s >= 85).length;
   const avgQual = Number((withScore.reduce((a, b) => a + b, 0) / total).toFixed(1));
   const marcasFamosasCount = products.filter((p) => Boolean(p.marca_famosa_quarentena)).length;
+  const riscosPoliticaCount = products.filter((p) => Boolean(p.risco_politica_ml)).length;
   const prontosCount = products.filter(
     (p) =>
       !p.ml_item_id &&
       !p.marca_famosa_quarentena &&
+      !p.risco_politica_ml &&
       p.status_anuncio !== 'verificar_estoque_fornecedor'
   ).length;
   const publicadosCount = products.filter((p) => Boolean(p.ml_item_id)).length;
   const revisaoAprovada = products.filter(
-    (p) => !p.ml_item_id && !p.marca_famosa_quarentena && getMlReviewGate(p).ok
+    (p) =>
+      !p.ml_item_id &&
+      !p.marca_famosa_quarentena &&
+      !p.risco_politica_ml &&
+      getMlReviewGate(p).ok
   ).length;
   const revisaoAprovadaTotal = products.filter((p) => getMlReviewGate(p).ok).length;
   const antiMe2Prontos = products.filter(
     (p) =>
       !p.ml_item_id &&
       !p.marca_famosa_quarentena &&
+      !p.risco_politica_ml &&
       getMlReviewGate(p).ok &&
       p.ml_preflight?.anti_me2_verified
   ).length;
   const revisaoPendente = products.filter(
-    (p) => !p.ml_item_id && !p.marca_famosa_quarentena && !getMlReviewGate(p).ok
+    (p) =>
+      !p.ml_item_id &&
+      !p.marca_famosa_quarentena &&
+      !p.risco_politica_ml &&
+      !getMlReviewGate(p).ok
   ).length;
   const pisoCount = products.filter(
     (p) => p.piso_79_90_aplicado || Number(p.preco_venda_ml_sugerido) <= 79.91
@@ -616,6 +656,7 @@ function summarizeCatalog(products) {
     anti_me2_prontos: antiMe2Prontos,
     revisao_pendente: revisaoPendente,
     marcas_famosas_quarentena: marcasFamosasCount,
+    riscos_politica_quarentena: riscosPoliticaCount,
     piso_79_90_count: pisoCount,
     custo_medio: Number((sumCost / total).toFixed(2)),
     custo_produto_medio: Number((sumCost / total).toFixed(2)),
@@ -666,15 +707,17 @@ function filterProductsByQuery(all, queryParams) {
       status === 'prontos' &&
       (item.ml_item_id ||
         item.marca_famosa_quarentena ||
+        item.risco_politica_ml ||
         item.status_anuncio === 'verificar_estoque_fornecedor')
     ) {
       return false;
     }
     if (status === 'publicados' && !item.ml_item_id) return false;
     if (status === 'marcas_famosas' && !item.marca_famosa_quarentena) return false;
-    if (status === 'sem_marca_famosa' && item.marca_famosa_quarentena) return false;
+    if (status === 'riscos_politica' && !item.risco_politica_ml) return false;
+    if (status === 'sem_marca_famosa' && (item.marca_famosa_quarentena || item.risco_politica_ml)) return false;
     if (q) {
-      const hay = `${item.sku} ${item.codigo_interno} ${item.aliexpress_item_id} ${item.titulo_ml} ${item.titulo_aliexpress_original} ${item.fornecedor_nome} ${item.categoria_ml} ${item.marca_famosa_detectada || ''} ${item.lote_origem || ''}`.toLowerCase();
+      const hay = `${item.sku} ${item.codigo_interno} ${item.aliexpress_item_id} ${item.titulo_ml} ${item.titulo_aliexpress_original} ${item.fornecedor_nome} ${item.categoria_ml} ${item.marca_famosa_detectada || ''} ${item.motivo_risco_politica_ml || ''} ${item.lote_origem || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -1680,6 +1723,21 @@ export async function runMlPreflight(product, options = {}) {
   const adjustments = [];
   const checks = {};
 
+  const policyRiskReason =
+    hydrated?.risco_politica_liberado_manualmente === true
+      ? null
+      : hydrated?.risco_politica_ml
+        ? hydrated.motivo_risco_politica_ml || 'Política ML (ANVISA / Fotos)'
+        : detectMlPolicyRisk(prepared);
+  if (policyRiskReason) {
+    checks.politica_ml = false;
+    blockers.push(
+      `Quarentena Anti-Suspensão ML (${policyRiskReason}): item retido preventivamente para proteger a loja contra infração de ANVISA / Saúde / Estética / Fotos Sensíveis.`
+    );
+  } else {
+    checks.politica_ml = true;
+  }
+
   if (hydrated?.ml_item_id && !options.ignore_existing_ml_item) {
     try {
       const actualItem = await mlFetch(`/items/${encodeURIComponent(hydrated.ml_item_id)}`);
@@ -1857,12 +1915,23 @@ export async function runMlPreflight(product, options = {}) {
             },
           });
           const detectionNames = extractDetectionNames(diagnostic);
-          const imageBlockers = detectionNames.filter((name) =>
+          const sensitiveBlockers = detectionNames.filter((name) =>
+            /adult|suggestive|racy|nudity|sensitive|sexual|underwear|offensive|gore|weapon|drugs/i.test(
+              name
+            )
+          );
+          if (sensitiveBlockers.length > 0) {
+            checks.fotos = false;
+            blockers.push(
+              `Imagem ${index + 1}: conteúdo sensível/restrito detectado pelo ML (${sensitiveBlockers.join(', ')}) — bloqueado para proteger a conta.`
+            );
+          }
+          const imageWarnings = detectionNames.filter((name) =>
             ['text_logo', 'watermark'].includes(name)
           );
-          if (imageBlockers.length > 0) {
+          if (imageWarnings.length > 0) {
             warnings.push(
-              `Imagem ${index + 1}: alerta visual detectado (${imageBlockers.join(', ')}) — revise antes de ativar.`
+              `Imagem ${index + 1}: alerta visual detectado (${imageWarnings.join(', ')}) — revise antes de ativar.`
             );
           }
           diagnosticReports.push({ index: index + 1, url: pictureUrl, detections: detectionNames });
@@ -2306,6 +2375,16 @@ router.post('/publicar-lote', async (req, res, next) => {
           });
           continue;
         }
+        const pRisk = product.risco_politica_ml
+          ? product.motivo_risco_politica_ml || 'Política ML'
+          : detectMlPolicyRisk(product);
+        if (pRisk && product.risco_politica_liberado_manualmente !== true) {
+          bloqueados.push({
+            sku: product.sku,
+            missing: [`Quarentena Política ML (${pRisk})`],
+          });
+          continue;
+        }
         const gate = getMlReviewGate(product);
         if (gate.ok) {
           targets.push(product);
@@ -2319,6 +2398,7 @@ router.post('/publicar-lote', async (req, res, next) => {
           if (p.ml_item_id) return false;
           if (ignorarSkusSet.has(String(p.sku || '').toUpperCase())) return false;
           if (!incluirMarcasFamosas && p.marca_famosa_quarentena) return false;
+          if (p.risco_politica_ml || detectMlPolicyRisk(p)) return false;
           if (p.status_anuncio === 'verificar_estoque_fornecedor') return false;
           if (fornecedor && p.fornecedor_nome !== fornecedor && String(p.fornecedor_loja_id) !== fornecedor) {
             return false;
@@ -2333,6 +2413,8 @@ router.post('/publicar-lote', async (req, res, next) => {
         (p) =>
           !p.ml_item_id &&
           (!p.marca_famosa_quarentena || incluirMarcasFamosas) &&
+          !p.risco_politica_ml &&
+          !detectMlPolicyRisk(p) &&
           !ignorarSkusSet.has(String(p.sku || '').toUpperCase()) &&
           getMlReviewGate(p).ok
       ).length;
@@ -2514,12 +2596,49 @@ router.post('/status-lote', async (req, res, next) => {
             bloqueados.push({ ml_item_id: row.ml_item_id, missing: ['produto não encontrado no catálogo'] });
             continue;
           }
+          if (product.marca_famosa_quarentena || detectFamousBrand(product)) {
+            bloqueados.push({
+              ml_item_id: row.ml_item_id,
+              sku: product.sku,
+              missing: [`Marca famosa reservada (${product.marca_famosa_detectada || 'BPP'})`],
+            });
+            continue;
+          }
+          const catRisk = product.risco_politica_ml
+            ? product.motivo_risco_politica_ml || 'Política ML'
+            : detectMlPolicyRisk(product);
+          if (catRisk && product.risco_politica_liberado_manualmente !== true) {
+            bloqueados.push({
+              ml_item_id: row.ml_item_id,
+              sku: product.sku,
+              missing: [`Bloqueado Anti-Suspensão (${catRisk})`],
+            });
+            continue;
+          }
           const gate = getMlReviewGate(product);
           if (!gate.ok) {
             bloqueados.push({ ml_item_id: row.ml_item_id, sku: product.sku, missing: gate.missing });
             continue;
           }
           const before = await mlFetch(`/items/${encodeURIComponent(row.ml_item_id)}`);
+          const liveMod = detectLiveModerationAlert(before);
+          const liveRisk = detectMlPolicyRisk(before);
+          if (liveMod || liveRisk) {
+            bloqueados.push({
+              ml_item_id: row.ml_item_id,
+              sku: product.sku,
+              missing: [`Alerta de moderação/política ML (${liveMod || liveRisk})`],
+            });
+            continue;
+          }
+          if (!isItemShippingFreeOfMe2(before.shipping || {})) {
+            bloqueados.push({
+              ml_item_id: row.ml_item_id,
+              sku: product.sku,
+              missing: [`Anúncio está em ME2 (${before.shipping?.mode || 'me2'}) — converta para Outros/Sem Etiqueta antes de ativar`],
+            });
+            continue;
+          }
           if (before.status === 'active') {
             atualizados += 1;
             resultados.push({ ml_item_id: row.ml_item_id, ok: true, status: 'active', acao: 'já_estava_ativo' });
@@ -2619,42 +2738,100 @@ export async function collectAllAccountListingIds(userId) {
     }
   } catch {}
 
-  if (userId) {
-    for (const st of ['paused', 'active', 'under_review']) {
-      try {
-        const searchRes = await mlFetch(
-          `/users/${encodeURIComponent(userId)}/items/search?status=${st}&limit=100`
-        );
-        for (const itemId of searchRes?.results || []) {
-          if (itemId) idSet.add(String(itemId));
-        }
-      } catch {}
+  try {
+    for (const p of getAliExpressCatalog()) {
+      if (p?.ml_item_id) idSet.add(String(p.ml_item_id));
     }
+  } catch {}
+
+  if (userId) {
+    const statusesToScan = ['paused', 'active', 'under_review', 'inactive'];
+    await Promise.all(
+      statusesToScan.map(async (st) => {
+        try {
+          let first = await mlFetch(
+            `/users/${encodeURIComponent(userId)}/items/search?search_type=scan&status=${st}&limit=100`
+          );
+          let batch = Array.isArray(first?.results) ? first.results : [];
+          for (const itemId of batch) {
+            if (itemId) idSet.add(String(itemId));
+          }
+          let scrollId = first?.scroll_id || '';
+          let pages = 1;
+          const totalExpected = Number(first?.paging?.total || batch.length);
+          let collected = batch.length;
+          while (scrollId && batch.length === 100 && collected < totalExpected && pages < 30) {
+            const nextRes = await mlFetch(
+              `/users/${encodeURIComponent(userId)}/items/search?search_type=scan&scroll_id=${encodeURIComponent(scrollId)}&limit=100`
+            );
+            batch = Array.isArray(nextRes?.results) ? nextRes.results : [];
+            for (const itemId of batch) {
+              if (itemId) idSet.add(String(itemId));
+            }
+            collected += batch.length;
+            scrollId = nextRes?.scroll_id || scrollId;
+            pages += 1;
+          }
+        } catch {
+          try {
+            let offset = 0;
+            while (offset < 1000) {
+              const pageRes = await mlFetch(
+                `/users/${encodeURIComponent(userId)}/items/search?status=${st}&limit=100&offset=${offset}`
+              );
+              const list = Array.isArray(pageRes?.results) ? pageRes.results : [];
+              for (const itemId of list) {
+                if (itemId) idSet.add(String(itemId));
+              }
+              const total = Number(pageRes?.paging?.total || 0);
+              offset += 100;
+              if (list.length < 100 || offset >= total) break;
+            }
+          } catch {}
+        }
+      })
+    );
   }
   return { allIds: [...idSet], dbRowsByMlId };
 }
 
 export async function fetchMultiItemsFast(ids) {
+  const uniqueIds = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
+  const chunks = [];
+  for (let i = 0; i < uniqueIds.length; i += 20) {
+    chunks.push(uniqueIds.slice(i, i + 20));
+  }
   const out = [];
-  for (let i = 0; i < ids.length; i += 20) {
-    const chunk = ids.slice(i, i + 20);
-    if (!chunk.length) continue;
-    try {
-      const multi = await mlFetch(`/items?ids=${chunk.map(encodeURIComponent).join(',')}`);
-      if (Array.isArray(multi)) {
-        for (const entry of multi) {
-          if (entry?.code === 200 && entry?.body?.id) {
-            out.push(entry.body);
-          }
-        }
-      }
-    } catch {
-      for (const singleId of chunk) {
+  // Fetch up to 6 chunks (120 items) concurrently per wave -> 1,300+ items in ~1.4s
+  for (let w = 0; w < chunks.length; w += 6) {
+    const wave = chunks.slice(w, w + 6);
+    const waveResults = await Promise.all(
+      wave.map(async (chunk) => {
         try {
-          const single = await mlFetch(`/items/${encodeURIComponent(singleId)}`);
-          if (single?.id) out.push(single);
-        } catch {}
-      }
+          const multi = await mlFetch(`/items?ids=${chunk.map(encodeURIComponent).join(',')}`);
+          const found = [];
+          if (Array.isArray(multi)) {
+            for (const entry of multi) {
+              if (entry?.code === 200 && entry?.body?.id) {
+                found.push(entry.body);
+              }
+            }
+          }
+          return found;
+        } catch {
+          const fallbackFound = [];
+          for (const singleId of chunk) {
+            try {
+              const single = await mlFetch(`/items/${encodeURIComponent(singleId)}`);
+              if (single?.id) fallbackFound.push(single);
+            } catch {}
+          }
+          return fallbackFound;
+        }
+      })
+    );
+    for (const group of waveResults) {
+      out.push(...group);
     }
   }
   return out;
@@ -2669,23 +2846,66 @@ export function isLiveItemModerationLocked(liveItem) {
   );
 }
 
+export function detectLiveModerationAlert(liveItem) {
+  if (!liveItem || typeof liveItem !== 'object') return null;
+  const subs = Array.isArray(liveItem.sub_status)
+    ? liveItem.sub_status.map((s) => String(s).toLowerCase())
+    : [];
+  const status = String(liveItem.status || '').toLowerCase();
+
+  if (subs.includes('forbidden')) {
+    return 'Cancelado/Proibido pela Política do ML (ANVISA / Saúde / Restrito)';
+  }
+  if (
+    subs.some((s) =>
+      /picture|photo|thumbnail|waiting_for_patch|moderation_penalty|bad_quality/i.test(s)
+    )
+  ) {
+    return `Infração ou Pausa em Fotos no ML (${subs.join(', ')})`;
+  }
+  if (subs.some((s) => ['intellectual_property', 'brand_protection'].includes(s))) {
+    return `Proteção de Marca / Propriedade Intelectual (${subs.join(', ')})`;
+  }
+  if (subs.some((s) => ['suspended', 'held'].includes(s)) || status === 'inactive') {
+    return `Retido pela Moderação do ML (${subs.join(', ') || status})`;
+  }
+  return null;
+}
+
+const KNOWN_CATEGORY_NAMES = new Map([
+  ...NON_ME2_DEPARTMENTAL_LEAVES.map((c) => [c.id, c.name]),
+  [OUTROS_OUTROS_LEAF_ID, OUTROS_OUTROS_LEAF_NAME],
+]);
+
 router.get('/diagnostico-geral-envio', async (_req, res, next) => {
   try {
     await refreshAliExpressCatalog();
     const products = getAliExpressCatalog();
     const profile = await getMlAccountShippingProfile(true);
+    const byMlId = catalogIndexByMlItem(products);
 
     let subidosMl = {
       total_encontrados: 0,
+      ativos: 0,
+      pausados: 0,
+      sob_revisao_ou_inativos: 0,
       em_me2: 0,
       em_me2_elegiveis: 0,
       em_me2_marcas_famosas: 0,
+      em_me2_riscos_politica: 0,
       sem_me2_ok: 0,
       em_me1: 0,
       em_custom: 0,
       em_not_specified: 0,
       fechados: 0,
+      distribuicao_categorias: [],
       amostra_me2: [],
+      alertas_moderacao_e_risco: {
+        total_abertos_com_risco: 0,
+        moderados_pelo_ml: 0,
+        preventivos_anvisa_fotos: 0,
+        itens: [],
+      },
     };
 
     if (profile.connected) {
@@ -2693,35 +2913,111 @@ router.get('/diagnostico-geral-envio', async (_req, res, next) => {
       const liveItems = await fetchMultiItemsFast(allIds);
       const openItems = liveItems.filter((it) => it.status !== 'closed');
       const me2Items = openItems.filter((it) => !isItemShippingFreeOfMe2(it.shipping || {}));
-      const me2FamousOrLocked = me2Items.filter(
-        (it) => Boolean(detectFamousBrand(it)) || isLiveItemModerationLocked(it)
+      const me2Famous = me2Items.filter((it) => Boolean(detectFamousBrand(it)));
+      const me2PolicyRisk = me2Items.filter(
+        (it) =>
+          !detectFamousBrand(it) &&
+          (Boolean(detectMlPolicyRisk(it)) ||
+            Boolean(detectLiveModerationAlert(it)) ||
+            Boolean(byMlId.get(String(it.id))?.risco_politica_ml))
       );
       const cleanItems = openItems.filter((it) => isItemShippingFreeOfMe2(it.shipping || {}));
 
+      const catCountMap = new Map();
+      for (const it of openItems) {
+        const cid = String(it.category_id || 'SEM_CAT');
+        const cur = catCountMap.get(cid) || {
+          category_id: cid,
+          nome: KNOWN_CATEGORY_NAMES.get(cid) || cid,
+          qtd: 0,
+          sem_me2: 0,
+          em_me2: 0,
+          homologada_outros: VERIFIED_NON_ME2_CATEGORY_IDS.has(cid),
+        };
+        cur.qtd += 1;
+        if (isItemShippingFreeOfMe2(it.shipping || {})) cur.sem_me2 += 1;
+        else cur.em_me2 += 1;
+        catCountMap.set(cid, cur);
+      }
+
+      const riskItemsOpen = [];
+      let moderadosPeloMl = 0;
+      let preventivosAnvisaFotos = 0;
+
+      for (const it of openItems) {
+        const linked = byMlId.get(String(it.id));
+        const sellerSkuAttr = (it.attributes || []).find((a) => a.id === 'SELLER_SKU')?.value_name;
+        const liveMod = detectLiveModerationAlert(it);
+        const policyRisk =
+          linked?.risco_politica_ml
+            ? linked.motivo_risco_politica_ml
+            : detectMlPolicyRisk(it) || (linked ? detectMlPolicyRisk(linked) : null);
+
+        // Exclude pure famous-brand paused items that don't have ML moderation infractions or ANVISA/photo risk
+        if (!liveMod && !policyRisk) continue;
+
+        if (liveMod) moderadosPeloMl += 1;
+        else preventivosAnvisaFotos += 1;
+
+        riskItemsOpen.push({
+          id: it.id,
+          sku: linked?.sku || sellerSkuAttr || null,
+          title: it.title || linked?.titulo_ml || '',
+          status: it.status,
+          sub_status: it.sub_status || [],
+          category_id: it.category_id,
+          shipping_mode: it.shipping?.mode || 'not_specified',
+          origem_alerta: liveMod ? 'moderacao_ml_ativa' : 'preventivo_anvisa_fotos',
+          motivo: liveMod || policyRisk,
+        });
+      }
+
       subidosMl = {
         total_encontrados: openItems.length,
+        ativos: openItems.filter((it) => it.status === 'active').length,
+        pausados: openItems.filter((it) => it.status === 'paused').length,
+        sob_revisao_ou_inativos: openItems.filter((it) =>
+          ['under_review', 'inactive'].includes(String(it.status || '').toLowerCase())
+        ).length,
         em_me2: me2Items.length,
-        em_me2_elegiveis: Math.max(0, me2Items.length - me2FamousOrLocked.length),
-        em_me2_marcas_famosas: me2FamousOrLocked.length,
+        em_me2_elegiveis: Math.max(0, me2Items.length - me2Famous.length - me2PolicyRisk.length),
+        em_me2_marcas_famosas: me2Famous.length,
+        em_me2_riscos_politica: me2PolicyRisk.length,
         sem_me2_ok: cleanItems.length,
         em_me1: cleanItems.filter((it) => it.shipping?.mode === 'me1').length,
         em_custom: cleanItems.filter((it) => it.shipping?.mode === 'custom').length,
         em_not_specified: cleanItems.filter((it) => it.shipping?.mode === 'not_specified').length,
         fechados: liveItems.filter((it) => it.status === 'closed').length,
-        amostra_me2: me2Items.slice(0, 6).map((it) => ({
+        distribuicao_categorias: [...catCountMap.values()].sort((a, b) => b.qtd - a.qtd),
+        amostra_me2: me2Items.slice(0, 8).map((it) => ({
           id: it.id,
           title: it.title,
           status: it.status,
           category_id: it.category_id,
           shipping_mode: it.shipping?.mode || 'me2',
-          marca_famosa: detectFamousBrand(it) || (isLiveItemModerationLocked(it) ? 'Moderação ML' : null),
+          marca_famosa:
+            detectFamousBrand(it) ||
+            detectLiveModerationAlert(it) ||
+            detectMlPolicyRisk(it) ||
+            null,
         })),
+        alertas_moderacao_e_risco: {
+          total_abertos_com_risco: riskItemsOpen.length,
+          moderados_pelo_ml: moderadosPeloMl,
+          preventivos_anvisa_fotos: preventivosAnvisaFotos,
+          itens: riskItemsOpen.slice(0, 60),
+        },
       };
     }
 
     const unuploaded = products.filter((p) => !p.ml_item_id);
     const unuploadedFamous = unuploaded.filter((p) => Boolean(p.marca_famosa_quarentena));
-    const unuploadedEligible = unuploaded.filter((p) => !p.marca_famosa_quarentena);
+    const unuploadedPolicyRisk = unuploaded.filter(
+      (p) => !p.marca_famosa_quarentena && Boolean(p.risco_politica_ml)
+    );
+    const unuploadedEligible = unuploaded.filter(
+      (p) => !p.marca_famosa_quarentena && !p.risco_politica_ml
+    );
     const gateOkAntiMe2 = unuploadedEligible.filter(
       (p) => getMlReviewGate(p).ok && p.ml_preflight?.anti_me2_verified
     );
@@ -2729,6 +3025,7 @@ router.get('/diagnostico-geral-envio', async (_req, res, next) => {
       (p) => !getMlReviewGate(p).ok || !p.ml_preflight?.anti_me2_verified
     );
     const totalFamousAll = products.filter((p) => Boolean(p.marca_famosa_quarentena)).length;
+    const totalPolicyRiskAll = products.filter((p) => Boolean(p.risco_politica_ml)).length;
 
     res.json({
       ok: true,
@@ -2741,6 +3038,8 @@ router.get('/diagnostico-geral-envio', async (_req, res, next) => {
         nao_publicados_elegiveis: unuploadedEligible.length,
         marcas_famosas_quarentena: unuploadedFamous.length,
         marcas_famosas_total_base: totalFamousAll,
+        riscos_politica_nao_publicados: unuploadedPolicyRisk.length,
+        riscos_politica_total_base: totalPolicyRiskAll,
         prontos_anti_me2_gate_ok: gateOkAntiMe2.length,
         pendentes_preparacao_anti_me2: pendentesPreparo.length,
       },
@@ -2748,6 +3047,203 @@ router.get('/diagnostico-geral-envio', async (_req, res, next) => {
         ...NON_ME2_DEPARTMENTAL_LEAVES.map((c) => ({ id: c.id, nome: c.name })),
         { id: OUTROS_OUTROS_LEAF_ID, nome: `${OUTROS_OUTROS_LEAF_NAME} (Fallback Universal)` },
       ],
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/higienizar-riscos-ml', async (req, res, next) => {
+  try {
+    await refreshAliExpressCatalog();
+    const dryRun = Boolean(req.body?.dry_run);
+    const limite = Math.min(Math.max(Number(req.body?.limite) || 25, 1), 60);
+    const ignorarIdsSet = new Set(
+      (Array.isArray(req.body?.ignorar_ids) ? req.body.ignorar_ids : []).map((id) => String(id).trim())
+    );
+    const profile = await getMlAccountShippingProfile(true);
+    if (!profile.connected) {
+      return res.status(409).json({
+        error: 'Conecte a conta do Mercado Livre primeiro para higienizar os anúncios com risco.',
+      });
+    }
+
+    const { allIds, dbRowsByMlId } = await collectAllAccountListingIds(profile.user_id);
+    const liveItems = await fetchMultiItemsFast(allIds);
+    const products = getAliExpressCatalog();
+    const byMlId = catalogIndexByMlItem(products);
+    const bySku = new Map();
+    const byAliId = new Map();
+    for (let i = 0; i < products.length; i += 1) {
+      const p = products[i];
+      if (p.sku) bySku.set(String(p.sku).toUpperCase(), i);
+      if (p.aliexpress_item_id) byAliId.set(String(p.aliexpress_item_id), i);
+    }
+
+    const candidates = [];
+    for (const live of liveItems) {
+      const mlId = String(live.id);
+      if (ignorarIdsSet.has(mlId)) continue;
+      const dbRow = dbRowsByMlId.get(mlId) || null;
+      const sellerSkuAttr = (live.attributes || []).find((a) => a.id === 'SELLER_SKU')?.value_name;
+
+      let prodIdx = -1;
+      const directProd = byMlId.get(mlId);
+      if (directProd) {
+        prodIdx = products.findIndex((p) => p.sku === directProd.sku);
+      } else if (sellerSkuAttr && bySku.has(String(sellerSkuAttr).toUpperCase())) {
+        prodIdx = bySku.get(String(sellerSkuAttr).toUpperCase());
+      } else if (dbRow?.source_item_id && byAliId.has(String(dbRow.source_item_id))) {
+        prodIdx = byAliId.get(String(dbRow.source_item_id));
+      }
+      const matched = prodIdx >= 0 ? products[prodIdx] : null;
+      const liveMod = detectLiveModerationAlert(live);
+      const policyRisk =
+        matched?.risco_politica_ml
+          ? matched.motivo_risco_politica_ml
+          : detectMlPolicyRisk(live) || (matched ? detectMlPolicyRisk(matched) : null);
+
+      if (!liveMod && !policyRisk) continue;
+      const subTags = Array.isArray(live.sub_status)
+        ? live.sub_status.map((s) => String(s).toLowerCase())
+        : [];
+      const alreadyTerminatedByMl =
+        live.status === 'closed' ||
+        (live.status === 'inactive' &&
+          subTags.some((s) => ['cancelled', 'forbidden', 'deleted'].includes(s)));
+      if (alreadyTerminatedByMl && (!matched || !matched.ml_item_id)) continue;
+
+      candidates.push({
+        live,
+        mlId,
+        prodIdx,
+        matched,
+        reason: liveMod || policyRisk || 'Política ML (ANVISA / Fotos Sensíveis)',
+      });
+    }
+
+    const slice = candidates.slice(0, limite);
+    let fechadosNoMl = 0;
+    let jaFechadosOuCancelados = 0;
+    let quarentenadosCatalogo = 0;
+    let falhas = 0;
+    let catalogChanged = false;
+    const detalhes = [];
+
+    // Process in fast parallel waves of 5
+    for (let w = 0; w < slice.length; w += 5) {
+      const wave = slice.slice(w, w + 5);
+      await Promise.all(
+        wave.map(async (entry) => {
+          const { live, mlId, prodIdx, matched, reason } = entry;
+          if (dryRun) {
+            detalhes.push({
+              ml_item_id: mlId,
+              sku: matched?.sku || null,
+              title: live.title || matched?.titulo_ml || '',
+              status_antes: live.status,
+              acao: 'simulacao_fechar_e_isolar',
+              motivo: reason,
+              ok: true,
+            });
+            return;
+          }
+
+          let finalMlStatus = live.status;
+          try {
+            if (live.status !== 'closed') {
+              await mlFetch(`/items/${encodeURIComponent(mlId)}`, {
+                method: 'PUT',
+                body: { status: 'paused' },
+              }).catch(() => null);
+              const closedRes = await mlFetch(`/items/${encodeURIComponent(mlId)}`, {
+                method: 'PUT',
+                body: { status: 'closed' },
+              }).catch(() => null);
+              if (closedRes?.status === 'closed') {
+                finalMlStatus = 'closed';
+                fechadosNoMl += 1;
+              } else {
+                const recheck = await mlFetch(`/items/${encodeURIComponent(mlId)}`).catch(() => live);
+                finalMlStatus = recheck?.status || live.status;
+                if (finalMlStatus === 'closed' || finalMlStatus === 'inactive') {
+                  jaFechadosOuCancelados += 1;
+                } else {
+                  fechadosNoMl += 1;
+                }
+              }
+            } else {
+              jaFechadosOuCancelados += 1;
+            }
+
+            if (finalMlStatus === 'closed') {
+              await mlFetch(`/items/${encodeURIComponent(mlId)}`, {
+                method: 'PUT',
+                body: { deleted: 'true' },
+              }).catch(() => null);
+            }
+
+            await query("UPDATE listings SET status='closed' WHERE ml_item_id=$1", [mlId]).catch(
+              () => null
+            );
+
+            if (prodIdx >= 0) {
+              products[prodIdx] = {
+                ...products[prodIdx],
+                ml_item_id: null,
+                ml_permalink: null,
+                ml_item_id_risco_fechado: mlId,
+                risco_politica_ml: true,
+                motivo_risco_politica_ml: reason,
+                ml_revisao: null,
+                status_anuncio: 'quarentena_politica_ml',
+                atualizado_em: new Date().toISOString(),
+              };
+              quarentenadosCatalogo += 1;
+              catalogChanged = true;
+            }
+
+            detalhes.push({
+              ml_item_id: mlId,
+              sku: matched?.sku || null,
+              title: live.title || matched?.titulo_ml || '',
+              status_antes: live.status,
+              status_depois: finalMlStatus,
+              acao: 'fechado_e_quarentenado',
+              motivo: reason,
+              ok: true,
+            });
+          } catch (err) {
+            falhas += 1;
+            detalhes.push({
+              ml_item_id: mlId,
+              sku: matched?.sku || null,
+              title: live.title || matched?.titulo_ml || '',
+              status_antes: live.status,
+              motivo: reason,
+              error: err.message,
+              ok: false,
+            });
+          }
+        })
+      );
+    }
+
+    if (catalogChanged && !dryRun) {
+      await persistCatalog(products);
+    }
+
+    res.json({
+      ok: falhas === 0,
+      dry_run: dryRun,
+      total_identificados: candidates.length,
+      processados: slice.length,
+      restantes_pendentes: Math.max(0, candidates.length - slice.length),
+      fechados_no_ml: fechadosNoMl,
+      ja_fechados_ou_cancelados: jaFechadosOuCancelados,
+      quarentenados_catalogo: quarentenadosCatalogo,
+      falhas,
+      detalhes,
     });
   } catch (err) {
     next(err);
@@ -2945,7 +3441,50 @@ router.post('/migrar-subidos-me2', async (req, res, next) => {
       const matchedProduct = prodIdx >= 0 ? products[prodIdx] : null;
       const detectedBrand =
         detectFamousBrand(liveItem) || (matchedProduct ? detectFamousBrand(matchedProduct) : null);
+      const detectedPolicyRisk =
+        detectMlPolicyRisk(liveItem) ||
+        (matchedProduct?.risco_politica_ml
+          ? matchedProduct.motivo_risco_politica_ml
+          : matchedProduct
+            ? detectMlPolicyRisk(matchedProduct)
+            : null);
+      const liveModAlert = detectLiveModerationAlert(liveItem);
       const modLocked = isLiveItemModerationLocked(liveItem);
+
+      if (detectedPolicyRisk || (liveModAlert && !detectedBrand)) {
+        reservadosMarcaFamosa += 1;
+        if (!dryRun) {
+          await closeMe2ItemSafely(oldId);
+          await query("UPDATE listings SET status='closed' WHERE ml_item_id=$1", [oldId]).catch(
+            () => null
+          );
+        }
+        if (prodIdx >= 0) {
+          products[prodIdx] = {
+            ...products[prodIdx],
+            ml_item_id: null,
+            ml_permalink: null,
+            ml_item_id_risco_fechado: oldId,
+            risco_politica_ml: true,
+            motivo_risco_politica_ml: detectedPolicyRisk || liveModAlert,
+            ml_revisao: null,
+            status_anuncio: 'quarentena_politica_ml',
+          };
+          catalogChanged = true;
+        }
+        resultados.push({
+          ok: true,
+          reservado_marca_famosa: true,
+          acao: 'fechado_e_quarentenado_politica_ml',
+          ml_item_id_antigo: oldId,
+          ml_item_id_novo: oldId,
+          sku: matchedProduct?.sku || sellerSkuAttr || null,
+          marca_detectada: detectedPolicyRisk || liveModAlert || 'Política ML',
+          categoria_aplicada: liveItem.category_id,
+          modo_envio: 'quarentena_politica_ml',
+        });
+        continue;
+      }
 
       if (!incluirMarcasFamosas && (detectedBrand || modLocked)) {
         reservadosMarcaFamosa += 1;
@@ -3298,6 +3837,7 @@ router.post('/preparar-lote-catalogo', async (req, res, next) => {
     const products = getAliExpressCatalog();
     const pendingIndices = [];
     let reservadosMarcaFamosa = 0;
+    let reservadosRiscoPolitica = 0;
     let famousMarkedChanged = false;
 
     for (let i = 0; i < products.length; i += 1) {
@@ -3318,6 +3858,23 @@ router.post('/preparar-lote-catalogo', async (req, res, next) => {
           products[i] = {
             ...p,
             status_anuncio: 'aguardando_procedimento_marca',
+          };
+          famousMarkedChanged = true;
+        }
+        continue;
+      }
+      const pRisk = p.risco_politica_ml
+        ? p.motivo_risco_politica_ml || 'Política ML'
+        : detectMlPolicyRisk(p);
+      if (pRisk && p.risco_politica_liberado_manualmente !== true) {
+        reservadosRiscoPolitica += 1;
+        if (!p.risco_politica_ml || p.status_anuncio !== 'quarentena_politica_ml') {
+          products[i] = {
+            ...p,
+            risco_politica_ml: true,
+            motivo_risco_politica_ml: pRisk,
+            ml_revisao: null,
+            status_anuncio: 'quarentena_politica_ml',
           };
           famousMarkedChanged = true;
         }
@@ -3416,7 +3973,11 @@ router.post('/preparar-lote-catalogo', async (req, res, next) => {
 
     const restantesPendentes = Math.max(0, pendingIndices.length - sliceIndices.length);
     const totalAprovados = products.filter(
-      (p) => !p.ml_item_id && !p.marca_famosa_quarentena && getMlReviewGate(p).ok
+      (p) =>
+        !p.ml_item_id &&
+        !p.marca_famosa_quarentena &&
+        !p.risco_politica_ml &&
+        getMlReviewGate(p).ok
     ).length;
 
     res.json({
@@ -3425,6 +3986,7 @@ router.post('/preparar-lote-catalogo', async (req, res, next) => {
       preparados_ok: preparadosOk,
       com_bloqueio: comBloqueio,
       reservados_marca_famosa: reservadosMarcaFamosa,
+      reservados_risco_politica: reservadosRiscoPolitica,
       restantes_pendentes: restantesPendentes,
       total_aprovados_prontos_para_subir: totalAprovados,
       resultados,

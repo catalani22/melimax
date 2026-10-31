@@ -947,6 +947,97 @@ export function detectFamousBrand(productOrFields = {}) {
   return null;
 }
 
+export function sanitizeBenignPolicyTerms(rawText) {
+  const str = String(rawText || '');
+  if (!str) return str;
+  if (/\b(climatizador|ventilador)\b/i.test(str) && /\bnebulizador\b/i.test(str)) {
+    return str.replace(/\bnebulizador\b/gi, 'Névoa Fria').replace(/\s+/g, ' ').trim();
+  }
+  return str;
+}
+
+export function detectMlPolicyRisk(productOrFields = {}) {
+  if (!productOrFields || typeof productOrFields !== 'object') return null;
+  if (productOrFields.risco_politica_liberado_manualmente === true) return null;
+
+  const rawHaystack = [
+    productOrFields.titulo_ml,
+    productOrFields.title,
+    productOrFields.family_name,
+    productOrFields.titulo_aliexpress_original,
+  ]
+    .filter(Boolean)
+    .join(' | ');
+
+  if (!rawHaystack) return null;
+
+  const norm = rawHaystack
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  const isPetItem = /\b(pet|caes|cachorros?|gatos?|animais\s+de\s+estimacao)\b/.test(norm);
+  const isAirCooler = /\b(climatizador|ventilador)\b/.test(norm);
+
+  if (
+    /\b(pistola\s+muscular|pistola\s+de\s+massagem|cinta\s+de\s+massagem|massagem\s+abdominal|massagem\s+auricular|descompressao|eletrodos?\s+(?:adesivos?|de\s+gel)|almofadas?\s+de\s+gel.*massageador|estimulador\s+muscular|ems)\b/.test(
+      norm
+    )
+  ) {
+    return 'ANVISA / Saúde & Eletroestimulação';
+  }
+
+  if (!isPetItem && /\bmassageador(?:es|a)?\b/.test(norm)) {
+    return 'ANVISA / Aparelho de Massagem & Saúde';
+  }
+
+  if (
+    /\b(ortopedic[oa]s?|tendinite|joanete|corretor\s+(?:de\s+)?postur(?:a|al)|postura\s+cervical|compressao\s+lombar|alivio\s+d[ae]\s+dor(?:es)?)\b/.test(
+      norm
+    )
+  ) {
+    return 'ANVISA / Ortopédico & Terapêutico';
+  }
+
+  if (
+    /\b(depilador\s+a\s+laser|epilador\s+a\s+laser|500\.?000\s+pulsos|ipl|caneta\s+(?:de\s+)?plasma|jato\s+de\s+plasma|rejuvenescimento|antirrugas|lifting\s+facial|levantador\s+de\s+papada|faixa\s+facial.*contorno|extrator\s+de\s+(?:acne|cravos|espinha)|microagulhamento|dermapen|dermaroller|rolo\s+de\s+beleza.*(?:24k|ouro|eletrico|vibratorio)|crescimento\s+capilar|tratamento\s+capilar)\b/.test(
+      norm
+    )
+  ) {
+    return 'ANVISA / Estética & Tratamento Corporal';
+  }
+
+  if (
+    /\b(inalador|oximetro|medidor\s+de\s+pressao|esfigmomanometro|glicosimetro|aparelho\s+auditivo|irrigador\s+oral|escova\s+eletrica.*ultrassonic[oa]|clareador\s+dental|fio\s+dental\s+com\s+haste|escovas?\s+interdenta(?:l|is)|limpeza\s+de\s+ouvidos?|remocao\s+de\s+cera\s+de\s+ouvido|limpador\s+de\s+ouvidos?|medicamento|suplemento\s+alimentar|melatonina|minoxidil)\b/.test(
+      norm
+    )
+  ) {
+    return 'ANVISA / Saúde, Odonto & Inalação';
+  }
+
+  if (!isAirCooler && /\bnebulizador\b/.test(norm)) {
+    return 'ANVISA / Inalador & Nebulizador';
+  }
+
+  if (
+    /\b(biquini|virilha|partes\s+intimas|lingerie|erotic[oa]|vibrador\s+intimo|cinta\s+modeladora|espartilho\s+modelador|reduz\s+medidas\s+abdominais|escova\s+de\s+banho|esponja\s+de\s+banho|esfoliante\s+corporal|escova\s+de\s+silicone.*(?:corpo|banho)|escova\s+de\s+limpeza\s+facial|depilador\s+(?:eletrico\s+)?(?:feminino|corporal|recarregavel\s+para\s+mulheres|de\s+cristal)|removedor\s+pelos\s+corporal|aparador.*(?:feminino|para\s+mulheres).*corpo)\b/.test(
+      norm
+    )
+  ) {
+    return 'Fotos Sensíveis / Pele & Corpo (Política ML)';
+  }
+
+  if (
+    /\b(camera.*espia|espia\b|espiao|espionagem|microcamera\s+oculta|bloqueador\s+de\s+sinal|jammer|walkie\s*talkie|uv\s*5r|transceptor\s+(?:vhf|uhf))\b/.test(
+      norm
+    )
+  ) {
+    return 'Política ML / Espionagem ou ANATEL Rádio';
+  }
+
+  return null;
+}
+
 export function parseImageDimensionsFromBuffer(buf) {
   if (!Buffer.isBuffer(buf) || buf.length < 24) return null;
 
@@ -1237,7 +1328,7 @@ function formatPortugueseToken(word, index) {
 }
 
 export function rewriteMercadoLivreTitle(rawTitle, attrs = [], variationName = '') {
-  let text = decodeHtmlEntities(rawTitle || '')
+  let text = sanitizeBenignPolicyTerms(decodeHtmlEntities(rawTitle || ''))
     .replace(/\s*-\s*AliExpress.*$/i, '')
     .replace(/[，、；：！？（）【】「」『』—–]/g, ' ')
     .replace(/[|•★☆✓✔🔥⚡✨[\]()]/g, ' ')

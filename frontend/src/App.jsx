@@ -492,6 +492,14 @@ function ProductDetailModal({ product, onClose, onSaved, onPublished, notify, ac
                   </span>
                 </>
               ) : null}
+              {product.risco_politica_ml ? (
+                <>
+                  <span>·</span>
+                  <span className="rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-800">
+                    Quarentena Política ML ({product.motivo_risco_politica_ml || 'ANVISA / Fotos'})
+                  </span>
+                </>
+              ) : null}
             </div>
             <h2 className="mt-0.5 truncate text-base font-bold text-slate-900">{product.titulo_ml}</h2>
           </div>
@@ -1138,6 +1146,7 @@ export default function App() {
   const [antiMe2Diag, setAntiMe2Diag] = useState(null);
   const [antiMe2Busy, setAntiMe2Busy] = useState(null);
   const [antiMe2Progress, setAntiMe2Progress] = useState(null);
+  const [sanitizeReport, setSanitizeReport] = useState(null);
   const stopLoopRef = useRef(false);
 
   // Order Execution & Manual Tracking
@@ -1774,10 +1783,64 @@ export default function App() {
           : null
       );
       notify(
-        `Operação completa: ${totalMigrated} ME2 migrados, ${prep.totalOk} preparados e ${up.sentTotal} subidos PAUSADOS sem ME2 (marcas famosas preservadas para depois).`,
+        `Operação completa: ${totalMigrated} ME2 migrados, ${prep.totalOk} preparados e ${up.sentTotal} subidos PAUSADOS sem ME2 (marcas famosas e riscos ANVISA/fotos isolados).`,
         'success'
       );
       await Promise.all([loadCatalog(), loadListings(), loadAntiMe2Diag(true)]);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setAntiMe2Busy(null);
+    }
+  };
+
+  const handleSanitizePolicyRisksMl = async () => {
+    stopLoopRef.current = false;
+    setAntiMe2Busy('higienizar');
+    try {
+      const processedIds = [];
+      let totalClosed = 0;
+      let totalAlreadyClosed = 0;
+      let totalQuarantined = 0;
+      let totalFailed = 0;
+      const allDetails = [];
+      let round = 0;
+
+      while (!stopLoopRef.current && round < 40) {
+        round += 1;
+        const res = await request('/aliexpress/higienizar-riscos-ml', {
+          method: 'POST',
+          body: {
+            limite: 25,
+            ignorar_ids: processedIds,
+          },
+        });
+        totalClosed += Number(res.fechados_no_ml || 0);
+        totalAlreadyClosed += Number(res.ja_fechados_ou_cancelados || 0);
+        totalQuarantined += Number(res.quarentenados_catalogo || 0);
+        totalFailed += Number(res.falhas || 0);
+
+        for (const item of res.detalhes || []) {
+          if (item.ml_item_id) processedIds.push(String(item.ml_item_id));
+          allDetails.push(item);
+        }
+
+        if (!res.processados || Number(res.restantes_pendentes || 0) === 0) break;
+      }
+
+      const consolidated = {
+        fechados_no_ml: totalClosed,
+        ja_fechados_ou_cancelados: totalAlreadyClosed,
+        quarentenados_catalogo: totalQuarantined,
+        falhas: totalFailed,
+        detalhes: allDetails,
+      };
+      setSanitizeReport(consolidated);
+      notify(
+        `Proteção da conta concluída: ${totalClosed} anúncio(s) com risco fechado(s) no ML e ${totalQuarantined} isolado(s) em quarentena no catálogo.`,
+        totalFailed > 0 ? 'info' : 'success'
+      );
+      await Promise.all([loadAntiMe2Diag(true), loadCatalog(), loadListings()]);
     } catch (err) {
       notify(err.message, 'error');
     } finally {
@@ -2553,10 +2616,20 @@ export default function App() {
                 >
                   <option value="">Todos os status ({resumo.total})</option>
                   <option value="sem_marca_famosa">
-                    Elegíveis s/ Marca Famosa ({Math.max(0, (resumo.total || 0) - (resumo.marcas_famosas_quarentena || 0))})
+                    Elegíveis s/ Marca e s/ Risco ML (
+                    {Math.max(
+                      0,
+                      (resumo.total || 0) -
+                        (resumo.marcas_famosas_quarentena || 0) -
+                        (resumo.riscos_politica_quarentena || 0)
+                    )}
+                    )
                   </option>
                   <option value="marcas_famosas">
                     Quarentena Marcas Famosas ({resumo.marcas_famosas_quarentena || 0})
+                  </option>
+                  <option value="riscos_politica">
+                    Quarentena ANVISA / Fotos / Política ML ({resumo.riscos_politica_quarentena || 0})
                   </option>
                   <option value="prontos">Não publicados elegíveis ({resumo.prontos_para_subir || 0})</option>
                   <option value="publicados">Já publicados ML ({resumo.publicados_ml || 0})</option>
@@ -2737,7 +2810,16 @@ export default function App() {
                           </td>
 
                           <td className="px-3 py-3 text-[11px]">
-                            {item.marca_famosa_quarentena ? (
+                            {item.risco_politica_ml ? (
+                              <>
+                                <div className="font-mono font-semibold text-red-700">
+                                  Quarentena Política ML
+                                </div>
+                                <div className="text-red-600/90" title={item.motivo_risco_politica_ml || ''}>
+                                  {item.motivo_risco_politica_ml || 'ANVISA / Saúde / Estética / Fotos'}
+                                </div>
+                              </>
+                            ) : item.marca_famosa_quarentena ? (
                               <>
                                 <div className="font-mono font-semibold text-amber-700">
                                   Reservado Marca ({item.marca_famosa_detectada || 'BPP'})
@@ -3869,7 +3951,11 @@ export default function App() {
                     {antiMe2Diag?.catalogo_1000?.ja_publicados ?? resumo.publicados_ml} subidos ·{' '}
                     {antiMe2Diag?.catalogo_1000?.nao_publicados_elegiveis ?? resumo.prontos_para_subir} elegíveis ·{' '}
                     <span className="font-semibold text-amber-700">
-                      {antiMe2Diag?.catalogo_1000?.marcas_famosas_total_base ?? resumo.marcas_famosas_quarentena ?? 0} marcas reservadas
+                      {antiMe2Diag?.catalogo_1000?.marcas_famosas_total_base ?? resumo.marcas_famosas_quarentena ?? 0} marcas
+                    </span>{' '}
+                    ·{' '}
+                    <span className="font-semibold text-red-700">
+                      {antiMe2Diag?.catalogo_1000?.riscos_politica_total_base ?? resumo.riscos_politica_quarentena ?? 0} bloqueados ANVISA/fotos
                     </span>
                   </div>
                 </div>
@@ -3887,10 +3973,152 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Painel 1: Proteção Anti-Suspensão ML (ANVISA / Saúde / Estética & Fotos Sensíveis) */}
+              <div className="space-y-3 rounded-xl border border-red-200 bg-red-50/70 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="max-w-3xl text-xs text-slate-800">
+                    <div className="font-bold text-red-900">
+                      Blindagem de Saúde da Conta ML — Políticas ANVISA / Saúde / Estética, Fotos Sensíveis & ANATEL
+                    </div>
+                    <p className="mt-0.5 text-slate-700">
+                      Bloqueia automaticamente subida e ativação de massageadores elétricos/pistolas musculares, escovas ultrassônicas corporais, laser/IPL, inaladores, câmeras espiãs e rádios comunicadores ({antiMe2Diag?.catalogo_1000?.riscos_politica_total_base ?? resumo.riscos_politica_quarentena ?? 61} SKUs isolados na base). Use o botão ao lado para fechar definitivamente (<code className="font-mono">closed</code>) qualquer item de risco que já tenha subido no ML.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!account || Boolean(antiMe2Busy)}
+                    onClick={handleSanitizePolicyRisksMl}
+                    className="btn-danger py-2 px-3.5 text-xs font-bold shadow-sm"
+                  >
+                    {antiMe2Busy === 'higienizar'
+                      ? 'Fechando e Isolando Riscos no ML...'
+                      : `Fechar e Isolar no ML Anúncios com Risco (${
+                          antiMe2Diag?.subidos_ml?.alertas_moderacao_e_risco?.total_abertos_com_risco ?? 0
+                        } detectados)`}
+                  </button>
+                </div>
+
+                {antiMe2Diag?.subidos_ml?.alertas_moderacao_e_risco ? (
+                  <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono text-red-900">
+                    <span className="rounded bg-white/90 px-2 py-1 border border-red-200">
+                      Abertos/Sob Revisão c/ Risco: <strong>{antiMe2Diag.subidos_ml.alertas_moderacao_e_risco.total_abertos_com_risco}</strong>
+                    </span>
+                    <span className="rounded bg-white/90 px-2 py-1 border border-red-200">
+                      Moderados pelo ML: <strong>{antiMe2Diag.subidos_ml.alertas_moderacao_e_risco.moderados_pelo_ml}</strong>
+                    </span>
+                    <span className="rounded bg-white/90 px-2 py-1 border border-red-200">
+                      Preventivos ANVISA / Fotos Sensíveis: <strong>{antiMe2Diag.subidos_ml.alertas_moderacao_e_risco.preventivos_anvisa_fotos}</strong>
+                    </span>
+                  </div>
+                ) : null}
+
+                {Array.isArray(antiMe2Diag?.subidos_ml?.alertas_moderacao_e_risco?.itens) &&
+                antiMe2Diag.subidos_ml.alertas_moderacao_e_risco.itens.length > 0 ? (
+                  <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-red-200 bg-white p-2.5 text-[11px]">
+                    {antiMe2Diag.subidos_ml.alertas_moderacao_e_risco.itens.slice(0, 20).map((it) => (
+                      <div key={it.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-1 last:border-none">
+                        <div className="min-w-0 truncate">
+                          <span className="font-mono font-bold text-red-700">{it.id}</span>
+                          {it.sku ? <span className="ml-1.5 font-mono text-slate-500">({it.sku})</span> : null}
+                          <span className="mx-1.5 text-slate-400">·</span>
+                          <span className="font-medium text-slate-800">{it.title}</span>
+                        </div>
+                        <span className="shrink-0 font-mono text-[10px] font-semibold text-red-700">
+                          [{it.status}] {it.motivo}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {sanitizeReport ? (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 font-mono text-[11px] text-emerald-900">
+                    Higienização executada: {sanitizeReport.fechados_no_ml} anúncio(s) fechado(s) no ML ·{' '}
+                    {sanitizeReport.ja_fechados_ou_cancelados} já cancelado(s)/fechado(s) ·{' '}
+                    {sanitizeReport.quarentenados_catalogo} isolado(s) em quarentena no catálogo ·{' '}
+                    {sanitizeReport.falhas} falha(s).
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Painel 2: Verificação Pós-Carga — Confirmação Real ME1 / Custom / Outros (Zero Etiqueta) */}
+              {antiMe2Diag?.subidos_ml ? (
+                <div className="space-y-3 rounded-xl border border-blue-200 bg-blue-50/50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-bold text-slate-900">
+                      Auditoria Real Pós-Carga na Conta ML — Verificação ME1 / Outros (Zero Geração de Etiqueta)
+                    </div>
+                    <span
+                      className={`rounded px-2 py-0.5 font-mono text-[11px] font-bold ${
+                        Number(antiMe2Diag.subidos_ml.em_me2_elegiveis || 0) === 0
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-amber-100 text-amber-900'
+                      }`}
+                    >
+                      {Number(antiMe2Diag.subidos_ml.em_me2_elegiveis || 0) === 0
+                        ? '100% ELEGÍVEIS FORA DO ME2 (SEM ETIQUETA)'
+                        : `${antiMe2Diag.subidos_ml.em_me2_elegiveis} RESTANTES EM ME2 PARA CONVERTER`}
+                    </span>
+                  </div>
+
+                  <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5 font-mono text-xs">
+                    <div className="rounded-lg border border-slate-200 bg-white p-2.5">
+                      <div className="text-[10px] uppercase text-slate-500">Custom R$ 0 (Sem Etiqueta)</div>
+                      <div className="mt-0.5 text-base font-bold text-emerald-700">
+                        {antiMe2Diag.subidos_ml.em_custom ?? 0}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-2.5">
+                      <div className="text-[10px] uppercase text-slate-500">Not Specified (Sem Etiqueta)</div>
+                      <div className="mt-0.5 text-base font-bold text-emerald-700">
+                        {antiMe2Diag.subidos_ml.em_not_specified ?? 0}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-2.5">
+                      <div className="text-[10px] uppercase text-slate-500">ME1 Próprio (Sem Etiqueta)</div>
+                      <div className="mt-0.5 text-base font-bold text-emerald-700">
+                        {antiMe2Diag.subidos_ml.em_me1 ?? 0}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-2.5">
+                      <div className="text-[10px] uppercase text-slate-500">Em ME2 Elegíveis</div>
+                      <div className="mt-0.5 text-base font-bold text-red-600">
+                        {antiMe2Diag.subidos_ml.em_me2_elegiveis ?? 0}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-2.5">
+                      <div className="text-[10px] uppercase text-slate-500">Status na Conta ML</div>
+                      <div className="mt-0.5 text-xs font-bold text-slate-800">
+                        {antiMe2Diag.subidos_ml.pausados ?? 0} pausados · {antiMe2Diag.subidos_ml.ativos ?? 0} ativos
+                      </div>
+                    </div>
+                  </div>
+
+                  {Array.isArray(antiMe2Diag.subidos_ml.distribuicao_categorias) &&
+                  antiMe2Diag.subidos_ml.distribuicao_categorias.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] font-semibold text-slate-700">
+                        Distribuição por Categoria Folha Sem ME2 (&ldquo;Outros&rdquo;) nos Anúncios sem Etiqueta:
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {antiMe2Diag.subidos_ml.distribuicao_categorias.slice(0, 14).map((cat) => (
+                          <span
+                            key={cat.category_id}
+                            className="rounded border border-slate-200 bg-white px-2 py-1 font-mono text-[11px] text-slate-700"
+                          >
+                            <strong>{cat.category_id}</strong> ({cat.nome}): <strong>{cat.qtd}</strong>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5">
                 <div className="max-w-3xl text-xs text-slate-700">
-                  <strong className="text-slate-900">Execução Automatizada Testada (1.300+ Produtos · Zero Sharp · Avisos ML Tratados):</strong>{' '}
-                  converte/recria os restantes em ME2, prepara todos os pendentes e sobe tudo <strong>PAUSADO</strong> com estoque 1–3 e frete grátis R$ 0,00 sem etiquetas, pulando automaticamente itens de <strong>marcas famosas</strong> para procedimento posterior.
+                  <strong className="text-slate-900">Execução Automatizada Testada (1.300+ Produtos · Zero Sharp · Blindagem ANVISA/Fotos Ativa):</strong>{' '}
+                  converte/recria os restantes em ME2, prepara todos os pendentes e sobe tudo <strong>PAUSADO</strong> com estoque 1–3 e frete grátis R$ 0,00 sem etiquetas, isolando automaticamente itens de <strong>marcas famosas</strong> e produtos sensíveis <strong>ANVISA / fotos</strong>.
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -3901,7 +4129,7 @@ export default function App() {
                   >
                     {antiMe2Busy === 'tudo_1300'
                       ? 'Executando Pipeline Completo 1.300+...'
-                      : 'Executar Tudo nos 1.300+ (Migrar ME2 + Preparar + Subir Pausado · Exceto Marcas Famosas)'}
+                      : 'Executar Tudo nos 1.300+ (Migrar ME2 + Preparar + Subir Pausado · Seguro)'}
                   </button>
                   {antiMe2Busy && antiMe2Busy !== 'diag' ? (
                     <button
