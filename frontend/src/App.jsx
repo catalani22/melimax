@@ -1823,11 +1823,20 @@ export default function App() {
     }
     setSavingTracking(true);
     try {
-      await request(`/orders/${encodeURIComponent(manualForm.order_id.trim())}/rastreio`, {
+      const res = await request(`/orders/${encodeURIComponent(manualForm.order_id.trim())}/rastreio`, {
         method: 'POST',
         body: manualForm,
       });
-      notify('Fluxo de execução e código de rastreamento salvos com sucesso.', 'success');
+      if (manualForm.tracking_number?.trim() && manualForm.enviar_ml) {
+        notify(
+          res?.ml_notified
+            ? `Rastreio salvo e enviado sem etiqueta! (${res.ml_message || 'Mercado Livre + Comprador notificados'})`
+            : `Rastreio salvo no painel. (${res?.ml_message || 'Conecte a conta ML para disparo automático'})`,
+          'success'
+        );
+      } else {
+        notify('Fluxo de execução salvo com sucesso.', 'success');
+      }
       setManualForm((prev) => ({
         ...prev,
         order_id: '',
@@ -3422,8 +3431,23 @@ export default function App() {
                     </div>
                   </div>
 
+                  <label className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 p-2.5 text-xs text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(manualForm.enviar_ml)}
+                      onChange={(e) => setManualForm({ ...manualForm, enviar_ml: e.target.checked })}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-meli-blue"
+                    />
+                    <span>
+                      <strong className="text-slate-900">Disparo automático sem etiqueta:</strong> marcar pedido como{' '}
+                      <code className="font-mono">enviado</code> no Mercado Livre e enviar o código de rastreio + transportadora direto no chat pós-venda do comprador.
+                    </span>
+                  </label>
+
                   <button type="submit" disabled={savingTracking} className="btn-primary w-full text-xs">
-                    {savingTracking ? 'Salvando...' : 'Salvar Execução & Rastreamento'}
+                    {savingTracking
+                      ? 'Enviando Rastreio ao ML & Comprador...'
+                      : 'Salvar & Enviar Código de Rastreio ao Comprador e ao ML'}
                   </button>
                 </form>
               </div>

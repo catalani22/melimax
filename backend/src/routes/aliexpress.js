@@ -1475,28 +1475,28 @@ async function tryValidateSellerFulfilledCategory(categoryId, prepared) {
   const attributes = await buildHighScoreMlAttributes(prepared, categoryId);
   const shippingCandidates = [
     {
-      label: 'not_specified_gratis_tabela_0',
-      shipping: {
-        mode: 'not_specified',
-        local_pick_up: false,
-        free_shipping: true,
-        costs: [{ description: 'Todo o Brasil — Frete Grátis (5 a 10 dias)', cost: 0 }],
-      },
-    },
-    {
-      label: 'not_specified_combinar_gratis',
-      shipping: {
-        mode: 'not_specified',
-        local_pick_up: false,
-      },
-    },
-    {
-      label: 'custom_gratis_tabela_0',
+      label: 'custom_gratis_tabela_0_sem_etiqueta',
       shipping: {
         mode: 'custom',
         local_pick_up: false,
         free_shipping: true,
         costs: [{ description: 'Todo o Brasil — Frete Grátis (5 a 10 dias)', cost: 0 }],
+      },
+    },
+    {
+      label: 'not_specified_gratis_tabela_0_sem_etiqueta',
+      shipping: {
+        mode: 'not_specified',
+        local_pick_up: false,
+        free_shipping: true,
+        costs: [{ description: 'Todo o Brasil — Frete Grátis (5 a 10 dias)', cost: 0 }],
+      },
+    },
+    {
+      label: 'not_specified_combinar_sem_etiqueta',
+      shipping: {
+        mode: 'not_specified',
+        local_pick_up: false,
       },
     },
   ];
@@ -2787,7 +2787,31 @@ export async function tryConvertExistingItemInPlace(liveItem, synthProduct, targ
   for (const tryCat of catTries) {
     const catAttrs = await buildHighScoreMlAttributes(synthProduct, tryCat);
 
-    // Attempt A: Single PUT with category_id + attributes + R$ 0,00 free shipping table
+    // Attempt A0: Single PUT with category_id + attributes + custom R$ 0,00 table (no label, collects buyer address + allows tracking PUT)
+    try {
+      await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
+        method: 'PUT',
+        body: {
+          category_id: tryCat,
+          attributes: catAttrs,
+          available_quantity: Math.min(Math.max(Number(synthProduct.estoque_disponivel) || 3, 1), 3),
+          shipping: {
+            mode: 'custom',
+            local_pick_up: false,
+            free_shipping: true,
+            costs: [{ description: 'Todo o Brasil — Frete Grátis (5 a 10 dias)', cost: 0 }],
+          },
+        },
+      });
+      const checkA0 = await mlFetch(`/items/${encodeURIComponent(oldId)}`);
+      if (isItemShippingFreeOfMe2(checkA0.shipping || {})) {
+        return { converted: checkA0, lastPutError: null };
+      }
+    } catch (errA0) {
+      lastPutError = errA0.message;
+    }
+
+    // Attempt A: Single PUT with category_id + attributes + not_specified R$ 0,00 free shipping table (no label)
     try {
       await mlFetch(`/items/${encodeURIComponent(oldId)}`, {
         method: 'PUT',

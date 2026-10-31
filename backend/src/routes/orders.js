@@ -45,6 +45,7 @@ function formatAddressObject(addr) {
 function formatOrder(order) {
   return {
     id: String(order.id),
+    pack_id: order.pack_id ? String(order.pack_id) : null,
     date_created: order.date_created,
     date_closed: order.date_closed,
     status: order.status,
@@ -119,6 +120,125 @@ async function attachExecutions(orders) {
   }
 }
 
+async function notifyMlAndBuyerWithTracking({ orderId, trackingNumber, carrier }) {
+  const details = {
+    shipment_updated: false,
+    buyer_messaged: false,
+    shipping_mode: null,
+    notes: [],
+  };
+
+  const orderData = await mlFetch(`/orders/${encodeURIComponent(orderId)}`);
+  const shipmentId = orderData?.shipping?.id ? String(orderData.shipping.id) : null;
+  const packId = orderData?.pack_id ? String(orderData.pack_id) : String(orderId);
+  const sellerId = orderData?.seller?.id ? String(orderData.seller.id) : null;
+  const buyerId = orderData?.buyer?.id || null;
+  const buyerEmail = orderData?.buyer?.email || null;
+
+  // 1. Update shipment status & tracking_number on Mercado Livre (for custom / me1 seller-fulfilled shipments — zero label)
+  if (shipmentId) {
+    let shipInfo = null;
+    try {
+      shipInfo = await mlFetch(`/shipments/${encodeURIComponent(shipmentId)}`);
+      details.shipping_mode = shipInfo?.mode || null;
+    } catch {}
+
+    // Channel 1A: Custom shipping PUT /shipments/{id}
+    try {
+      await mlFetch(`/shipments/${encodeURIComponent(shipmentId)}`, {
+        method: 'PUT',
+        body: {
+          speed: 120,
+          status: 'shipped',
+          tracking_number: trackingNumber,
+          comments: `Envio nacional (${carrier}) — Rastreio: ${trackingNumber}`,
+          ...(buyerId ? { receiver_id: buyerId } : {}),
+        },
+      });
+      details.shipment_updated = true;
+      details.notes.push(`Envio #${shipmentId} marcado como enviado no ML com rastreio ${trackingNumber}.`);
+    } catch (errPut) {
+      // Channel 1B: ME1 custom tracking endpoint fallback
+      try {
+        await mlFetch(`/marketplace/shipments/${encodeURIComponent(shipmentId)}/tracking`, {
+          method: 'POST',
+          body: {
+            tracking_id: trackingNumber,
+            carrier,
+          },
+        });
+        await mlFetch(`/marketplace/shipments/${encodeURIComponent(shipmentId)}/tracking/status`, {
+          method: 'POST',
+          body: {
+            tracking_id: trackingNumber,
+            status: 'shipped',
+          },
+        }).catch(() => null);
+        details.shipment_updated = true;
+        details.notes.push(`Rastreio ME1 registrado no envio #${shipmentId}.`);
+      } catch {
+        details.notes.push(`Aviso shipment (${shipInfo?.mode || 'not_specified'}): ${errPut.message}`);
+      }
+    }
+  } else {
+    details.shipping_mode = 'not_specified';
+    details.notes.push('Venda em modo Entrega por Conta do Vendedor (sem shipment_id de etiqueta).');
+  }
+
+  // 2. Send tracking code & carrier directly to Buyer via official Mercado Livre Post-Sale Chat
+  // (No external URLs included so ML moderation never blocks delivery of the message)
+  if (sellerId && buyerId) {
+    const cleanText = [
+      'Olá! Seu pedido já foi despachado do nosso estoque no Brasil com Frete Grátis.',
+      `Transportadora: ${carrier}`,
+      `Código de rastreamento: ${trackingNumber}`,
+      'Prazo estimado de entrega: 5 a 10 dias corridos.',
+      'Qualquer dúvida estamos à disposição aqui pelo chat da compra!',
+    ]
+      .join('\n')
+      .slice(0, 350);
+
+    try {
+      await mlFetch(
+        `/messages/packs/${encodeURIComponent(packId)}/sellers/${encodeURIComponent(sellerId)}?tag=post_sale`,
+        {
+          method: 'POST',
+          body: {
+            from: { user_id: Number(sellerId) },
+            to: {
+              user_id: Number(buyerId),
+              ...(buyerEmail ? { email: buyerEmail } : {}),
+            },
+            text: cleanText,
+          },
+        }
+      );
+      details.buyer_messaged = true;
+      details.notes.push('Código de rastreio enviado no chat pós-venda do comprador.');
+    } catch (errMsg1) {
+      // Fallback: Action Guide structured post-sale message
+      try {
+        await mlFetch(
+          `/messages/action_guide/packs/${encodeURIComponent(packId)}/option?tag=post_sale`,
+          {
+            method: 'POST',
+            body: {
+              option_id: 'OTHER',
+              text: cleanText,
+            },
+          }
+        );
+        details.buyer_messaged = true;
+        details.notes.push('Código de rastreio enviado ao comprador via guia pós-venda ML.');
+      } catch (errMsg2) {
+        details.notes.push(`Aviso chat pós-venda: ${errMsg2.message || errMsg1.message}`);
+      }
+    }
+  }
+
+  return details;
+}
+
 router.get('/execucoes', async (req, res, next) => {
   try {
     const { rows } = await query('SELECT * FROM order_executions ORDER BY updated_at DESC');
@@ -141,7 +261,7 @@ router.post('/:orderId/rastreio', async (req, res, next) => {
       String(req.body?.aliexpress_url || '').trim() || matchedAli?.url_aliexpress || '';
     const aliexpressOrderId = String(req.body?.aliexpress_order_id || '').trim();
     const trackingNumber = String(req.body?.tracking_number || '').trim();
-    const carrier = String(req.body?.carrier || 'Transportadora Brasil').trim();
+    const carrier = String(req.body?.carrier || 'J&T Express / Correios Brasil').trim();
     const buyerName = String(req.body?.buyer_name || '').trim();
     const shippingAddress = String(req.body?.shipping_address || '').trim();
     const notes = String(req.body?.notes || '').trim();
@@ -181,24 +301,23 @@ router.post('/:orderId/rastreio', async (req, res, next) => {
     );
 
     let mlNotified = false;
+    let mlShipmentUpdated = false;
+    let mlBuyerMessaged = false;
     let mlMessage = null;
-    if (trackingNumber && req.body?.enviar_ml) {
+
+    if (trackingNumber && req.body?.enviar_ml !== false) {
       const account = await getAccount();
       if (account) {
         try {
-          const orderData = await mlFetch(`/orders/${encodeURIComponent(orderId)}`);
-          const shipmentId = orderData?.shipping?.id;
-          if (shipmentId) {
-            await mlFetch(`/shipments/${encodeURIComponent(shipmentId)}`, {
-              method: 'PUT',
-              body: {
-                status: 'shipped',
-                tracking_number: trackingNumber,
-                receiver_id: orderData?.buyer?.id,
-              },
-            });
-            mlNotified = true;
-          }
+          const dispatchRes = await notifyMlAndBuyerWithTracking({
+            orderId,
+            trackingNumber,
+            carrier,
+          });
+          mlShipmentUpdated = dispatchRes.shipment_updated;
+          mlBuyerMessaged = dispatchRes.buyer_messaged;
+          mlNotified = mlShipmentUpdated || mlBuyerMessaged;
+          mlMessage = dispatchRes.notes.join(' · ');
         } catch (err) {
           mlMessage = err.message;
         }
@@ -209,6 +328,8 @@ router.post('/:orderId/rastreio', async (req, res, next) => {
       ok: true,
       execucao: rows[0],
       ml_notified: mlNotified,
+      ml_shipment_updated: mlShipmentUpdated,
+      ml_buyer_messaged: mlBuyerMessaged,
       ml_message: mlMessage,
     });
   } catch (err) {
@@ -239,7 +360,24 @@ router.get('/', async (req, res, next) => {
     if (req.query.status) params.set('order.status', String(req.query.status));
 
     const data = await mlFetch(`/orders/search?${params.toString()}`);
-    const orders = await attachExecutions((data?.results || []).map(formatOrder));
+    const formattedList = (data?.results || []).map(formatOrder);
+
+    // Hydrate receiver_address from /shipments/{id} for recent orders when not embedded in /orders/search
+    await Promise.all(
+      formattedList.slice(0, 15).map(async (ord) => {
+        if (ord.shipping?.id && !ord.shipping.receiver_address) {
+          try {
+            const sh = await mlFetch(`/shipments/${encodeURIComponent(ord.shipping.id)}`);
+            if (sh?.receiver_address) {
+              ord.shipping.receiver_address = formatAddressObject(sh.receiver_address);
+            }
+            if (sh?.mode) ord.shipping.mode = sh.mode;
+          } catch {}
+        }
+      })
+    );
+
+    const orders = await attachExecutions(formattedList);
     const { rows } = await query('SELECT * FROM order_executions ORDER BY updated_at DESC');
 
     res.json({
@@ -258,13 +396,13 @@ router.get('/:orderId', async (req, res, next) => {
     const data = await mlFetch(`/orders/${encodeURIComponent(req.params.orderId)}`);
     const formatted = formatOrder(data);
 
-    // Fetch full shipment receiver address if shipping.id is available
     if (formatted.shipping?.id && !formatted.shipping.receiver_address) {
       try {
         const shipment = await mlFetch(`/shipments/${encodeURIComponent(formatted.shipping.id)}`);
         if (shipment?.receiver_address) {
           formatted.shipping.receiver_address = formatAddressObject(shipment.receiver_address);
         }
+        if (shipment?.mode) formatted.shipping.mode = shipment.mode;
       } catch {}
     }
 
